@@ -62,6 +62,22 @@ where email = 'your-admin-email@nu-laguna.edu.ph';
   application auto-creates the calendar entry (reserved) and opens the
   clearance obligation; approving a report auto-clears it.**
 
+- **Templates** — admins upload/replace/delete official documents (ACP
+  Form, Attachments Template, PARF, Liquidation/Narrative/Evaluation
+  Report, or custom ones), grouped by category with version + last-updated
+  info; every role can browse and download. These are the same templates
+  linked as quick-download shortcuts inside the Submission Bin's attachment
+  fields.
+
+- **Clearance** — every approved event application automatically opens a
+  clearance obligation due 7 days after the event date (already wired in
+  Submission Bin). This page surfaces it: status summary cards (Pending /
+  Extended / Overdue / Cleared), a self-healing check that flips a row to
+  Overdue once its deadline passes, admin deadline extension, and a manual
+  "Mark Cleared" override alongside the automatic clear-on-report-approval
+  flow. Officers see their org's own obligations with a shortcut into
+  Submission Bin to file the report.
+
 ### Extra setup for Submission Bin
 
 1. In the Supabase dashboard, go to **Storage → New bucket** and create one
@@ -73,12 +89,16 @@ where email = 'your-admin-email@nu-laguna.edu.ph';
    no longer blocks the report that would clear it, and adds several RLS
    policies that were missing for the approval chain).
 
+### Extra setup for Templates
+
+In the Supabase dashboard, go to **Storage → New bucket** and create one
+named exactly `templates` (public is fine — every logged-in role can
+download these). If you already ran schema.sql before this phase, run
+`supabase/migrations/003_templates.sql` to add the storage policies.
+
 ## Roadmap (next phases)
 
-1. **Clearance** — dedicated page to browse org clearance status, admin
-   deadline extension, and manual override — the auto-clear-on-report-
-   approval logic already lives in Submission Bin.
-2. **Assignments** — admin-side assignment of submissions to reviewers,
+1. **Assignments** — admin-side assignment of submissions to reviewers,
    wired into Submission Bin.
-3. **Settings** — password change, profile photo upload.
-4. **Accounts** — admin account/role creation, org membership + tagging.
+2. **Settings** — password change, profile photo upload.
+3. **Accounts** — admin account/role creation, org membership + tagging.

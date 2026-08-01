@@ -368,3 +368,14 @@ create policy submission_attachments_storage_read on storage.objects
 
 create policy submission_attachments_storage_write on storage.objects
   for insert with check (bucket_id = 'submission-attachments' and auth.role() = 'authenticated');
+
+-- Storage bucket for admin-uploaded templates (ACP Form, PARF, etc).
+-- Create the bucket from the Supabase dashboard first:
+-- Storage -> New bucket -> name it exactly "templates" (public is fine,
+-- since every logged-in role is allowed to download these).
+create policy templates_storage_read on storage.objects
+  for select using (bucket_id = 'templates');
+
+create policy templates_storage_write on storage.objects
+  for all using (bucket_id = 'templates' and is_admin_tier())
+  with check (bucket_id = 'templates' and is_admin_tier());
