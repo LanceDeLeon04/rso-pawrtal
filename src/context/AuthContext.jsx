@@ -85,7 +85,11 @@ export function AuthProvider({ children }) {
     return { success: true }
   }
 
-  const value = { session, profile, loading, signIn, signOut, completePasswordChange }
+  async function refreshProfile() {
+    if (session?.user) await loadProfile(session.user.id)
+  }
+
+  const value = { session, profile, loading, signIn, signOut, completePasswordChange, refreshProfile }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

@@ -182,16 +182,49 @@ create table submission_status_history (
 );
 
 -- ---------- ASSIGNMENTS ----------
--- Admins assign specific submissions to specific reviewers (mirrors the
--- assignment-based access pattern from the SCS Evaluation System).
+-- Tasks + deliverables. A reviewer creates a task targeting a specific
+-- user, a cross-org position tag (e.g. "Treasurer"), or a whole org.
+-- Optionally linked to a submission (task blocks that submission's SDAO
+-- Assistant review step until it's approved or conditionally waived) and/or
+-- an event (informational tag, doesn't block anything). Post-activity
+-- report obligations are auto-generated here too (auto_generated = true) —
+-- clicking one routes the assignee straight into Submission Bin's report
+-- form, and submitting that report auto-completes the assignment.
+create type assignment_status as enum (
+  'pending', 'submitted', 'returned', 'approved', 'conditional_approved'
+);
+
 create table assignments (
   id uuid primary key default gen_random_uuid(),
-  submission_id uuid not null references submissions(id) on delete cascade,
-  assigned_to uuid not null references profiles(id),
+  title text not null,
+  description text,
+  submission_id uuid references submissions(id) on delete cascade,
+  event_id uuid references events(id) on delete cascade,
+  assigned_to uuid references profiles(id),        -- specific user
+  assigned_tag text,                                -- cross-org position tag
+  assigned_org_id uuid references organizations(id),-- whole org
   assigned_by uuid not null references profiles(id),
   due_date date,
-  status text not null default 'pending', -- 'pending','in_progress','done'
-  created_at timestamptz not null default now()
+  status assignment_status not null default 'pending',
+  review_comment text,
+  auto_generated boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint assignments_has_target check (
+    assigned_to is not null or assigned_tag is not null or assigned_org_id is not null
+  )
+);
+
+create index idx_assignments_submission on assignments(submission_id);
+create index idx_assignments_event on assignments(event_id);
+
+create table assignment_deliverables (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references assignments(id) on delete cascade,
+  file_url text not null,
+  note text,
+  uploaded_by uuid not null references profiles(id),
+  uploaded_at timestamptz not null default now()
 );
 
 -- ---------- CLEARANCE ----------
@@ -225,6 +258,7 @@ alter table submission_attachments enable row level security;
 alter table submission_status_history enable row level security;
 alter table clearances enable row level security;
 alter table assignments enable row level security;
+alter table assignment_deliverables enable row level security;
 alter table templates enable row level security;
 
 -- Helper: current user's role
@@ -239,12 +273,23 @@ create or replace function is_admin_tier() returns boolean as $$
   );
 $$ language sql stable security definer;
 
+-- BUG FIX: org_memberships had RLS enabled with no policy at all, which
+-- means the subquery `org_id in (select org_id from org_memberships ...)`
+-- used throughout this file's other policies silently returned zero rows
+-- for every non-admin user — breaking org-scoped visibility everywhere.
+create policy org_memberships_select on org_memberships for select
+  using (profile_id = auth.uid() or is_admin_tier());
+
 -- Everyone can read their own profile; admins can read all.
 create policy profiles_select on profiles for select
   using (id = auth.uid() or is_admin_tier());
 
 create policy profiles_update_self on profiles for update
   using (id = auth.uid());
+
+-- Needed so admins can edit any user's display name from Settings.
+create policy profiles_update_admin on profiles for update
+  using (is_admin_tier());
 
 -- Only admin-tier + system_admin can insert new accounts (per spec: only
 -- admins/superadmin create accounts).
@@ -350,12 +395,58 @@ create policy clearances_admin_write on clearances for update
 create policy templates_select on templates for select using (true);
 create policy templates_write on templates for all using (is_admin_tier());
 
--- Assignments: assignee + admins.
+-- Assignments: the assignee (by user, tag, or org) can see and update
+-- their own; admins can see/manage all.
 create policy assignments_select on assignments for select
-  using (assigned_to = auth.uid() or is_admin_tier());
+  using (
+    is_admin_tier()
+    or assigned_to = auth.uid()
+    or assigned_org_id in (select org_id from org_memberships where profile_id = auth.uid())
+    or assigned_tag in (select position from org_memberships where profile_id = auth.uid())
+  );
 
-create policy assignments_write on assignments for all
+create policy assignments_insert_admin on assignments for insert
+  with check (is_admin_tier());
+
+-- Admins manage the full lifecycle; assignees may only update their own
+-- (used to submit a deliverable, i.e. flip status to 'submitted').
+create policy assignments_update_admin on assignments for update
   using (is_admin_tier());
+
+create policy assignments_update_assignee on assignments for update
+  using (
+    assigned_to = auth.uid()
+    or assigned_org_id in (select org_id from org_memberships where profile_id = auth.uid())
+    or assigned_tag in (select position from org_memberships where profile_id = auth.uid())
+  );
+
+create policy assignment_deliverables_select on assignment_deliverables for select
+  using (
+    is_admin_tier()
+    or exists (
+      select 1 from assignments a
+      where a.id = assignment_deliverables.assignment_id
+      and (
+        a.assigned_to = auth.uid()
+        or a.assigned_org_id in (select org_id from org_memberships where profile_id = auth.uid())
+        or a.assigned_tag in (select position from org_memberships where profile_id = auth.uid())
+      )
+    )
+  );
+
+create policy assignment_deliverables_insert on assignment_deliverables for insert
+  with check (
+    is_admin_tier()
+    or exists (
+      select 1 from assignments a
+      where a.id = assignment_deliverables.assignment_id
+      and (
+        a.assigned_to = auth.uid()
+        or a.assigned_org_id in (select org_id from org_memberships where profile_id = auth.uid())
+        or a.assigned_tag in (select position from org_memberships where profile_id = auth.uid())
+      )
+    )
+  );
 
 -- ============================================================
 -- STORAGE — submission attachments
@@ -379,3 +470,26 @@ create policy templates_storage_read on storage.objects
 create policy templates_storage_write on storage.objects
   for all using (bucket_id = 'templates' and is_admin_tier())
   with check (bucket_id = 'templates' and is_admin_tier());
+
+-- Storage bucket for assignment deliverables.
+-- Create the bucket from the Supabase dashboard first:
+-- Storage -> New bucket -> name it exactly "assignment-deliverables"
+-- (private).
+create policy assignment_deliverables_storage_read on storage.objects
+  for select using (bucket_id = 'assignment-deliverables' and auth.role() = 'authenticated');
+
+create policy assignment_deliverables_storage_write on storage.objects
+  for insert with check (bucket_id = 'assignment-deliverables' and auth.role() = 'authenticated');
+
+-- Storage bucket for profile photos.
+-- Create the bucket from the Supabase dashboard first:
+-- Storage -> New bucket -> name it exactly "avatars" (public is fine —
+-- these render in the topbar for everyone).
+create policy avatars_storage_read on storage.objects
+  for select using (bucket_id = 'avatars');
+
+create policy avatars_storage_write on storage.objects
+  for insert with check (bucket_id = 'avatars' and auth.role() = 'authenticated');
+
+create policy avatars_storage_update on storage.objects
+  for update using (bucket_id = 'avatars' and auth.role() = 'authenticated');

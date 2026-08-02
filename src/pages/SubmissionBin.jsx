@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
-  CheckCircle2, ChevronRight,
+  CheckCircle2, ChevronRight, ListChecks, CalendarClock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -62,6 +63,8 @@ export default function SubmissionBin() {
   const admin = isAdminTier(profile?.role)
   const canReview = REVIEWER_ROLES.includes(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
+  const location = useLocation()
+  const navigate = useNavigate()
 
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -85,9 +88,11 @@ export default function SubmissionBin() {
   const [selected, setSelected] = useState(null)
   const [attachments, setAttachments] = useState([])
   const [history, setHistory] = useState([])
+  const [openTasks, setOpenTasks] = useState([])
   const [detailLoading, setDetailLoading] = useState(false)
   const [actionMode, setActionMode] = useState(null)
   const [actionComment, setActionComment] = useState('')
+  const [conditionalDueDate, setConditionalDueDate] = useState('')
   const [acting, setActing] = useState(false)
   const [actionError, setActionError] = useState('')
 
@@ -138,10 +143,11 @@ export default function SubmissionBin() {
     if (!myOrgId) return
     const { data } = await supabase
       .from('clearances')
-      .select('id, deadline, status, events ( title, event_date )')
+      .select('id, event_id, deadline, status, events ( title, event_date )')
       .eq('org_id', myOrgId)
       .in('status', ['pending', 'overdue', 'extended'])
     setOpenClearances(data || [])
+    return data || []
   }
 
   function templateFor(docName) {
@@ -170,13 +176,22 @@ export default function SubmissionBin() {
     setShowAppModal(true)
   }
 
-  async function openReportModal() {
-    await loadOpenClearances()
-    setReportClearanceId('')
+  async function openReportModal(preselectEventId) {
+    const data = await loadOpenClearances()
+    const preselect = preselectEventId ? data.find((c) => c.event_id === preselectEventId) : null
+    setReportClearanceId(preselect?.id || '')
     setReportFiles({})
     setFormError('')
     setShowReportModal(true)
   }
+
+  useEffect(() => {
+    if (location.state?.autoOpenReportForEventId && myOrgId) {
+      openReportModal(location.state.autoOpenReportForEventId)
+      navigate(location.pathname, { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, myOrgId])
 
   async function handleSubmitApp(e) {
     e.preventDefault()
@@ -266,6 +281,13 @@ export default function SubmissionBin() {
       await supabase.from('submission_status_history').insert({
         submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
       })
+      if (clearance?.event_id) {
+        await supabase.from('assignments')
+          .update({ status: 'submitted', submission_id: sub.id, updated_at: new Date().toISOString() })
+          .eq('event_id', clearance.event_id)
+          .eq('auto_generated', true)
+          .in('status', ['pending', 'returned', 'conditional_approved'])
+      }
     } catch {
       setFormError('Report saved, but a file failed to upload — reopen it from the list to re-attach.')
     }
@@ -280,20 +302,25 @@ export default function SubmissionBin() {
     setActionMode(null)
     setActionComment('')
     setActionError('')
+    setConditionalDueDate('')
     setDetailLoading(true)
-    const [{ data: att }, { data: hist }] = await Promise.all([
+    const [{ data: att }, { data: hist }, { data: tasks }] = await Promise.all([
       supabase.from('submission_attachments').select('*').eq('submission_id', sub.id),
       supabase.from('submission_status_history')
         .select('*, actor:profiles ( full_name )')
         .eq('submission_id', sub.id)
         .order('created_at', { ascending: true }),
+      supabase.from('assignments')
+        .select('id, title, status, due_date, assigned_to, assignee:profiles!assignments_assigned_to_fkey ( full_name )')
+        .eq('submission_id', sub.id),
     ])
     setAttachments(att || [])
     setHistory(hist || [])
+    setOpenTasks((tasks || []).filter((t) => t.status !== 'approved'))
     setDetailLoading(false)
   }
 
-  async function performAction(kind, nextAction) {
+  async function performAction(kind, nextAction, overrideLabel) {
     if ((kind === 'return' || kind === 'reject') && !actionComment.trim()) {
       setActionError('Please provide a short reason.')
       return
@@ -303,7 +330,7 @@ export default function SubmissionBin() {
 
     const sub = selected
     const newStage = kind === 'return' ? 'returned' : kind === 'reject' ? 'rejected' : nextAction.to
-    const actionLabel = kind === 'return' ? 'returned' : kind === 'reject' ? 'rejected' : nextAction.action
+    const actionLabel = overrideLabel || (kind === 'return' ? 'returned' : kind === 'reject' ? 'rejected' : nextAction.action)
 
     await supabase.from('submissions').update({ stage: newStage, updated_at: new Date().toISOString() }).eq('id', sub.id)
     await supabase.from('submission_status_history').insert({
@@ -335,6 +362,16 @@ export default function SubmissionBin() {
           await supabase.from('clearances').insert({
             org_id: sub.org_id, event_id: newEvent.id, deadline: toISODate(deadline), status: 'pending',
           })
+          await supabase.from('assignments').insert({
+            title: `Post-Activity Report — ${sub.title}`,
+            description: 'Submit the PARF, Liquidation, Narrative, and Evaluation reports for this activity.',
+            event_id: newEvent.id,
+            assigned_to: sub.submitted_by,
+            assigned_by: profile.id,
+            due_date: toISODate(deadline),
+            status: 'pending',
+            auto_generated: true,
+          })
         }
       } else if (sub.type === 'report') {
         await supabase.from('clearances')
@@ -348,6 +385,25 @@ export default function SubmissionBin() {
     setActionComment('')
     setSelected(null)
     loadSubmissions()
+  }
+
+  async function performConditionalApprove(nextAction) {
+    if (!conditionalDueDate) {
+      setActionError('Please set a deadline for the outstanding task(s).')
+      return
+    }
+    setActing(true)
+    setActionError('')
+
+    await Promise.all(
+      openTasks.map((t) =>
+        supabase.from('assignments')
+          .update({ status: 'conditional_approved', due_date: conditionalDueDate, updated_at: new Date().toISOString() })
+          .eq('id', t.id)
+      )
+    )
+
+    await performAction('advance', nextAction, 'conditionally approved (task deadline extended)')
   }
 
   return (
@@ -369,7 +425,7 @@ export default function SubmissionBin() {
 
         {!admin && (
           <div className="sb-toolbar__actions">
-            <button className="sb-btn sb-btn--outline" onClick={openReportModal}>
+            <button className="sb-btn sb-btn--outline" onClick={() => openReportModal()}>
               <ClipboardList size={15} /> Submit Report
             </button>
             <button className="sb-btn sb-btn--gold" onClick={openAppModal}>
@@ -641,12 +697,34 @@ export default function SubmissionBin() {
               )}
             </div>
 
+            {openTasks.length > 0 && (
+              <div className="sb-detail-section">
+                <span className="sb-detail-section__label"><ListChecks size={12} style={{ verticalAlign: -2 }} /> Linked Tasks</span>
+                <ul className="sb-task-list">
+                  {openTasks.map((t) => (
+                    <li key={t.id}>
+                      <span className={`sb-badge sb-badge--${t.status === 'submitted' ? 'warn' : t.status === 'conditional_approved' ? 'muted' : 'danger'}`}>
+                        {t.status.replace('_', ' ')}
+                      </span>
+                      <span className="sb-task-list__title">{t.title}</span>
+                      {t.assignee?.full_name && <span className="sb-task-list__assignee">{t.assignee.full_name}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {canReview && !['approved', 'returned', 'rejected'].includes(selected.stage) && (() => {
               const nextAction = nextActionFor(profile.role, selected.stage)
               if (!nextAction) return null
+
+              const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
+                && (selected.stage === 'submitted' || selected.stage === 'assistant_review')
+              const blocked = assistantTurn && openTasks.length > 0
+
               return (
                 <div className="sb-review-actions">
-                  {actionMode ? (
+                  {actionMode === 'return' || actionMode === 'reject' ? (
                     <>
                       {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
                       <textarea
@@ -667,6 +745,24 @@ export default function SubmissionBin() {
                         </button>
                       </div>
                     </>
+                  ) : actionMode === 'conditional' ? (
+                    <>
+                      {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
+                      <p className="sb-empty-note">
+                        Forward this to the SDAO Supervisor now, but the outstanding task(s) above still need
+                        completing by this deadline:
+                      </p>
+                      <label className="sb-field">
+                        Task Deadline
+                        <input type="date" value={conditionalDueDate} onChange={(e) => setConditionalDueDate(e.target.value)} required />
+                      </label>
+                      <div className="sb-review-actions__row">
+                        <button className="sb-btn sb-btn--outline" onClick={() => setActionMode(null)} disabled={acting}>Cancel</button>
+                        <button className="sb-btn sb-btn--gold" onClick={() => performConditionalApprove(nextAction)} disabled={acting}>
+                          {acting ? <Loader2 size={15} className="spin" /> : 'Confirm & Forward'}
+                        </button>
+                      </div>
+                    </>
                   ) : (
                     <div className="sb-review-actions__row">
                       <button className="sb-btn sb-btn--outline" onClick={() => setActionMode('return')}>
@@ -675,9 +771,15 @@ export default function SubmissionBin() {
                       <button className="sb-btn sb-btn--danger-outline" onClick={() => setActionMode('reject')}>
                         <Ban size={14} /> Reject
                       </button>
-                      <button className="sb-btn sb-btn--gold" onClick={() => performAction('advance', nextAction)} disabled={acting}>
-                        {acting ? <Loader2 size={15} className="spin" /> : nextAction.label}
-                      </button>
+                      {blocked ? (
+                        <button className="sb-btn sb-btn--gold" onClick={() => setActionMode('conditional')}>
+                          <CalendarClock size={14} /> Conditional Approve
+                        </button>
+                      ) : (
+                        <button className="sb-btn sb-btn--gold" onClick={() => performAction('advance', nextAction)} disabled={acting}>
+                          {acting ? <Loader2 size={15} className="spin" /> : nextAction.label}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

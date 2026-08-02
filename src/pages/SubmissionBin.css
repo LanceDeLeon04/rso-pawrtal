@@ -433,13 +433,31 @@
   margin-bottom: 8px;
 }
 
-.sb-attach-list, .sb-history-list {
+.sb-attach-list, .sb-history-list, .sb-task-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.sb-task-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.sb-task-list__title {
+  flex: 1;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.sb-task-list__assignee {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .sb-attach-list li {

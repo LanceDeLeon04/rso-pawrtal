@@ -96,9 +96,47 @@ named exactly `templates` (public is fine — every logged-in role can
 download these). If you already ran schema.sql before this phase, run
 `supabase/migrations/003_templates.sql` to add the storage policies.
 
+- **Assignments** — admins create tasks/deliverables targeting a specific
+  user, a cross-org position tag ("all Treasurers"), or a whole org.
+  Optionally linked to a submission (blocks the SDAO Assistant from
+  forwarding that submission until the task is Approved) and/or an event
+  (informational tag only). Assignees upload a deliverable; admins Approve
+  or Return it with a reason. If the Assistant needs to move things along
+  anyway, **Conditional Approve** lets them forward the submission while
+  setting a new deadline on the still-open task. Post-activity report
+  obligations are auto-created here too the moment an event application is
+  approved — clicking one routes straight into Submission Bin's report
+  form, and submitting that report auto-completes the assignment.
+
+### Extra setup for Assignments
+
+1. In the Supabase dashboard, go to **Storage → New bucket** and create one
+   named exactly `assignment-deliverables` (private is fine).
+2. If this is a fresh project, `supabase/schema.sql` already includes
+   everything needed. If you already ran the earlier schema/migrations,
+   run `supabase/migrations/004_assignments.sql` — it rebuilds the
+   `assignments` table with the new targeting model (**this drops any
+   existing assignment rows**, so export first if you have real data) and
+   fixes a bug where `org_memberships` had RLS enabled with no policy at
+   all, which was silently hiding every RSO officer's own org data
+   (events, submissions, clearances) behind an empty result set.
+
+- **Settings** — everyone can update their display name, upload a profile
+  photo, and change their password. Admins additionally get a "Manage User
+  Names" table listing every account (name, email, role, org) with inline
+  editing, for correcting or updating any user's display name.
+
+### Extra setup for Settings
+
+1. In the Supabase dashboard, go to **Storage → New bucket** and create one
+   named exactly `avatars` (public is fine — photos render in the topbar
+   for everyone).
+2. If you already ran the earlier schema/migrations, run
+   `supabase/migrations/005_settings.sql` — it adds the admin
+   profiles-update policy (profiles previously only allowed self-edits,
+   which would have silently blocked admin name corrections) and the
+   avatar storage policies.
+
 ## Roadmap (next phases)
 
-1. **Assignments** — admin-side assignment of submissions to reviewers,
-   wired into Submission Bin.
-2. **Settings** — password change, profile photo upload.
-3. **Accounts** — admin account/role creation, org membership + tagging.
+1. **Accounts** — admin account/role creation, org membership + tagging.
