@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
-  CheckCircle2, ChevronRight, ListChecks, CalendarClock,
+  CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -167,6 +167,31 @@ export default function SubmissionBin() {
   const [conditionalDueDate, setConditionalDueDate] = useState('')
   const [acting, setActing] = useState(false)
   const [actionError, setActionError] = useState('')
+
+  // Reviewer checklist ("Additional Requirements")
+  const [checklist, setChecklist] = useState([])
+  const [newChecklistLabel, setNewChecklistLabel] = useState('')
+  const [addingChecklistItem, setAddingChecklistItem] = useState(false)
+
+  // Paginated review comments
+  const [comments, setComments] = useState([])
+  const [commentIndex, setCommentIndex] = useState(0)
+  const [showNewComment, setShowNewComment] = useState(false)
+  const [newCommentPage, setNewCommentPage] = useState('')
+  const [newCommentBody, setNewCommentBody] = useState('')
+  const [savingComment, setSavingComment] = useState(false)
+
+  // File viewer (right pane)
+  const [viewerAttachmentId, setViewerAttachmentId] = useState(null)
+
+  // Add an additional attachment mid-review / on resubmission
+  const [extraDocLabel, setExtraDocLabel] = useState('')
+  const [extraDocEntry, setExtraDocEntry] = useState(null)
+  const [uploadingExtra, setUploadingExtra] = useState(false)
+
+  // Resubmission (returned submission, owning org)
+  const [resubmitting, setResubmitting] = useState(false)
+  const [resubmitNote, setResubmitNote] = useState('')
 
   useEffect(() => {
     loadSubmissions()
@@ -415,8 +440,18 @@ export default function SubmissionBin() {
     setActionComment('')
     setActionError('')
     setConditionalDueDate('')
+    setAddingChecklistItem(false)
+    setNewChecklistLabel('')
+    setShowNewComment(false)
+    setNewCommentPage('')
+    setNewCommentBody('')
+    setCommentIndex(0)
+    setExtraDocLabel('')
+    setExtraDocEntry(null)
+    setResubmitting(false)
+    setResubmitNote('')
     setDetailLoading(true)
-    const [{ data: att }, { data: hist }, { data: tasks }] = await Promise.all([
+    const [{ data: att }, { data: hist }, { data: tasks }, { data: check }, { data: cmts }] = await Promise.all([
       supabase.from('submission_attachments').select('*').eq('submission_id', sub.id),
       supabase.from('submission_status_history')
         .select('*, actor:profiles ( full_name )')
@@ -425,11 +460,134 @@ export default function SubmissionBin() {
       supabase.from('assignments')
         .select('id, title, status, due_date, assigned_to, assignee:profiles!assignments_assigned_to_fkey ( full_name )')
         .eq('submission_id', sub.id),
+      supabase.from('submission_checklist_items')
+        .select('*, creator:profiles!submission_checklist_items_created_by_fkey ( full_name )')
+        .eq('submission_id', sub.id)
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true }),
+      supabase.from('submission_comments')
+        .select('*, author:profiles ( full_name )')
+        .eq('submission_id', sub.id)
+        .order('created_at', { ascending: true }),
     ])
     setAttachments(att || [])
     setHistory(hist || [])
     setOpenTasks((tasks || []).filter((t) => t.status !== 'approved'))
+    setChecklist(check || [])
+    setComments(cmts || [])
+    setViewerAttachmentId((att && att[0]?.id) || null)
     setDetailLoading(false)
+  }
+
+  async function refreshChecklist() {
+    if (!selected) return
+    const { data } = await supabase.from('submission_checklist_items')
+      .select('*, creator:profiles!submission_checklist_items_created_by_fkey ( full_name )')
+      .eq('submission_id', selected.id)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true })
+    setChecklist(data || [])
+  }
+
+  async function addChecklistItem() {
+    const label = newChecklistLabel.trim()
+    if (!label || !selected) return
+    await supabase.from('submission_checklist_items').insert({
+      submission_id: selected.id, label, created_by: profile.id, sort_order: checklist.length,
+    })
+    setNewChecklistLabel('')
+    setAddingChecklistItem(false)
+    refreshChecklist()
+  }
+
+  async function toggleChecklistItem(item) {
+    await supabase.from('submission_checklist_items').update({
+      is_checked: !item.is_checked,
+      checked_by: !item.is_checked ? profile.id : null,
+      checked_at: !item.is_checked ? new Date().toISOString() : null,
+    }).eq('id', item.id)
+    refreshChecklist()
+  }
+
+  async function removeChecklistItem(item) {
+    await supabase.from('submission_checklist_items').delete().eq('id', item.id)
+    refreshChecklist()
+  }
+
+  async function refreshComments(focusLast) {
+    if (!selected) return
+    const { data } = await supabase.from('submission_comments')
+      .select('*, author:profiles ( full_name )')
+      .eq('submission_id', selected.id)
+      .order('created_at', { ascending: true })
+    setComments(data || [])
+    if (focusLast && data?.length) setCommentIndex(data.length - 1)
+  }
+
+  async function addComment() {
+    if (!selected || !newCommentBody.trim()) return
+    setSavingComment(true)
+    await supabase.from('submission_comments').insert({
+      submission_id: selected.id,
+      page_number: newCommentPage.trim() || null,
+      body: newCommentBody.trim(),
+      author_id: profile.id,
+    })
+    setNewCommentPage('')
+    setNewCommentBody('')
+    setShowNewComment(false)
+    setSavingComment(false)
+    refreshComments(true)
+  }
+
+  async function deleteComment(comment) {
+    await supabase.from('submission_comments').delete().eq('id', comment.id)
+    setCommentIndex((i) => Math.max(0, i - 1))
+    refreshComments(false)
+  }
+
+  async function refreshAttachments() {
+    if (!selected) return
+    const { data } = await supabase.from('submission_attachments').select('*').eq('submission_id', selected.id)
+    setAttachments(data || [])
+    if (data?.length) setViewerAttachmentId(data[data.length - 1].id)
+  }
+
+  async function addExtraAttachment() {
+    if (!selected || !extraDocEntry) return
+    const label = extraDocLabel.trim() || 'Additional Attachment'
+    setUploadingExtra(true)
+    try {
+      await uploadAttachment(selected.id, label, extraDocEntry)
+      setExtraDocLabel('')
+      setExtraDocEntry(null)
+      await refreshAttachments()
+    } catch {
+      setActionError('Could not upload that attachment. Please try again.')
+    }
+    setUploadingExtra(false)
+  }
+
+  async function handleResubmit() {
+    if (!selected) return
+    setResubmitting(true)
+    setActionError('')
+    const { error } = await supabase.from('submissions')
+      .update({ stage: 'submitted', updated_at: new Date().toISOString() })
+      .eq('id', selected.id)
+    if (error) {
+      setActionError('Could not resubmit. Please try again.')
+      setResubmitting(false)
+      return
+    }
+    await supabase.from('submission_status_history').insert({
+      submission_id: selected.id, stage: 'submitted', action: 'resubmitted',
+      actor_id: profile.id, comment: resubmitNote.trim() || null,
+    })
+    setResubmitting(false)
+    setResubmitNote('')
+    setSelected(null)
+    loadSubmissions()
   }
 
   async function performAction(kind, nextAction, overrideLabel) {
@@ -797,210 +955,455 @@ export default function SubmissionBin() {
         </div>
       )}
 
-      {/* ---------- Detail / Status Tracker ---------- */}
-      {selected && (
-        <div className="sb-modal-backdrop" onClick={() => setSelected(null)}>
-          <div className="sb-modal sb-modal--detail" onClick={(e) => e.stopPropagation()}>
-            <button className="sb-modal__close" onClick={() => setSelected(null)}><X size={18} /></button>
+      {/* ---------- Detail / Review Workspace ---------- */}
+      {selected && (() => {
+        const isOwnerOrg = !admin && myOrgId === selected.org_id
+        const canResubmit = isOwnerOrg && selected.stage === 'returned'
+        const activeAttachment = attachments.find((a) => a.id === viewerAttachmentId) || null
 
-            <span className="sb-type-tag">{selected.type === 'event_application' ? 'Event Application' : 'Activity Report'}</span>
-            <h3 className="sb-modal__title">{selected.title}</h3>
-            {admin && (
-              <p className="sb-modal__org"><Building2 size={14} /> {selected.organizations?.acronym} — {selected.organizations?.name}</p>
-            )}
+        return (
+          <div className="sb-modal-backdrop" onClick={() => setSelected(null)}>
+            <div className="sb-modal sb-modal--review" onClick={(e) => e.stopPropagation()}>
+              <button className="sb-modal__close" onClick={() => setSelected(null)}><X size={18} /></button>
 
-            {(selected.stage === 'returned' || selected.stage === 'rejected') ? (
-              <div className={`sb-outcome sb-outcome--${selected.stage === 'returned' ? 'warn' : 'danger'}`}>
-                {selected.stage === 'returned' ? <Undo2 size={15} /> : <Ban size={15} />}
-                This submission was {selected.stage}.
-              </div>
-            ) : (
-              <div className="sb-stepper">
-                {(() => {
-                  const steps = stepsFor(selected.type)
-                  const current = stepIndexFor(selected.type, selected.stage)
-                  return steps.map((step, i) => {
-                    const state = i < current ? 'done' : i === current ? 'active' : 'pending'
-                    return (
-                      <div key={step.key} className={`sb-step sb-step--${state}`}>
-                        <div className="sb-step__dot">{state === 'done' ? <Check size={11} /> : i + 1}</div>
-                        <span className="sb-step__label">{step.label}</span>
-                        {i < steps.length - 1 && <div className="sb-step__line" />}
-                      </div>
-                    )
-                  })
-                })()}
-              </div>
-            )}
+              <div className="sb-review">
+                {/* ---------- Left: review panel ---------- */}
+                <div className="sb-review__left">
+                  <span className="sb-type-tag">{selected.type === 'event_application' ? 'Event Application Review' : 'Activity Report Review'}</span>
+                  <h3 className="sb-modal__title">{selected.title}</h3>
+                  {(admin || canReview) && (
+                    <p className="sb-modal__org"><Building2 size={14} /> {selected.organizations?.acronym} — {selected.organizations?.name}</p>
+                  )}
 
-            {selected.type === 'event_application' && (
-              <div className="sb-detail-grid">
-                <div className="sb-detail-row">
-                  <MapPin size={13} />
-                  {selected.venues?.name || '—'}
-                  {selected.venue_detail && ` — ${selected.venue_detail}`}
-                  {selected.venue_tag && ` (${selected.venue_tag})`}
-                </div>
-                {selected.pencil_booked !== null && selected.pencil_booked !== undefined && (
-                  <div className="sb-detail-row">
-                    <Check size={13} /> Pencil Booked: {selected.pencil_booked ? 'Yes' : 'No'}
-                  </div>
-                )}
-                {selected.lab_endorsed !== null && selected.lab_endorsed !== undefined && (
-                  <div className="sb-detail-row">
-                    <Check size={13} /> Lab Owner Endorsed: {selected.lab_endorsed ? 'Yes' : 'No'}
-                  </div>
-                )}
-                <div className="sb-detail-row">
-                  <Clock size={13} /> {selected.event_date}
-                  {selected.start_time && ` · ${formatTime(selected.start_time)}`}
-                  {selected.end_time && ` – ${formatTime(selected.end_time)}`}
-                </div>
-                <div className="sb-detail-row"><Video size={13} /> {MEDIUM_LABELS[selected.medium] || '—'}</div>
-                <div className="sb-detail-row"><User size={13} /> {selected.contact_person}{selected.contact_number && ` · ${selected.contact_number}`}</div>
-              </div>
-            )}
-
-            {selected.type === 'report' && selected.events?.title && (
-              <div className="sb-detail-grid">
-                <div className="sb-detail-row"><ClipboardList size={13} /> Reporting on: {selected.events.title}</div>
-              </div>
-            )}
-
-            <div className="sb-detail-section">
-              <span className="sb-detail-section__label">Attachments</span>
-              {detailLoading ? (
-                <Loader2 size={15} className="spin" />
-              ) : attachments.length === 0 ? (
-                <p className="sb-empty-note">No attachments found.</p>
-              ) : (
-                <ul className="sb-attach-list">
-                  {attachments.map((a) => (
-                    <li key={a.id}>
-                      <FileText size={13} />
-                      <span>{a.document_type}</span>
-                      <a href={a.file_url} target="_blank" rel="noreferrer"><Download size={13} /></a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="sb-detail-section">
-              <span className="sb-detail-section__label">History</span>
-              {history.length === 0 ? (
-                <p className="sb-empty-note">No activity yet.</p>
-              ) : (
-                <ul className="sb-history-list">
-                  {history.map((h) => (
-                    <li key={h.id}>
-                      <CheckCircle2 size={13} />
-                      <div>
-                        <span className="sb-history-list__action">
-                          {h.actor?.full_name || 'Someone'} {h.action} this submission
-                        </span>
-                        {h.comment && <p className="sb-history-list__comment">"{h.comment}"</p>}
-                        <span className="sb-history-list__time">{new Date(h.created_at).toLocaleString()}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {openTasks.length > 0 && (
-              <div className="sb-detail-section">
-                <span className="sb-detail-section__label"><ListChecks size={12} style={{ verticalAlign: -2 }} /> Linked Tasks</span>
-                <ul className="sb-task-list">
-                  {openTasks.map((t) => (
-                    <li key={t.id}>
-                      <span className={`sb-badge sb-badge--${t.status === 'submitted' ? 'warn' : t.status === 'conditional_approved' ? 'muted' : 'danger'}`}>
-                        {t.status.replace('_', ' ')}
-                      </span>
-                      <span className="sb-task-list__title">{t.title}</span>
-                      {t.assignee?.full_name && <span className="sb-task-list__assignee">{t.assignee.full_name}</span>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {canReview && !['approved', 'returned', 'rejected'].includes(selected.stage) && (() => {
-              const nextAction = nextActionFor(profile.role, selected.stage, selected.type)
-              if (!nextAction) return null
-
-              const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
-                && (selected.stage === 'submitted' || selected.stage === 'assistant_review')
-              const blocked = assistantTurn && openTasks.length > 0
-
-              return (
-                <div className="sb-review-actions">
-                  {actionMode === 'return' || actionMode === 'reject' ? (
-                    <>
-                      {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
-                      <textarea
-                        className="sb-comment-box"
-                        rows={2}
-                        placeholder={`Reason for ${actionMode === 'return' ? 'returning' : 'rejecting'} this submission...`}
-                        value={actionComment}
-                        onChange={(e) => setActionComment(e.target.value)}
-                      />
-                      <div className="sb-review-actions__row">
-                        <button className="sb-btn sb-btn--outline" onClick={() => setActionMode(null)} disabled={acting}>Cancel</button>
-                        <button
-                          className={`sb-btn ${actionMode === 'return' ? 'sb-btn--warn' : 'sb-btn--danger'}`}
-                          onClick={() => performAction(actionMode, nextAction)}
-                          disabled={acting}
-                        >
-                          {acting ? <Loader2 size={15} className="spin" /> : `Confirm ${actionMode === 'return' ? 'Return' : 'Reject'}`}
-                        </button>
-                      </div>
-                    </>
-                  ) : actionMode === 'conditional' ? (
-                    <>
-                      {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
-                      <p className="sb-empty-note">
-                        Forward this to the SDAO Supervisor now, but the outstanding task(s) above still need
-                        completing by this deadline:
-                      </p>
-                      <label className="sb-field">
-                        Task Deadline
-                        <input type="date" value={conditionalDueDate} onChange={(e) => setConditionalDueDate(e.target.value)} required />
-                      </label>
-                      <div className="sb-review-actions__row">
-                        <button className="sb-btn sb-btn--outline" onClick={() => setActionMode(null)} disabled={acting}>Cancel</button>
-                        <button className="sb-btn sb-btn--gold" onClick={() => performConditionalApprove(nextAction)} disabled={acting}>
-                          {acting ? <Loader2 size={15} className="spin" /> : 'Confirm & Forward'}
-                        </button>
-                      </div>
-                    </>
+                  {(selected.stage === 'returned' || selected.stage === 'rejected') ? (
+                    <div className={`sb-outcome sb-outcome--${selected.stage === 'returned' ? 'warn' : 'danger'}`}>
+                      {selected.stage === 'returned' ? <Undo2 size={15} /> : <Ban size={15} />}
+                      This submission was {selected.stage}.
+                    </div>
                   ) : (
-                    <div className="sb-review-actions__row">
-                      <button className="sb-btn sb-btn--outline" onClick={() => setActionMode('return')}>
-                        <Undo2 size={14} /> Return
-                      </button>
-                      <button className="sb-btn sb-btn--danger-outline" onClick={() => setActionMode('reject')}>
-                        <Ban size={14} /> Reject
-                      </button>
-                      {blocked ? (
-                        <button className="sb-btn sb-btn--gold" onClick={() => setActionMode('conditional')}>
-                          <CalendarClock size={14} /> Conditional Approve
-                        </button>
-                      ) : (
-                        <button className="sb-btn sb-btn--gold" onClick={() => performAction('advance', nextAction)} disabled={acting}>
-                          {acting ? <Loader2 size={15} className="spin" /> : nextAction.label}
+                    <div className="sb-stepper">
+                      {(() => {
+                        const steps = stepsFor(selected.type)
+                        const current = stepIndexFor(selected.type, selected.stage)
+                        return steps.map((step, i) => {
+                          const state = i < current ? 'done' : i === current ? 'active' : 'pending'
+                          return (
+                            <div key={step.key} className={`sb-step sb-step--${state}`}>
+                              <div className="sb-step__dot">{state === 'done' ? <Check size={11} /> : i + 1}</div>
+                              <span className="sb-step__label">{step.label}</span>
+                              {i < steps.length - 1 && <div className="sb-step__line" />}
+                            </div>
+                          )
+                        })
+                      })()}
+                    </div>
+                  )}
+
+                  {selected.type === 'event_application' && (
+                    <div className="sb-detail-grid">
+                      <div className="sb-detail-row">
+                        <MapPin size={13} />
+                        {selected.venues?.name || '—'}
+                        {selected.venue_detail && ` — ${selected.venue_detail}`}
+                        {selected.venue_tag && ` (${selected.venue_tag})`}
+                      </div>
+                      {selected.pencil_booked !== null && selected.pencil_booked !== undefined && (
+                        <div className="sb-detail-row">
+                          <Check size={13} /> Pencil Booked: {selected.pencil_booked ? 'Yes' : 'No'}
+                        </div>
+                      )}
+                      {selected.lab_endorsed !== null && selected.lab_endorsed !== undefined && (
+                        <div className="sb-detail-row">
+                          <Check size={13} /> Lab Owner Endorsed: {selected.lab_endorsed ? 'Yes' : 'No'}
+                        </div>
+                      )}
+                      <div className="sb-detail-row">
+                        <Clock size={13} /> {selected.event_date}
+                        {selected.start_time && ` · ${formatTime(selected.start_time)}`}
+                        {selected.end_time && ` – ${formatTime(selected.end_time)}`}
+                      </div>
+                      <div className="sb-detail-row"><Video size={13} /> {MEDIUM_LABELS[selected.medium] || '—'}</div>
+                      <div className="sb-detail-row"><User size={13} /> {selected.contact_person}{selected.contact_number && ` · ${selected.contact_number}`}</div>
+                    </div>
+                  )}
+
+                  {selected.type === 'report' && selected.events?.title && (
+                    <div className="sb-detail-grid">
+                      <div className="sb-detail-row"><ClipboardList size={13} /> Reporting on: {selected.events.title}</div>
+                    </div>
+                  )}
+
+                  {/* ---------- Additional Requirements checklist ---------- */}
+                  <div className="sb-detail-section">
+                    <div className="sb-detail-section__head">
+                      <span className="sb-detail-section__label">Additional Requirements</span>
+                      {canReview && (
+                        <button type="button" className="sb-icon-btn" onClick={() => setAddingChecklistItem((v) => !v)} title="Add requirement">
+                          <Plus size={13} />
                         </button>
                       )}
                     </div>
+
+                    {checklist.length === 0 && !addingChecklistItem ? (
+                      <p className="sb-empty-note">No additional requirements yet.</p>
+                    ) : (
+                      <ul className="sb-checklist">
+                        {checklist.map((item) => (
+                          <li key={item.id} className="sb-checklist__item">
+                            <button
+                              type="button"
+                              className={`sb-checkbox ${item.is_checked ? 'sb-checkbox--checked' : ''}`}
+                              onClick={() => canReview && toggleChecklistItem(item)}
+                              disabled={!canReview}
+                              aria-label={item.is_checked ? 'Mark incomplete' : 'Mark complete'}
+                            >
+                              {item.is_checked && <Check size={12} />}
+                            </button>
+                            <span className={item.is_checked ? 'sb-checklist__label sb-checklist__label--done' : 'sb-checklist__label'}>
+                              {item.label}
+                            </span>
+                            {canReview && (
+                              <button type="button" className="sb-checklist__remove" onClick={() => removeChecklistItem(item)} title="Remove">
+                                <X size={12} />
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {addingChecklistItem && (
+                      <div className="sb-inline-add">
+                        <input
+                          autoFocus
+                          placeholder="e.g. ITSO Endorsement"
+                          value={newChecklistLabel}
+                          onChange={(e) => setNewChecklistLabel(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addChecklistItem()}
+                        />
+                        <button type="button" className="sb-btn sb-btn--outline sb-btn--sm" onClick={addChecklistItem}>Add</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ---------- Comments ---------- */}
+                  <div className="sb-detail-section">
+                    <div className="sb-detail-section__head">
+                      <span className="sb-detail-section__label">Comments</span>
+                      {canReview && (
+                        <button type="button" className="sb-icon-btn" onClick={() => setShowNewComment((v) => !v)} title="Add comment">
+                          <Plus size={13} />
+                        </button>
+                      )}
+                    </div>
+
+                    {comments.length === 0 && !showNewComment ? (
+                      <p className="sb-empty-note">No comments yet.</p>
+                    ) : comments.length > 0 && !showNewComment ? (
+                      <div className="sb-comment-card">
+                        {comments[commentIndex]?.page_number && (
+                          <div className="sb-comment-card__page">Page Number: <strong>{comments[commentIndex].page_number}</strong></div>
+                        )}
+                        <p className="sb-comment-card__body">{comments[commentIndex]?.body}</p>
+                        <div className="sb-comment-card__meta">
+                          <span>{comments[commentIndex]?.author?.full_name || 'Reviewer'}</span>
+                          <span>{new Date(comments[commentIndex]?.created_at).toLocaleString()}</span>
+                        </div>
+                        <div className="sb-comment-card__footer">
+                          {canReview && comments[commentIndex]?.author_id === profile.id && (
+                            <button type="button" className="sb-comment-card__delete" onClick={() => deleteComment(comments[commentIndex])}>
+                              <X size={11} /> Delete
+                            </button>
+                          )}
+                          <div className="sb-comment-nav">
+                            <button
+                              type="button"
+                              className="sb-icon-btn"
+                              onClick={() => setCommentIndex((i) => Math.max(0, i - 1))}
+                              disabled={commentIndex === 0}
+                            >
+                              <ChevronLeft size={14} />
+                            </button>
+                            <span>Comment {commentIndex + 1} of {comments.length}</span>
+                            <button
+                              type="button"
+                              className="sb-icon-btn"
+                              onClick={() => setCommentIndex((i) => Math.min(comments.length - 1, i + 1))}
+                              disabled={commentIndex === comments.length - 1}
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {showNewComment && (
+                      <div className="sb-comment-card sb-comment-card--edit">
+                        <label className="sb-field">
+                          Page Number
+                          <input
+                            placeholder="e.g. 2"
+                            value={newCommentPage}
+                            onChange={(e) => setNewCommentPage(e.target.value)}
+                          />
+                        </label>
+                        <label className="sb-field">
+                          Details
+                          <textarea
+                            rows={3}
+                            placeholder="What needs attention on this page..."
+                            value={newCommentBody}
+                            onChange={(e) => setNewCommentBody(e.target.value)}
+                          />
+                        </label>
+                        <div className="sb-review-actions__row">
+                          <button type="button" className="sb-btn sb-btn--outline" onClick={() => setShowNewComment(false)} disabled={savingComment}>Cancel</button>
+                          <button type="button" className="sb-btn sb-btn--gold" onClick={addComment} disabled={savingComment || !newCommentBody.trim()}>
+                            {savingComment ? <Loader2 size={14} className="spin" /> : 'Post Comment'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ---------- Attachments ---------- */}
+                  <div className="sb-detail-section">
+                    <span className="sb-detail-section__label">Attachments</span>
+                    {detailLoading ? (
+                      <Loader2 size={15} className="spin" />
+                    ) : attachments.length === 0 ? (
+                      <p className="sb-empty-note">No attachments found.</p>
+                    ) : (
+                      <ul className="sb-attach-list">
+                        {attachments.map((a) => (
+                          <li key={a.id} className={a.id === viewerAttachmentId ? 'sb-attach-list__item--active' : ''}>
+                            <FileText size={13} />
+                            <button type="button" className="sb-attach-list__view" onClick={() => setViewerAttachmentId(a.id)}>
+                              {a.document_type}
+                            </button>
+                            <a href={a.file_url} target="_blank" rel="noreferrer"><Download size={13} /></a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {(isOwnerOrg || admin) && (
+                      <div className="sb-extra-attach">
+                        <input
+                          className="sb-extra-attach__label"
+                          placeholder="Document name (e.g. Dean Endorsement Letter)"
+                          value={extraDocLabel}
+                          onChange={(e) => setExtraDocLabel(e.target.value)}
+                        />
+                        <AttachmentRow
+                          label="Additional Attachment"
+                          entry={extraDocEntry}
+                          onChange={setExtraDocEntry}
+                          accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png"
+                          formatHint="PDF, Excel, Word, or image"
+                        />
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn--outline sb-btn--sm sb-btn--full"
+                          onClick={addExtraAttachment}
+                          disabled={!extraDocEntry || uploadingExtra}
+                        >
+                          {uploadingExtra ? <Loader2 size={14} className="spin" /> : <><Plus size={13} /> Add Attachment</>}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="sb-detail-section">
+                    <span className="sb-detail-section__label">History</span>
+                    {history.length === 0 ? (
+                      <p className="sb-empty-note">No activity yet.</p>
+                    ) : (
+                      <ul className="sb-history-list">
+                        {history.map((h) => (
+                          <li key={h.id}>
+                            <CheckCircle2 size={13} />
+                            <div>
+                              <span className="sb-history-list__action">
+                                {h.actor?.full_name || 'Someone'} {h.action} this submission
+                              </span>
+                              {h.comment && <p className="sb-history-list__comment">"{h.comment}"</p>}
+                              <span className="sb-history-list__time">{new Date(h.created_at).toLocaleString()}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {openTasks.length > 0 && (
+                    <div className="sb-detail-section">
+                      <span className="sb-detail-section__label"><ListChecks size={12} style={{ verticalAlign: -2 }} /> Linked Tasks</span>
+                      <ul className="sb-task-list">
+                        {openTasks.map((t) => (
+                          <li key={t.id}>
+                            <span className={`sb-badge sb-badge--${t.status === 'submitted' ? 'warn' : t.status === 'conditional_approved' ? 'muted' : 'danger'}`}>
+                              {t.status.replace('_', ' ')}
+                            </span>
+                            <span className="sb-task-list__title">{t.title}</span>
+                            {t.assignee?.full_name && <span className="sb-task-list__assignee">{t.assignee.full_name}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
+
+                  {/* ---------- Return & Resubmit (owning org) ---------- */}
+                  {canResubmit && (
+                    <div className="sb-detail-section">
+                      <span className="sb-detail-section__label">Resubmit</span>
+                      {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
+                      <p className="sb-empty-note">
+                        Address the reviewer's comments above, attach any additional documents needed, then resubmit
+                        this {selected.type === 'event_application' ? 'application' : 'report'} for review.
+                      </p>
+                      <textarea
+                        className="sb-comment-box"
+                        rows={2}
+                        placeholder="Optional note to the reviewer about what changed..."
+                        value={resubmitNote}
+                        onChange={(e) => setResubmitNote(e.target.value)}
+                      />
+                      <button type="button" className="sb-btn sb-btn--gold sb-btn--full" onClick={handleResubmit} disabled={resubmitting}>
+                        {resubmitting ? <Loader2 size={15} className="spin" /> : <><Undo2 size={14} /> Resubmit for Review</>}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ---------- Reviewer actions ---------- */}
+                  {canReview && !['approved', 'returned', 'rejected'].includes(selected.stage) && (() => {
+                    const nextAction = nextActionFor(profile.role, selected.stage, selected.type)
+                    if (!nextAction) return null
+
+                    const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
+                      && (selected.stage === 'submitted' || selected.stage === 'assistant_review')
+                    const blocked = assistantTurn && openTasks.length > 0
+
+                    return (
+                      <div className="sb-review-actions">
+                        {actionMode === 'return' || actionMode === 'reject' ? (
+                          <>
+                            {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
+                            <textarea
+                              className="sb-comment-box"
+                              rows={2}
+                              placeholder={`Reason for ${actionMode === 'return' ? 'returning' : 'rejecting'} this submission...`}
+                              value={actionComment}
+                              onChange={(e) => setActionComment(e.target.value)}
+                            />
+                            <div className="sb-review-actions__row">
+                              <button className="sb-btn sb-btn--outline" onClick={() => setActionMode(null)} disabled={acting}>Cancel</button>
+                              <button
+                                className={`sb-btn ${actionMode === 'return' ? 'sb-btn--warn' : 'sb-btn--danger'}`}
+                                onClick={() => performAction(actionMode, nextAction)}
+                                disabled={acting}
+                              >
+                                {acting ? <Loader2 size={15} className="spin" /> : `Confirm ${actionMode === 'return' ? 'Return' : 'Reject'}`}
+                              </button>
+                            </div>
+                          </>
+                        ) : actionMode === 'conditional' ? (
+                          <>
+                            {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
+                            <p className="sb-empty-note">
+                              Forward this to the SDAO Supervisor now, but the outstanding task(s) above still need
+                              completing by this deadline:
+                            </p>
+                            <label className="sb-field">
+                              Task Deadline
+                              <input type="date" value={conditionalDueDate} onChange={(e) => setConditionalDueDate(e.target.value)} required />
+                            </label>
+                            <div className="sb-review-actions__row">
+                              <button className="sb-btn sb-btn--outline" onClick={() => setActionMode(null)} disabled={acting}>Cancel</button>
+                              <button className="sb-btn sb-btn--gold" onClick={() => performConditionalApprove(nextAction)} disabled={acting}>
+                                {acting ? <Loader2 size={15} className="spin" /> : 'Confirm & Forward'}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="sb-review-actions__row">
+                            <button className="sb-btn sb-btn--warn-outline" onClick={() => setActionMode('return')}>
+                              <Undo2 size={14} /> Return for Revision
+                            </button>
+                            <button className="sb-btn sb-btn--danger" onClick={() => setActionMode('reject')}>
+                              <Ban size={14} /> Reject
+                            </button>
+                            {blocked ? (
+                              <button className="sb-btn sb-btn--gold" onClick={() => setActionMode('conditional')}>
+                                <CalendarClock size={14} /> Conditional Approve
+                              </button>
+                            ) : (
+                              <button className="sb-btn sb-btn--success" onClick={() => performAction('advance', nextAction)} disabled={acting}>
+                                {acting ? <Loader2 size={15} className="spin" /> : <><CheckCircle2 size={14} /> {nextAction.label}</>}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
-              )
-            })()}
+
+                {/* ---------- Right: file viewer ---------- */}
+                <div className="sb-review__right">
+                  <div className="sb-viewer">
+                    {attachments.length > 0 && (
+                      <div className="sb-viewer__tabs">
+                        {attachments.map((a) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            className={`sb-viewer__tab ${a.id === viewerAttachmentId ? 'sb-viewer__tab--active' : ''}`}
+                            onClick={() => setViewerAttachmentId(a.id)}
+                          >
+                            {a.document_type}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="sb-viewer__frame">
+                      {activeAttachment ? (
+                        isPreviewable(activeAttachment.file_url, activeAttachment.document_type) ? (
+                          <iframe src={activeAttachment.file_url} title={activeAttachment.document_type} />
+                        ) : (
+                          <div className="sb-viewer__placeholder">
+                            <FileText size={30} strokeWidth={1.4} />
+                            <p>Preview isn't available for this file type.</p>
+                            <a href={activeAttachment.file_url} target="_blank" rel="noreferrer" className="sb-btn sb-btn--outline sb-btn--sm">
+                              <Download size={13} /> Open File
+                            </a>
+                          </div>
+                        )
+                      ) : (
+                        <div className="sb-viewer__empty">
+                          <span className="sb-viewer__watermark">FILE VIEWER</span>
+                          <p>No attachments to preview yet.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
+}
+
+function isPreviewable(url, docType) {
+  if (!url) return false
+  if (['Liquidation Report'].includes(docType)) return false
+  const lower = url.toLowerCase().split('?')[0]
+  if (/\.(xlsx|xls|doc|docx|ppt|pptx|zip|rar)$/.test(lower)) return false
+  return true
 }
 
 function AttachmentRow({ label, entry, onChange, template, accept, formatHint }) {

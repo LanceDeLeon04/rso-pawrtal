@@ -202,6 +202,36 @@ create table submission_status_history (
   created_at timestamptz not null default now()
 );
 
+-- Reviewer checklist ("Additional Requirements") — free-form items a
+-- reviewer builds per submission, e.g. "ITSO Endorsement".
+create table submission_checklist_items (
+  id uuid primary key default gen_random_uuid(),
+  submission_id uuid not null references submissions(id) on delete cascade,
+  label text not null,
+  is_checked boolean not null default false,
+  created_by uuid not null references profiles(id),
+  checked_by uuid references profiles(id),
+  checked_at timestamptz,
+  created_at timestamptz not null default now(),
+  sort_order int not null default 0
+);
+
+create index idx_checklist_items_submission on submission_checklist_items(submission_id);
+
+-- Paginated review comments, each optionally pinned to a page number
+-- in the attached document being reviewed.
+create table submission_comments (
+  id uuid primary key default gen_random_uuid(),
+  submission_id uuid not null references submissions(id) on delete cascade,
+  page_number text,
+  body text not null default '',
+  author_id uuid not null references profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index idx_submission_comments_submission on submission_comments(submission_id);
+
 -- ---------- ASSIGNMENTS ----------
 -- Tasks + deliverables. A reviewer creates a task targeting a specific
 -- user, a cross-org position tag (e.g. "Treasurer"), or a whole org.
@@ -290,6 +320,8 @@ alter table events enable row level security;
 alter table submissions enable row level security;
 alter table submission_attachments enable row level security;
 alter table submission_status_history enable row level security;
+alter table submission_checklist_items enable row level security;
+alter table submission_comments enable row level security;
 alter table clearances enable row level security;
 alter table assignments enable row level security;
 alter table assignment_deliverables enable row level security;
@@ -422,6 +454,17 @@ create policy submissions_insert on submissions for insert
 create policy submissions_update_admin on submissions for update
   using (is_admin_tier());
 
+-- Lets the owning org move their own "returned" submission back into
+-- the review queue (resubmit) after addressing reviewer feedback.
+create policy submissions_resubmit_owner on submissions for update
+  using (
+    stage = 'returned'
+    and org_id in (select org_id from org_memberships where profile_id = auth.uid())
+  )
+  with check (
+    org_id in (select org_id from org_memberships where profile_id = auth.uid())
+  );
+
 create policy submission_attachments_select on submission_attachments for select
   using (
     is_admin_tier()
@@ -454,6 +497,42 @@ create policy submission_status_history_select on submission_status_history for 
 
 create policy submission_status_history_insert on submission_status_history for insert
   with check (is_admin_tier());
+
+-- Checklist: visible to admins/reviewers and the owning org; only
+-- reviewers (admin tier) can create/update/delete items.
+create policy submission_checklist_select on submission_checklist_items for select
+  using (
+    is_admin_tier()
+    or exists (
+      select 1 from submissions s
+      join org_memberships m on m.org_id = s.org_id and m.profile_id = auth.uid()
+      where s.id = submission_checklist_items.submission_id
+    )
+  );
+
+create policy submission_checklist_write on submission_checklist_items for all
+  using (is_admin_tier())
+  with check (is_admin_tier());
+
+-- Comments: same visibility as checklist; only reviewers can post.
+create policy submission_comments_select on submission_comments for select
+  using (
+    is_admin_tier()
+    or exists (
+      select 1 from submissions s
+      join org_memberships m on m.org_id = s.org_id and m.profile_id = auth.uid()
+      where s.id = submission_comments.submission_id
+    )
+  );
+
+create policy submission_comments_write on submission_comments for insert
+  with check (is_admin_tier());
+
+create policy submission_comments_update on submission_comments for update
+  using (is_admin_tier() and author_id = auth.uid());
+
+create policy submission_comments_delete on submission_comments for delete
+  using (is_admin_tier() and author_id = auth.uid());
 
 create policy clearances_select on clearances for select
   using (

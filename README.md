@@ -178,6 +178,20 @@ server-side **Edge Function** instead of a direct client call.
    never had RLS enabled at all, leaving them wide open to any
    authenticated user.
 
+### Extra setup for the Submission Bin review workspace
+
+The Submission Bin detail view is now a full review workspace: a file
+viewer for the attached documents, a reviewer checklist ("Additional
+Requirements"), paginated review comments (each optionally pinned to a
+page number), and resubmission with extra attachments after a Return.
+
+If you already ran the earlier schema/migrations, run
+`supabase/migrations/012_review_checklist_comments.sql`. It adds the
+`submission_checklist_items` and `submission_comments` tables (with RLS:
+reviewers can create/toggle/comment, the owning org can read) and a
+policy letting an org move its own `returned` submission back into the
+queue (resubmit).
+
 ## Status
 
 All pages from the original brief are now built: Login, Dashboard,
