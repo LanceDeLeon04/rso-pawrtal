@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Users, Plus, Loader2, AlertCircle, CheckCircle2, Building2, Copy,
-  Tag, Trash2, X, Camera, Mail, Phone,
+  Tag, Trash2, X, Camera, Mail, Phone, Pencil, Check,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import './Accounts.css'
@@ -243,6 +243,55 @@ function OrganizationsSection({ orgs, onChanged }) {
   const [error, setError] = useState('')
   const [showForm, setShowForm] = useState(false)
 
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState(EMPTY_ORG_FORM)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+
+  function startEdit(org) {
+    setEditingId(org.id)
+    setEditError('')
+    setEditForm({
+      name: org.name || '',
+      acronym: org.acronym || '',
+      category: org.category || '',
+      adviser_name: org.adviser_name || '',
+      accreditation_status: org.accreditation_status || 'pending',
+      contact_email: org.contact_email || '',
+      contact_number: org.contact_number || '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditError('')
+  }
+
+  async function saveEdit(orgId) {
+    setEditError('')
+    if (!editForm.name.trim() || !editForm.acronym.trim()) {
+      setEditError('Name and acronym are required.')
+      return
+    }
+    setEditSaving(true)
+    const { error: err } = await supabase.from('organizations').update({
+      name: editForm.name.trim(),
+      acronym: editForm.acronym.trim(),
+      category: editForm.category.trim() || null,
+      adviser_name: editForm.adviser_name.trim() || null,
+      accreditation_status: editForm.accreditation_status,
+      contact_email: editForm.contact_email.trim() || null,
+      contact_number: editForm.contact_number.trim() || null,
+    }).eq('id', orgId)
+    setEditSaving(false)
+    if (err) {
+      setEditError(err.message?.includes('duplicate') ? 'That acronym is already in use.' : 'Could not save changes.')
+      return
+    }
+    setEditingId(null)
+    onChanged()
+  }
+
   async function handleAdd(e) {
     e.preventDefault()
     setError('')
@@ -379,52 +428,128 @@ function OrganizationsSection({ orgs, onChanged }) {
         </form>
       )}
 
+      {editError && <div className="acc-error"><AlertCircle size={14} /> {editError}</div>}
+
       <table className="acc-table">
         <thead>
           <tr>
             <th>Logo</th><th>Acronym</th><th>Name</th><th>Category</th><th>Adviser</th>
-            <th>Contact</th><th>Accreditation</th><th>Status</th>
+            <th>Contact</th><th>Accreditation</th><th>Status</th><th />
           </tr>
         </thead>
         <tbody>
-          {orgs.map((o) => (
-            <tr key={o.id}>
-              <td>
-                <label className="acc-logo-cell">
-                  {o.logo_url ? <img src={o.logo_url} alt="" /> : <Camera size={13} />}
-                  <input type="file" accept="image/*" onChange={(e) => handleLogoReplace(o, e.target.files?.[0] || null)} hidden />
-                </label>
-              </td>
-              <td className="acc-table__strong">{o.acronym}</td>
-              <td>{o.name}</td>
-              <td>{o.category || '—'}</td>
-              <td>{o.adviser_name || '—'}</td>
-              <td>
-                {o.contact_email && <div className="acc-contact-line"><Mail size={11} /> {o.contact_email}</div>}
-                {o.contact_number && <div className="acc-contact-line"><Phone size={11} /> {o.contact_number}</div>}
-                {!o.contact_email && !o.contact_number && '—'}
-              </td>
-              <td>
-                <select
-                  className={`acc-accred-select acc-accred-select--${o.accreditation_status}`}
-                  value={o.accreditation_status}
-                  onChange={(e) => updateStatus(o, e.target.value)}
-                >
-                  {Object.entries(ACCREDITATION_LABELS).map(([v, label]) => (
-                    <option key={v} value={v}>{label}</option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <button
-                  className={`acc-status-badge acc-status-badge--${o.is_active ? 'active' : 'inactive'}`}
-                  onClick={() => toggleActive(o)}
-                >
-                  {o.is_active ? 'Active' : 'Inactive'}
-                </button>
-              </td>
-            </tr>
-          ))}
+          {orgs.map((o) => {
+            const isEditing = editingId === o.id
+            return (
+              <tr key={o.id}>
+                <td>
+                  <label className="acc-logo-cell">
+                    {o.logo_url ? <img src={o.logo_url} alt="" /> : <Camera size={13} />}
+                    <input type="file" accept="image/*" onChange={(e) => handleLogoReplace(o, e.target.files?.[0] || null)} hidden />
+                  </label>
+                </td>
+
+                {isEditing ? (
+                  <>
+                    <td>
+                      <input
+                        className="acc-inline-input"
+                        value={editForm.acronym}
+                        onChange={(e) => setEditForm({ ...editForm, acronym: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="acc-inline-input"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="acc-inline-input"
+                        placeholder="e.g. Academic"
+                        value={editForm.category}
+                        onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="acc-inline-input"
+                        value={editForm.adviser_name}
+                        onChange={(e) => setEditForm({ ...editForm, adviser_name: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="acc-inline-input"
+                        type="email"
+                        placeholder="Contact email"
+                        value={editForm.contact_email}
+                        onChange={(e) => setEditForm({ ...editForm, contact_email: e.target.value })}
+                      />
+                      <input
+                        className="acc-inline-input"
+                        placeholder="Contact number"
+                        value={editForm.contact_number}
+                        onChange={(e) => setEditForm({ ...editForm, contact_number: e.target.value })}
+                      />
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="acc-table__strong">{o.acronym}</td>
+                    <td>{o.name}</td>
+                    <td>{o.category || '—'}</td>
+                    <td>{o.adviser_name || '—'}</td>
+                    <td>
+                      {o.contact_email && <div className="acc-contact-line"><Mail size={11} /> {o.contact_email}</div>}
+                      {o.contact_number && <div className="acc-contact-line"><Phone size={11} /> {o.contact_number}</div>}
+                      {!o.contact_email && !o.contact_number && '—'}
+                    </td>
+                  </>
+                )}
+
+                <td>
+                  <select
+                    className={`acc-accred-select acc-accred-select--${isEditing ? editForm.accreditation_status : o.accreditation_status}`}
+                    value={isEditing ? editForm.accreditation_status : o.accreditation_status}
+                    onChange={(e) => isEditing
+                      ? setEditForm({ ...editForm, accreditation_status: e.target.value })
+                      : updateStatus(o, e.target.value)}
+                  >
+                    {Object.entries(ACCREDITATION_LABELS).map(([v, label]) => (
+                      <option key={v} value={v}>{label}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <button
+                    className={`acc-status-badge acc-status-badge--${o.is_active ? 'active' : 'inactive'}`}
+                    onClick={() => toggleActive(o)}
+                  >
+                    {o.is_active ? 'Active' : 'Inactive'}
+                  </button>
+                </td>
+                <td>
+                  {isEditing ? (
+                    <div className="acc-edit-actions">
+                      <button className="acc-icon-btn" onClick={() => saveEdit(o.id)} disabled={editSaving} title="Save">
+                        {editSaving ? <Loader2 size={13} className="spin" /> : <Check size={13} />}
+                      </button>
+                      <button className="acc-icon-btn" onClick={cancelEdit} disabled={editSaving} title="Cancel">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button className="acc-icon-btn" onClick={() => startEdit(o)} title="Edit">
+                      <Pencil size={13} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

@@ -347,6 +347,27 @@
 .acc-accred-select--probationary { background: #fff4de; color: #a5680b; }
 .acc-accred-select--pending { background: #eef1f6; color: var(--muted); }
 
+.acc-inline-input {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+.acc-inline-input + .acc-inline-input {
+  margin-top: 4px;
+}
+
+.acc-edit-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .acc-icon-btn {
   display: flex;
   align-items: center;
