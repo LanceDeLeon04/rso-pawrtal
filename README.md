@@ -123,8 +123,12 @@ download these). If you already ran schema.sql before this phase, run
 
 - **Settings** — everyone can update their display name, upload a profile
   photo, and change their password. Admins additionally get a "Manage User
-  Names" table listing every account (name, email, role, org) with inline
-  editing, for correcting or updating any user's display name.
+  Accounts" table listing every account (name, email, role, org) with
+  inline name editing, plus an **Active/Inactive toggle** — deactivating
+  an account immediately blocks that person from signing in (enforced in
+  the auth layer, not just hidden in the UI), and signs out any of their
+  existing sessions the next time the app checks. Admins can't deactivate
+  their own account.
 
 ### Extra setup for Settings
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
-  Loader2, AlertCircle, CheckCircle2,
+  Loader2, AlertCircle, CheckCircle2, UserCheck, UserX,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -177,6 +177,7 @@ function UserManagementSection({ currentProfileId }) {
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [savingId, setSavingId] = useState(null)
+  const [togglingId, setTogglingId] = useState(null)
 
   useEffect(() => { loadUsers() }, [])
 
@@ -213,10 +214,21 @@ function UserManagementSection({ currentProfileId }) {
     }
   }
 
+  async function toggleActive(u) {
+    setTogglingId(u.id)
+    const { error: err } = await supabase.from('profiles').update({ is_active: !u.is_active }).eq('id', u.id)
+    setTogglingId(null)
+    if (!err) {
+      setUsers(users.map((x) => (x.id === u.id ? { ...x, is_active: !u.is_active } : x)))
+    }
+  }
+
   return (
     <div className="set-card">
-      <span className="set-card__label"><Users size={13} /> Manage User Names</span>
-      <p className="set-card__sub">Admins can correct or update the display name for any account.</p>
+      <span className="set-card__label"><Users size={13} /> Manage User Accounts</span>
+      <p className="set-card__sub">
+        Correct any account's display name, or deactivate one to immediately block that person from signing in.
+      </p>
 
       {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
 
@@ -225,7 +237,7 @@ function UserManagementSection({ currentProfileId }) {
       ) : (
         <table className="set-table">
           <thead>
-            <tr><th>Name</th><th>Email</th><th>Role</th><th>Org</th><th /></tr>
+            <tr><th>Name</th><th>Email</th><th>Role</th><th>Org</th><th>Status</th><th /></tr>
           </thead>
           <tbody>
             {users.map((u) => (
@@ -243,6 +255,23 @@ function UserManagementSection({ currentProfileId }) {
                 <td>{u.email}</td>
                 <td>{u.role.replace(/_/g, ' ')}</td>
                 <td>{u.org_memberships?.map((m) => m.organizations?.acronym).filter(Boolean).join(', ') || '—'}</td>
+                <td>
+                  <button
+                    className={`set-status-badge set-status-badge--${u.is_active ? 'active' : 'inactive'}`}
+                    onClick={() => toggleActive(u)}
+                    disabled={togglingId === u.id || u.id === currentProfileId}
+                    title={u.id === currentProfileId ? "You can't deactivate your own account" : u.is_active ? 'Click to deactivate' : 'Click to reactivate'}
+                  >
+                    {togglingId === u.id ? (
+                      <Loader2 size={11} className="spin" />
+                    ) : u.is_active ? (
+                      <UserCheck size={11} />
+                    ) : (
+                      <UserX size={11} />
+                    )}
+                    {u.is_active ? 'Active' : 'Inactive'}
+                  </button>
+                </td>
                 <td>
                   {editingId === u.id ? (
                     <div className="set-row-actions">

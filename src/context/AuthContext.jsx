@@ -25,7 +25,7 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase
       .from('profiles')
       .select(`
-        id, full_name, email, role, photo_url, must_change_password,
+        id, full_name, email, role, photo_url, must_change_password, is_active,
         org_memberships:org_memberships ( org_id, position, is_primary, organizations ( name, acronym ) ),
         admin_viewer_scopes ( scope )
       `)
@@ -35,22 +35,39 @@ export function AuthProvider({ children }) {
     if (error) {
       console.error('Failed to load profile', error)
       setProfile(null)
-    } else {
-      setProfile(data)
+      return null
     }
+    setProfile(data)
+    return data
+  }
+
+  // If an admin deactivates an account, this signs it out immediately —
+  // both on explicit sign-in and on any existing/refreshed session.
+  async function enforceActive(loadedProfile) {
+    if (loadedProfile && loadedProfile.is_active === false) {
+      await supabase.auth.signOut()
+      setSession(null)
+      setProfile(null)
+      return false
+    }
+    return true
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session)
-      if (session?.user) loadProfile(session.user.id)
+      if (session?.user) {
+        const p = await loadProfile(session.user.id)
+        await enforceActive(p)
+      }
       setLoading(false)
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session)
       if (session?.user) {
-        loadProfile(session.user.id)
+        const p = await loadProfile(session.user.id)
+        await enforceActive(p)
       } else {
         setProfile(null)
       }
@@ -65,7 +82,12 @@ export function AuthProvider({ children }) {
       password,
     })
     if (error) return { error }
-    await loadProfile(data.user.id)
+
+    const loadedProfile = await loadProfile(data.user.id)
+    const stillActive = await enforceActive(loadedProfile)
+    if (!stillActive) {
+      return { error: { message: 'ACCOUNT_DEACTIVATED' } }
+    }
     return { data }
   }
 

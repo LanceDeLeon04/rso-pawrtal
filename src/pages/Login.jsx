@@ -25,7 +25,11 @@ export default function Login() {
     setSubmitting(false)
 
     if (signInError) {
-      setError('Incorrect email or password. Please try again.')
+      setError(
+        signInError.message === 'ACCOUNT_DEACTIVATED'
+          ? 'This account has been deactivated. Please contact SDAO.'
+          : 'Incorrect email or password. Please try again.'
+      )
       return
     }
 
