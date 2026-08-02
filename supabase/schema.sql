@@ -33,6 +33,8 @@ create type clearance_status as enum ('pending', 'cleared', 'overdue', 'extended
 
 create type activity_medium as enum ('f2f', 'online', 'off_campus');
 
+create type accreditation_status as enum ('accredited', 'probationary', 'pending');
+
 -- ---------- ORGANIZATIONS ----------
 create table organizations (
   id uuid primary key default gen_random_uuid(),
@@ -40,6 +42,10 @@ create table organizations (
   acronym text not null unique,
   category text, -- e.g. Academic, Special Interest, Fraternal
   adviser_name text,
+  logo_url text,
+  accreditation_status accreditation_status not null default 'pending',
+  contact_email text,
+  contact_number text,
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -252,6 +258,9 @@ create index idx_clearances_org_status on clearances(org_id, status);
 alter table profiles enable row level security;
 alter table organizations enable row level security;
 alter table org_memberships enable row level security;
+alter table admin_viewer_scopes enable row level security;
+alter table profile_tags enable row level security;
+alter table venues enable row level security;
 alter table events enable row level security;
 alter table submissions enable row level security;
 alter table submission_attachments enable row level security;
@@ -279,6 +288,50 @@ $$ language sql stable security definer;
 -- for every non-admin user — breaking org-scoped visibility everywhere.
 create policy org_memberships_select on org_memberships for select
   using (profile_id = auth.uid() or is_admin_tier());
+
+-- Needed so admins can assign RSO officers to an org + position from
+-- Accounts (this doubles as the cross-org tagging mechanism, e.g. "all
+-- Treasurers" = every org_membership row with position = 'Treasurer').
+create policy org_memberships_write_admin on org_memberships for all
+  using (is_admin_tier())
+  with check (is_admin_tier());
+
+-- BUG FIX: organizations had RLS enabled with NO policy at all — every
+-- org dropdown across Calendar, Submission Bin, Assignments, and the
+-- Dashboard's active-org count has been silently returning zero rows for
+-- every role, admins included, since organizations select was never
+-- explicitly granted.
+create policy organizations_select on organizations for select using (true);
+
+create policy organizations_write_admin on organizations for all
+  using (is_admin_tier())
+  with check (is_admin_tier());
+
+-- BUG FIX: venues never had RLS enabled at all, which meant it was wide
+-- open — any authenticated user could insert/update/delete venue rows,
+-- not just read them.
+create policy venues_select on venues for select using (true);
+
+create policy venues_write_admin on venues for all
+  using (is_admin_tier())
+  with check (is_admin_tier());
+
+-- BUG FIX: admin_viewer_scopes never had RLS enabled at all (wide open).
+create policy admin_viewer_scopes_select on admin_viewer_scopes for select
+  using (profile_id = auth.uid() or is_admin_tier());
+
+create policy admin_viewer_scopes_write_admin on admin_viewer_scopes for all
+  using (is_admin_tier())
+  with check (is_admin_tier());
+
+-- BUG FIX: profile_tags never had RLS enabled at all (wide open). Not yet
+-- surfaced in the UI, but locked down defensively so it isn't an open door.
+create policy profile_tags_select on profile_tags for select
+  using (profile_id = auth.uid() or is_admin_tier());
+
+create policy profile_tags_write_admin on profile_tags for all
+  using (is_admin_tier())
+  with check (is_admin_tier());
 
 -- Everyone can read their own profile; admins can read all.
 create policy profiles_select on profiles for select
@@ -493,3 +546,15 @@ create policy avatars_storage_write on storage.objects
 
 create policy avatars_storage_update on storage.objects
   for update using (bucket_id = 'avatars' and auth.role() = 'authenticated');
+
+-- Create the bucket from the Supabase dashboard first:
+-- Storage -> New bucket -> name it exactly "org-logos" (public is fine —
+-- logos render in Accounts and org-facing pages for everyone).
+create policy org_logos_storage_read on storage.objects
+  for select using (bucket_id = 'org-logos');
+
+create policy org_logos_storage_write on storage.objects
+  for insert with check (bucket_id = 'org-logos' and is_admin_tier());
+
+create policy org_logos_storage_update on storage.objects
+  for update using (bucket_id = 'org-logos' and is_admin_tier());

@@ -141,6 +141,37 @@ download these). If you already ran schema.sql before this phase, run
    which would have silently blocked admin name corrections) and the
    avatar storage policies.
 
-## Roadmap (next phases)
+- **Accounts** — admin-tier accounts (System Admin and other admins) can:
+  create new logins (RSO Officer or admin-tier, with an org + position
+  for officers and optional viewer-scope restriction for admins — shows a
+  one-time temporary password to hand to the new user), add organizations,
+  and manage org memberships/position tags for anyone (this is the same
+  "all Treasurers across all orgs" tagging mechanism Assignments uses).
 
-1. **Accounts** — admin account/role creation, org membership + tagging.
+### Extra setup for Accounts
+
+Creating another person's login requires Supabase's service-role key,
+which must never reach the browser — so account creation runs through a
+server-side **Edge Function** instead of a direct client call.
+
+1. Install the Supabase CLI if you haven't: `npm install -g supabase`
+2. From the project root: `supabase login`, then
+   `supabase link --project-ref <your-project-ref>`
+3. Deploy the function: `supabase functions deploy create-account`
+   (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided
+   automatically by the platform — no manual secret-setting needed.)
+4. If you already ran the earlier schema/migrations, also run
+   `supabase/migrations/006_accounts.sql`. Besides the org_memberships
+   write policy Accounts needs, it fixes three RLS gaps this phase
+   surfaced: **`organizations` had RLS enabled with zero policies**,
+   which means every org dropdown in the entire app (Calendar, Submission
+   Bin, Assignments, Dashboard) has been silently empty for every role
+   this whole time; and `venues` / `admin_viewer_scopes` / `profile_tags`
+   never had RLS enabled at all, leaving them wide open to any
+   authenticated user.
+
+## Status
+
+All pages from the original brief are now built: Login, Dashboard,
+Calendar of Activities, Submission Bin, Templates, Clearance, Assignments,
+Settings, and Accounts.
