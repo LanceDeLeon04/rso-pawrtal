@@ -13,6 +13,56 @@ import './SubmissionBin.css'
 const EVENT_APP_DOCS = ['ACP Form', 'Attachments Template']
 const REPORT_DOCS = ['PARF Template', 'Liquidation Report', 'Narrative Report', 'Evaluation Report']
 
+// Finance/Liquidation documents must be Excel; everything else must be PDF.
+const FINANCE_DOCS = ['Liquidation Report']
+function acceptedExtsFor(docType) {
+  return FINANCE_DOCS.includes(docType) ? ['xlsx', 'xls'] : ['pdf']
+}
+function acceptAttrFor(docType) {
+  return FINANCE_DOCS.includes(docType) ? '.xlsx,.xls' : '.pdf'
+}
+function formatHintFor(docType) {
+  return FINANCE_DOCS.includes(docType) ? 'Excel (.xlsx/.xls)' : 'PDF only'
+}
+
+// Attachment entries can be either a File (uploaded) or { type: 'link', url }
+// (pasted link, e.g. a Google Drive share link).
+function validateAttachmentEntry(docType, entry) {
+  if (!entry) return `${docType} is required — upload a file or paste a link.`
+  if (entry.type === 'link') {
+    if (!/^https?:\/\/\S+$/i.test((entry.url || '').trim())) {
+      return `Please enter a valid link (starting with http:// or https://) for ${docType}.`
+    }
+    return null
+  }
+  const ext = (entry.name.split('.').pop() || '').toLowerCase()
+  if (!acceptedExtsFor(docType).includes(ext)) {
+    return `${docType} must be a ${formatHintFor(docType)} file — or paste a link instead.`
+  }
+  return null
+}
+
+// Venues tagged to Facilities Office vs INSPIRE Office — drives the
+// auto-tag, the pencil-booking reminder, and (Laboratory only) the
+// lab-owner endorsement question on the event application form.
+const FACILITIES_VENUES = ['Auditorium', 'LRC', 'Room', 'Laboratory']
+const INSPIRE_VENUES = [
+  'Multi-Sports Center', 'INSPIRE Lounge', 'Hoops Center', 'Wellness Center',
+  'High Performance Gym', 'AGETAC Pool', 'Driveway', 'Football Pitch',
+]
+// Venues that need a free-text specific (room number / which lab / what).
+const VENUE_DETAIL_PROMPTS = {
+  Room: 'Identify room number',
+  Laboratory: 'Identify which lab (e.g. ComLab)',
+  Others: 'Please specify',
+}
+
+function venueTagFor(name) {
+  if (FACILITIES_VENUES.includes(name)) return 'Facilities Office'
+  if (INSPIRE_VENUES.includes(name)) return 'INSPIRE Office'
+  return null
+}
+
 const STAGE_META = {
   draft: { label: 'Draft', tone: 'muted' },
   submitted: { label: 'With SDAO Assistant', tone: 'warn' },
@@ -24,23 +74,44 @@ const STAGE_META = {
   rejected: { label: 'Rejected', tone: 'danger' },
 }
 
-const STEPS = [
+const STEPS_EVENT_APP = [
   { key: 'submitted', label: 'SDAO Assistant' },
   { key: 'supervisor_endorsement', label: 'SDAO Supervisor' },
   { key: 'director_approval', label: 'Academic Director' },
   { key: 'approved', label: 'Approved' },
 ]
 
+// Reports don't need Supervisor/Director sign-off — they're closed out
+// as soon as the SDAO Assistant receives them.
+const STEPS_REPORT = [
+  { key: 'submitted', label: 'SDAO Assistant' },
+  { key: 'approved', label: 'Received' },
+]
+
 const REVIEWER_ROLES = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin']
 
-function stepIndexFor(stage) {
+function stepsFor(type) {
+  return type === 'report' ? STEPS_REPORT : STEPS_EVENT_APP
+}
+
+function stepIndexFor(type, stage) {
+  const steps = stepsFor(type)
   if (stage === 'assistant_review') return 0
-  const i = STEPS.findIndex((s) => s.key === stage)
+  const i = steps.findIndex((s) => s.key === stage)
   return i === -1 ? 0 : i
 }
 
-function nextActionFor(role, stage) {
+function nextActionFor(role, stage, type) {
   const assistantTurn = stage === 'submitted' || stage === 'assistant_review'
+
+  // Reports: SDAO Assistant just receives them — no forwarding chain.
+  if (type === 'report') {
+    if (assistantTurn && (role === 'sdao_assistant' || role === 'system_admin')) {
+      return { to: 'approved', action: 'received', label: 'Mark as Received' }
+    }
+    return null
+  }
+
   if (role === 'system_admin') {
     if (assistantTurn) return { to: 'supervisor_endorsement', action: 'checked', label: 'Check & Forward' }
     if (stage === 'supervisor_endorsement') return { to: 'director_approval', action: 'endorsed', label: 'Endorse & Forward' }
@@ -55,6 +126,7 @@ function nextActionFor(role, stage) {
 
 const EMPTY_APP_FORM = {
   title: '', contact_person: '', contact_number: '', venue_id: '',
+  venue_detail: '', pencil_booked: '', lab_endorsed: '',
   event_date: '', start_time: '', end_time: '', medium: 'f2f', description: '',
 }
 
@@ -120,7 +192,8 @@ export default function SubmissionBin() {
       .from('submissions')
       .select(`
         id, type, org_id, event_id, title, contact_person, contact_number,
-        venue_id, event_date, start_time, end_time, medium, description,
+        venue_id, venue_detail, venue_tag, pencil_booked, lab_endorsed,
+        event_date, start_time, end_time, medium, description,
         stage, submitted_by, submitted_at,
         organizations ( name, acronym ),
         venues ( name ),
@@ -154,7 +227,18 @@ export default function SubmissionBin() {
     return templates.find((t) => t.name.toLowerCase() === docName.toLowerCase())
   }
 
-  async function uploadAttachment(submissionId, docType, file) {
+  async function uploadAttachment(submissionId, docType, entry) {
+    // Pasted link — no storage upload needed, just record the URL.
+    if (entry.type === 'link') {
+      await supabase.from('submission_attachments').insert({
+        submission_id: submissionId,
+        document_type: docType,
+        file_url: entry.url.trim(),
+      })
+      return
+    }
+
+    const file = entry
     const ext = file.name.split('.').pop()
     const path = `${submissionId}/${docType.replace(/\s+/g, '-')}-${Date.now()}.${ext}`
     const { error: upErr } = await supabase.storage.from('submission-attachments').upload(path, file)
@@ -201,9 +285,29 @@ export default function SubmissionBin() {
       setFormError('Please fill in the event name, contact person, venue, date, and medium.')
       return
     }
-    if (!appFiles['ACP Form'] || !appFiles['Attachments Template']) {
-      setFormError('Both the ACP Form and Attachments Template are required.')
+
+    const selectedVenue = venues.find((v) => v.id === appForm.venue_id)
+    const venueName = selectedVenue?.name
+    const detailPrompt = VENUE_DETAIL_PROMPTS[venueName]
+    if (detailPrompt && !appForm.venue_detail.trim()) {
+      setFormError(`Please ${detailPrompt.toLowerCase()}.`)
       return
+    }
+    if (!appForm.pencil_booked) {
+      setFormError('Please confirm whether this has been pencil booked with INSPIRE or Facilities Office.')
+      return
+    }
+    if (venueName === 'Laboratory' && !appForm.lab_endorsed) {
+      setFormError('Please confirm whether the laboratory owner has endorsed this booking.')
+      return
+    }
+
+    for (const doc of EVENT_APP_DOCS) {
+      const err = validateAttachmentEntry(doc, appFiles[doc])
+      if (err) {
+        setFormError(err)
+        return
+      }
     }
 
     setSaving(true)
@@ -214,6 +318,10 @@ export default function SubmissionBin() {
       contact_person: appForm.contact_person,
       contact_number: appForm.contact_number || null,
       venue_id: appForm.venue_id,
+      venue_detail: detailPrompt ? appForm.venue_detail.trim() : null,
+      venue_tag: venueTagFor(venueName),
+      pencil_booked: appForm.pencil_booked === 'yes',
+      lab_endorsed: venueName === 'Laboratory' ? appForm.lab_endorsed === 'yes' : null,
       event_date: appForm.event_date,
       start_time: appForm.start_time || null,
       end_time: appForm.end_time || null,
@@ -254,9 +362,12 @@ export default function SubmissionBin() {
       setFormError('Please select which activity this report is for.')
       return
     }
-    if (REPORT_DOCS.some((d) => !reportFiles[d])) {
-      setFormError('All four report documents are required.')
-      return
+    for (const doc of REPORT_DOCS) {
+      const err = validateAttachmentEntry(doc, reportFiles[doc])
+      if (err) {
+        setFormError(err)
+        return
+      }
     }
 
     const clearance = openClearances.find((c) => c.id === reportClearanceId)
@@ -282,11 +393,12 @@ export default function SubmissionBin() {
         submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
       })
       if (clearance?.event_id) {
-        await supabase.from('assignments')
+        const { error: asgErr } = await supabase.from('assignments')
           .update({ status: 'submitted', submission_id: sub.id, updated_at: new Date().toISOString() })
           .eq('event_id', clearance.event_id)
           .eq('auto_generated', true)
           .in('status', ['pending', 'returned', 'conditional_approved'])
+        if (asgErr) console.error('Failed to update linked assignment status', asgErr)
       }
     } catch {
       setFormError('Report saved, but a file failed to upload — reopen it from the list to re-attach.')
@@ -377,6 +489,23 @@ export default function SubmissionBin() {
         await supabase.from('clearances')
           .update({ status: 'cleared', cleared_by: profile.id, cleared_at: new Date().toISOString(), report_submission_id: sub.id })
           .eq('org_id', sub.org_id).eq('event_id', sub.event_id)
+
+        // The Post-Activity Report task is done now that the report has
+        // been received — flip it to 'approved' so it stops showing as
+        // outstanding on the Assignments page. Match on submission_id
+        // (set when the report was submitted) and, as a fallback, on the
+        // event it closes out.
+        await supabase.from('assignments')
+          .update({ status: 'approved', updated_at: new Date().toISOString() })
+          .eq('submission_id', sub.id)
+          .neq('status', 'approved')
+        if (sub.event_id) {
+          await supabase.from('assignments')
+            .update({ status: 'approved', updated_at: new Date().toISOString() })
+            .eq('event_id', sub.event_id)
+            .eq('auto_generated', true)
+            .neq('status', 'approved')
+        }
       }
     }
 
@@ -502,9 +631,20 @@ export default function SubmissionBin() {
             <div className="sb-field-row">
               <label className="sb-field">
                 Venue
-                <select value={appForm.venue_id} onChange={(e) => setAppForm({ ...appForm, venue_id: e.target.value })} required>
+                <select
+                  value={appForm.venue_id}
+                  onChange={(e) => setAppForm({ ...appForm, venue_id: e.target.value, venue_detail: '', pencil_booked: '', lab_endorsed: '' })}
+                  required
+                >
                   <option value="">Select venue</option>
-                  {venues.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  {venues.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name === 'Room' ? 'Room (identify room number)'
+                        : v.name === 'Laboratory' ? 'Laboratory (identify which lab)'
+                        : v.name === 'Others' ? 'Others (specify)'
+                        : v.name}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="sb-field">
@@ -516,6 +656,55 @@ export default function SubmissionBin() {
                 </select>
               </label>
             </div>
+
+            {appForm.venue_id && (() => {
+              const selectedVenue = venues.find((v) => v.id === appForm.venue_id)
+              const venueName = selectedVenue?.name
+              const detailPrompt = VENUE_DETAIL_PROMPTS[venueName]
+              const tag = venueTagFor(venueName)
+              return (
+                <div className="sb-venue-booking">
+                  <div className="sb-form-notice">
+                    <AlertCircle size={14} />
+                    Ensure that you have pencil booked this with INSPIRE or Facilities Office before submitting.
+                  </div>
+
+                  {detailPrompt && (
+                    <label className="sb-field">
+                      {detailPrompt}
+                      <input
+                        value={appForm.venue_detail}
+                        onChange={(e) => setAppForm({ ...appForm, venue_detail: e.target.value })}
+                        placeholder={venueName === 'Room' ? 'e.g. Room 301' : venueName === 'Laboratory' ? 'e.g. ComLab (ITSO)' : 'e.g. Covered Court'}
+                        required
+                      />
+                    </label>
+                  )}
+
+                  {tag && <div className="sb-venue-tag">Tagged as <strong>{tag}</strong></div>}
+
+                  <label className="sb-field">
+                    Pencil Booked?
+                    <select value={appForm.pencil_booked} onChange={(e) => setAppForm({ ...appForm, pencil_booked: e.target.value })} required>
+                      <option value="">Select</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </label>
+
+                  {venueName === 'Laboratory' && (
+                    <label className="sb-field">
+                      Endorsed by Laboratory Owner? <span className="sb-optional">(e.g. ComLab — ITSO)</span>
+                      <select value={appForm.lab_endorsed} onChange={(e) => setAppForm({ ...appForm, lab_endorsed: e.target.value })} required>
+                        <option value="">Select</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )
+            })()}
 
             <div className="sb-field-row">
               <label className="sb-field">
@@ -543,9 +732,11 @@ export default function SubmissionBin() {
                 <AttachmentRow
                   key={doc}
                   label={doc}
-                  file={appFiles[doc]}
-                  onChange={(f) => setAppFiles({ ...appFiles, [doc]: f })}
+                  entry={appFiles[doc]}
+                  onChange={(v) => setAppFiles({ ...appFiles, [doc]: v })}
                   template={templateFor(doc)}
+                  accept={acceptAttrFor(doc)}
+                  formatHint={formatHintFor(doc)}
                 />
               ))}
             </div>
@@ -588,9 +779,11 @@ export default function SubmissionBin() {
                     <AttachmentRow
                       key={doc}
                       label={doc}
-                      file={reportFiles[doc]}
-                      onChange={(f) => setReportFiles({ ...reportFiles, [doc]: f })}
+                      entry={reportFiles[doc]}
+                      onChange={(v) => setReportFiles({ ...reportFiles, [doc]: v })}
                       template={templateFor(doc)}
+                      accept={acceptAttrFor(doc)}
+                      formatHint={formatHintFor(doc)}
                     />
                   ))}
                 </div>
@@ -623,23 +816,41 @@ export default function SubmissionBin() {
               </div>
             ) : (
               <div className="sb-stepper">
-                {STEPS.map((step, i) => {
-                  const current = stepIndexFor(selected.stage)
-                  const state = i < current ? 'done' : i === current ? 'active' : 'pending'
-                  return (
-                    <div key={step.key} className={`sb-step sb-step--${state}`}>
-                      <div className="sb-step__dot">{state === 'done' ? <Check size={11} /> : i + 1}</div>
-                      <span className="sb-step__label">{step.label}</span>
-                      {i < STEPS.length - 1 && <div className="sb-step__line" />}
-                    </div>
-                  )
-                })}
+                {(() => {
+                  const steps = stepsFor(selected.type)
+                  const current = stepIndexFor(selected.type, selected.stage)
+                  return steps.map((step, i) => {
+                    const state = i < current ? 'done' : i === current ? 'active' : 'pending'
+                    return (
+                      <div key={step.key} className={`sb-step sb-step--${state}`}>
+                        <div className="sb-step__dot">{state === 'done' ? <Check size={11} /> : i + 1}</div>
+                        <span className="sb-step__label">{step.label}</span>
+                        {i < steps.length - 1 && <div className="sb-step__line" />}
+                      </div>
+                    )
+                  })
+                })()}
               </div>
             )}
 
             {selected.type === 'event_application' && (
               <div className="sb-detail-grid">
-                <div className="sb-detail-row"><MapPin size={13} /> {selected.venues?.name || '—'}</div>
+                <div className="sb-detail-row">
+                  <MapPin size={13} />
+                  {selected.venues?.name || '—'}
+                  {selected.venue_detail && ` — ${selected.venue_detail}`}
+                  {selected.venue_tag && ` (${selected.venue_tag})`}
+                </div>
+                {selected.pencil_booked !== null && selected.pencil_booked !== undefined && (
+                  <div className="sb-detail-row">
+                    <Check size={13} /> Pencil Booked: {selected.pencil_booked ? 'Yes' : 'No'}
+                  </div>
+                )}
+                {selected.lab_endorsed !== null && selected.lab_endorsed !== undefined && (
+                  <div className="sb-detail-row">
+                    <Check size={13} /> Lab Owner Endorsed: {selected.lab_endorsed ? 'Yes' : 'No'}
+                  </div>
+                )}
                 <div className="sb-detail-row">
                   <Clock size={13} /> {selected.event_date}
                   {selected.start_time && ` · ${formatTime(selected.start_time)}`}
@@ -715,7 +926,7 @@ export default function SubmissionBin() {
             )}
 
             {canReview && !['approved', 'returned', 'rejected'].includes(selected.stage) && (() => {
-              const nextAction = nextActionFor(profile.role, selected.stage)
+              const nextAction = nextActionFor(profile.role, selected.stage, selected.type)
               if (!nextAction) return null
 
               const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
@@ -792,21 +1003,57 @@ export default function SubmissionBin() {
   )
 }
 
-function AttachmentRow({ label, file, onChange, template }) {
+function AttachmentRow({ label, entry, onChange, template, accept, formatHint }) {
+  const mode = entry?.type === 'link' ? 'link' : 'file'
+
+  function setMode(next) {
+    if (next === mode) return
+    onChange(next === 'link' ? { type: 'link', url: '' } : null)
+  }
+
   return (
     <div className="sb-attach-row">
-      <div className="sb-attach-row__label">
-        <span>{label}</span>
-        {template && (
-          <a href={template.file_url} target="_blank" rel="noreferrer" className="sb-attach-row__template">
-            Get template
-          </a>
-        )}
+      <div className="sb-attach-row__top">
+        <div className="sb-attach-row__label">
+          <span>{label} <span className="sb-attach-row__hint">({formatHint})</span></span>
+          {template && (
+            <a href={template.file_url} target="_blank" rel="noreferrer" className="sb-attach-row__template">
+              Get template
+            </a>
+          )}
+        </div>
+        <div className="sb-attach-row__mode-tabs">
+          <button
+            type="button"
+            className={`sb-attach-row__mode-tab ${mode === 'file' ? 'sb-attach-row__mode-tab--active' : ''}`}
+            onClick={() => setMode('file')}
+          >
+            Upload File
+          </button>
+          <button
+            type="button"
+            className={`sb-attach-row__mode-tab ${mode === 'link' ? 'sb-attach-row__mode-tab--active' : ''}`}
+            onClick={() => setMode('link')}
+          >
+            Paste Link
+          </button>
+        </div>
       </div>
-      <label className="sb-attach-row__input">
-        {file ? file.name : 'Choose file'}
-        <input type="file" onChange={(e) => onChange(e.target.files?.[0] || null)} hidden />
-      </label>
+
+      {mode === 'file' ? (
+        <label className="sb-attach-row__input">
+          {entry?.name || 'Choose file'}
+          <input type="file" accept={accept} onChange={(e) => onChange(e.target.files?.[0] || null)} hidden />
+        </label>
+      ) : (
+        <input
+          type="url"
+          className="sb-attach-row__link-input"
+          placeholder="https://drive.google.com/..."
+          value={entry?.url || ''}
+          onChange={(e) => onChange({ type: 'link', url: e.target.value })}
+        />
+      )}
     </div>
   )
 }

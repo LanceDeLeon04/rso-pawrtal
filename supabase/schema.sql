@@ -110,6 +110,11 @@ create table venues (
   is_active boolean not null default true
 );
 
+insert into venues (name) values
+  ('Auditorium'), ('Multi-Sports Center'), ('INSPIRE Lounge'), ('Hoops Center'),
+  ('Wellness Center'), ('High Performance Gym'), ('AGETAC Pool'), ('Driveway'),
+  ('Football Pitch'), ('Room'), ('Laboratory'), ('LRC'), ('Others');
+
 -- ---------- EVENTS / CALENDAR ----------
 create table events (
   id uuid primary key default gen_random_uuid(),
@@ -161,6 +166,13 @@ create table submissions (
   end_time time,
   medium activity_medium,
   description text,
+  -- Venue booking confirmation (see migration 009) — free-text detail for
+  -- Room/Laboratory/Others, the auto-derived office tag, whether it's
+  -- been pencil-booked, and (Laboratory only) lab-owner endorsement.
+  venue_detail text,
+  venue_tag text,
+  pencil_booked boolean,
+  lab_endorsed boolean,
   stage submission_stage not null default 'submitted',
   submitted_by uuid not null references profiles(id),
   submitted_at timestamptz not null default now(),
@@ -239,10 +251,16 @@ create table assignment_deliverables (
 -- ---------- CLEARANCE ----------
 -- One row per (org, event): report obligations after an event.
 -- No clearance -> org is blocked from submitting new event applications.
+-- A clearance issue can *also* come from a non-event assignment that
+-- went past its due_date (see migration 010) — in that case event_id is
+-- null, assignment_id points at the offending task, and `reason`
+-- explains it in the Clearance UI.
 create table clearances (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references organizations(id),
-  event_id uuid not null references events(id),
+  event_id uuid references events(id),
+  assignment_id uuid references assignments(id) on delete cascade,
+  reason text,
   status clearance_status not null default 'pending',
   report_submission_id uuid references submissions(id),
   deadline date not null,
@@ -250,10 +268,14 @@ create table clearances (
   cleared_by uuid references profiles(id),
   cleared_at timestamptz,
   created_at timestamptz not null default now(),
-  unique (org_id, event_id)
+  unique (org_id, event_id),
+  constraint clearances_target_check check (event_id is not null or assignment_id is not null)
 );
 
 create index idx_clearances_org_status on clearances(org_id, status);
+create index idx_clearances_assignment on clearances(assignment_id);
+create unique index clearances_org_assignment_unique
+  on clearances (org_id, assignment_id) where assignment_id is not null;
 
 -- ============================================================
 -- ROW LEVEL SECURITY
@@ -505,10 +527,25 @@ create policy assignment_deliverables_insert on assignment_deliverables for inse
   );
 
 -- ============================================================
+-- STORAGE — buckets
+-- Buckets are just rows in storage.buckets, so create them here
+-- instead of relying on a manual dashboard step (skipping that step
+-- is what causes the app to fail with "Bucket not found" / NoSuchBucket
+-- the first time someone tries to upload or download a file).
+-- ============================================================
+insert into storage.buckets (id, name, public)
+values
+  ('assignment-deliverables', 'assignment-deliverables', false),
+  ('submission-attachments', 'submission-attachments', false),
+  ('templates', 'templates', true),
+  ('avatars', 'avatars', true),
+  ('org-logos', 'org-logos', true)
+on conflict (id) do nothing;
+
+-- ============================================================
 -- STORAGE — submission attachments
--- Create the bucket from the Supabase dashboard first:
--- Storage -> New bucket -> name it exactly "submission-attachments"
--- (private). These policies then govern access to it.
+-- These policies govern access to the "submission-attachments" bucket
+-- created above (private).
 -- ============================================================
 create policy submission_attachments_storage_read on storage.objects
   for select using (bucket_id = 'submission-attachments' and auth.role() = 'authenticated');
@@ -516,10 +553,8 @@ create policy submission_attachments_storage_read on storage.objects
 create policy submission_attachments_storage_write on storage.objects
   for insert with check (bucket_id = 'submission-attachments' and auth.role() = 'authenticated');
 
--- Storage bucket for admin-uploaded templates (ACP Form, PARF, etc).
--- Create the bucket from the Supabase dashboard first:
--- Storage -> New bucket -> name it exactly "templates" (public is fine,
--- since every logged-in role is allowed to download these).
+-- Storage bucket for admin-uploaded templates (ACP Form, PARF, etc),
+-- created above (public, since every logged-in role can download these).
 create policy templates_storage_read on storage.objects
   for select using (bucket_id = 'templates');
 
@@ -527,20 +562,15 @@ create policy templates_storage_write on storage.objects
   for all using (bucket_id = 'templates' and is_admin_tier())
   with check (bucket_id = 'templates' and is_admin_tier());
 
--- Storage bucket for assignment deliverables.
--- Create the bucket from the Supabase dashboard first:
--- Storage -> New bucket -> name it exactly "assignment-deliverables"
--- (private).
+-- Storage bucket for assignment deliverables, created above (private).
 create policy assignment_deliverables_storage_read on storage.objects
   for select using (bucket_id = 'assignment-deliverables' and auth.role() = 'authenticated');
 
 create policy assignment_deliverables_storage_write on storage.objects
   for insert with check (bucket_id = 'assignment-deliverables' and auth.role() = 'authenticated');
 
--- Storage bucket for profile photos.
--- Create the bucket from the Supabase dashboard first:
--- Storage -> New bucket -> name it exactly "avatars" (public is fine —
--- these render in the topbar for everyone).
+-- Storage bucket for profile photos, created above (public — these
+-- render in the topbar for everyone).
 create policy avatars_storage_read on storage.objects
   for select using (bucket_id = 'avatars');
 
@@ -550,9 +580,8 @@ create policy avatars_storage_write on storage.objects
 create policy avatars_storage_update on storage.objects
   for update using (bucket_id = 'avatars' and auth.role() = 'authenticated');
 
--- Create the bucket from the Supabase dashboard first:
--- Storage -> New bucket -> name it exactly "org-logos" (public is fine —
--- logos render in Accounts and org-facing pages for everyone).
+-- org-logos bucket, created above (public — logos render in Accounts
+-- and org-facing pages for everyone).
 create policy org_logos_storage_read on storage.objects
   for select using (bucket_id = 'org-logos');
 

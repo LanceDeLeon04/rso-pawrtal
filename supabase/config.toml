@@ -13,3 +13,6 @@ verify_jwt = false
 
 [functions.delete-account]
 verify_jwt = false
+
+[functions.reset-password]
+verify_jwt = false

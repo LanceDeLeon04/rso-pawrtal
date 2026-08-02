@@ -29,10 +29,10 @@ function json(body, status = 200) {
 }
 
 function generatePassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
-  let pw = ''
-  for (let i = 0; i < 12; i++) pw += chars[Math.floor(Math.random() * chars.length)]
-  return pw
+  // Fixed default per SDAO's account-creation policy — every new account
+  // (and every password reset) starts on this password and must be
+  // changed on first sign-in (must_change_password is always set true).
+  return 'password123'
 }
 
 // RSO accounts belong to a *position* (e.g. "SCS-SC President"), not a

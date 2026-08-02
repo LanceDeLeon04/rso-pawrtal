@@ -191,6 +191,14 @@
 .asg-badge--danger { background: #fdecec; color: var(--danger); }
 .asg-badge--muted { background: var(--paper); color: var(--muted); }
 
+.asg-overdue-tag {
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  font-size: 9px;
+  padding: 2px 7px;
+}
+
 /* ---------- Modal ---------- */
 .asg-modal-backdrop {
   position: fixed;

@@ -33,19 +33,10 @@ export default function App() {
             <Route path="/submissions" element={<SubmissionBin />} />
             <Route path="/templates" element={<Templates />} />
             <Route path="/clearance" element={<Clearance />} />
-            <Route
-              path="/assignments"
-              element={
-                <ProtectedRoute
-                  allowedRoles={[
-                    'sdao_assistant', 'crso_chairperson', 'qmo',
-                    'sdao_supervisor', 'academic_director', 'system_admin',
-                  ]}
-                >
-                  <Assignments />
-                </ProtectedRoute>
-              }
-            />
+            {/* No allowedRoles here on purpose — RSO Officers need this page too,
+                to see and act on tasks assigned to them. Assignments.jsx itself
+                already gates creation/review controls to admin-tier roles. */}
+            <Route path="/assignments" element={<Assignments />} />
             <Route
               path="/accounts"
               element={

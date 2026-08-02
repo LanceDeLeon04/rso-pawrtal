@@ -54,10 +54,11 @@ export default function Clearance() {
     let q = supabase
       .from('clearances')
       .select(`
-        id, org_id, event_id, status, deadline, extended_deadline,
+        id, org_id, event_id, assignment_id, reason, status, deadline, extended_deadline,
         report_submission_id, cleared_at,
         organizations ( name, acronym ),
-        events ( title, event_date )
+        events ( title, event_date ),
+        assignments ( title, due_date )
       `)
       .order('deadline', { ascending: true })
 
@@ -126,12 +127,30 @@ export default function Clearance() {
   }
 
   async function handleManualClear(c) {
-    if (!window.confirm(`Mark ${c.organizations?.acronym}'s clearance for "${c.events?.title}" as cleared?`)) return
+    const what = c.events?.title || c.assignments?.title || c.reason || 'this item'
+    if (!window.confirm(`Mark ${c.organizations?.acronym}'s clearance for "${what}" as cleared?`)) return
     setClearingId(c.id)
     await supabase
       .from('clearances')
       .update({ status: 'cleared', cleared_by: profile.id, cleared_at: new Date().toISOString() })
       .eq('id', c.id)
+
+    // Keep the Assignments page in sync: clearing the issue here should
+    // also resolve the assignment that opened it, otherwise it keeps
+    // showing as outstanding there even though it's cleared here.
+    if (c.assignment_id) {
+      await supabase.from('assignments')
+        .update({ status: 'approved', updated_at: new Date().toISOString() })
+        .eq('id', c.assignment_id)
+        .neq('status', 'approved')
+    } else if (c.event_id) {
+      await supabase.from('assignments')
+        .update({ status: 'approved', updated_at: new Date().toISOString() })
+        .eq('event_id', c.event_id)
+        .eq('auto_generated', true)
+        .neq('status', 'approved')
+    }
+
     setClearingId(null)
     loadClearances()
   }
@@ -141,8 +160,8 @@ export default function Clearance() {
       <div className="clr-header">
         <h2 className="clr-header__title"><ShieldCheck size={17} color="var(--nu-blue-700)" /> Clearance</h2>
         <p className="clr-header__sub">
-          Every approved activity opens a report obligation due 7 days after the event date. No report, no new
-          submissions until it's cleared.
+          Every approved activity opens a report obligation due 7 days after the event date, and any non-event
+          task left past its due date opens one too. No report, no new submissions until it's cleared.
         </p>
       </div>
 
@@ -190,6 +209,7 @@ export default function Clearance() {
                 const meta = STATUS_META[c.status]
                 const effectiveDeadline = c.extended_deadline || c.deadline
                 const remaining = daysUntil(effectiveDeadline)
+                const isTaskIssue = !c.event_id
                 return (
                   <tr key={c.id}>
                     {admin && (
@@ -197,8 +217,11 @@ export default function Clearance() {
                         <span className="clr-org"><Building2 size={13} /> {c.organizations?.acronym}</span>
                       </td>
                     )}
-                    <td className="clr-table__title">{c.events?.title || '—'}</td>
-                    <td>{c.events?.event_date}</td>
+                    <td className="clr-table__title">
+                      {c.events?.title || c.assignments?.title || c.reason || '—'}
+                      {isTaskIssue && <span className="clr-task-tag">task</span>}
+                    </td>
+                    <td>{c.events?.event_date || '—'}</td>
                     <td>
                       {effectiveDeadline}
                       {c.status !== 'cleared' && (
@@ -216,8 +239,11 @@ export default function Clearance() {
                     </td>
                     <td>
                       <div className="clr-row-actions">
-                        {!admin && c.status !== 'cleared' && (
+                        {!admin && c.status !== 'cleared' && !isTaskIssue && (
                           <Link to="/submissions" className="clr-link-btn">Submit Report</Link>
+                        )}
+                        {!admin && c.status !== 'cleared' && isTaskIssue && (
+                          <Link to="/assignments" className="clr-link-btn">View Task</Link>
                         )}
                         {canManage && c.status !== 'cleared' && (
                           <>
@@ -250,7 +276,7 @@ export default function Clearance() {
             <button type="button" className="clr-modal__close" onClick={() => setExtendTarget(null)}><X size={18} /></button>
             <h3 className="clr-modal__title">Extend Deadline</h3>
             <p className="clr-modal__sub">
-              {extendTarget.organizations?.acronym} — {extendTarget.events?.title}
+              {extendTarget.organizations?.acronym} — {extendTarget.events?.title || extendTarget.assignments?.title || extendTarget.reason}
             </p>
 
             {extendError && <div className="clr-form-error"><AlertCircle size={14} /> {extendError}</div>}

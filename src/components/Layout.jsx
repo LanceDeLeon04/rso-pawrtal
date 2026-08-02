@@ -14,7 +14,7 @@ const NAV_ITEMS = [
   { to: '/submissions', label: 'Submission Bin', icon: Inbox },
   { to: '/templates', label: 'Templates', icon: FileText },
   { to: '/clearance', label: 'Clearance', icon: ShieldCheck },
-  { to: '/assignments', label: 'Assignments', icon: ClipboardList, adminOnly: true },
+  { to: '/assignments', label: 'Assignments', icon: ClipboardList },
   { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]

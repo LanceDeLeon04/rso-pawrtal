@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
+import { toISODate } from '../lib/dateUtils'
 import './Assignments.css'
 
 const STATUS_META = {
@@ -47,7 +48,7 @@ export default function Assignments() {
   const [selected, setSelected] = useState(null)
   const [deliverables, setDeliverables] = useState([])
   const [detailLoading, setDetailLoading] = useState(false)
-  const [deliverableFile, setDeliverableFile] = useState(null)
+  const [deliverableEntry, setDeliverableEntry] = useState(null) // File | { type: 'link', url }
   const [deliverableNote, setDeliverableNote] = useState('')
   const [submittingDeliverable, setSubmittingDeliverable] = useState(false)
   const [reviewMode, setReviewMode] = useState(null)
@@ -105,8 +106,59 @@ export default function Assignments() {
       setAssignments([])
     } else {
       setAssignments(data || [])
+      if (admin) reconcileClearanceIssues(data || [])
     }
     setLoading(false)
+  }
+
+  // A non-event assignment (no event_id) that's past its due_date turns
+  // into a clearance issue for the org(s) it targets — same blocking
+  // effect on new event applications as an unresolved activity report.
+  // There's no server cron, so (like Clearance.jsx's overdue self-heal)
+  // this reconciles on page load. Gated to admin-tier because resolving
+  // "which orgs does this tag/user belong to" needs cross-org visibility
+  // that RLS only grants admins.
+  async function reconcileClearanceIssues(list) {
+    const today = toISODate(new Date())
+    const overdue = (list || []).filter(
+      (a) =>
+        !a.event_id &&
+        a.due_date &&
+        a.due_date < today &&
+        ['pending', 'returned', 'conditional_approved'].includes(a.status)
+    )
+    if (overdue.length === 0) return
+
+    for (const a of overdue) {
+      let orgIds = []
+      if (a.assigned_org_id) {
+        orgIds = [a.assigned_org_id]
+      } else if (a.assigned_to) {
+        const { data: m } = await supabase.from('org_memberships').select('org_id').eq('profile_id', a.assigned_to)
+        orgIds = (m || []).map((r) => r.org_id)
+      } else if (a.assigned_tag) {
+        const { data: m } = await supabase.from('org_memberships').select('org_id').eq('position', a.assigned_tag)
+        orgIds = (m || []).map((r) => r.org_id)
+      }
+      if (orgIds.length === 0) continue
+
+      const { data: existing } = await supabase.from('clearances').select('org_id').eq('assignment_id', a.id)
+      const existingOrgIds = new Set((existing || []).map((c) => c.org_id))
+      const toCreate = [...new Set(orgIds)].filter((id) => !existingOrgIds.has(id))
+      if (toCreate.length === 0) continue
+
+      await Promise.all(
+        toCreate.map((orgId) =>
+          supabase.from('clearances').insert({
+            org_id: orgId,
+            assignment_id: a.id,
+            status: 'overdue',
+            deadline: a.due_date,
+            reason: `Overdue task: ${a.title}`,
+          })
+        )
+      )
+    }
   }
 
   function targetLabel(a) {
@@ -175,7 +227,7 @@ export default function Assignments() {
 
   async function openDetail(a) {
     setSelected(a)
-    setDeliverableFile(null)
+    setDeliverableEntry(null)
     setDeliverableNote('')
     setReviewMode(null)
     setReviewComment('')
@@ -196,26 +248,41 @@ export default function Assignments() {
 
   async function handleSubmitDeliverable(e) {
     e.preventDefault()
-    if (!deliverableFile) return
+    if (!deliverableEntry) return
     setSubmittingDeliverable(true)
 
-    const ext = deliverableFile.name.split('.').pop()
-    const path = `${selected.id}/${Date.now()}.${ext}`
-    const { error: upErr } = await supabase.storage.from('assignment-deliverables').upload(path, deliverableFile)
-    if (upErr) {
-      setSubmittingDeliverable(false)
-      return
-    }
-    const { data: signed } = await supabase.storage
-      .from('assignment-deliverables')
-      .createSignedUrl(path, 60 * 60 * 24 * 365 * 5)
+    if (deliverableEntry.type === 'link') {
+      if (!/^https?:\/\/\S+$/i.test((deliverableEntry.url || '').trim())) {
+        setSubmittingDeliverable(false)
+        return
+      }
+      await supabase.from('assignment_deliverables').insert({
+        assignment_id: selected.id,
+        file_url: deliverableEntry.url.trim(),
+        note: deliverableNote || null,
+        uploaded_by: profile.id,
+      })
+    } else {
+      const file = deliverableEntry
+      const ext = file.name.split('.').pop()
+      const path = `${selected.id}/${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage.from('assignment-deliverables').upload(path, file)
+      if (upErr) {
+        setSubmittingDeliverable(false)
+        return
+      }
+      const { data: signed } = await supabase.storage
+        .from('assignment-deliverables')
+        .createSignedUrl(path, 60 * 60 * 24 * 365 * 5)
 
-    await supabase.from('assignment_deliverables').insert({
-      assignment_id: selected.id,
-      file_url: signed?.signedUrl || path,
-      note: deliverableNote || null,
-      uploaded_by: profile.id,
-    })
+      await supabase.from('assignment_deliverables').insert({
+        assignment_id: selected.id,
+        file_url: signed?.signedUrl || path,
+        note: deliverableNote || null,
+        uploaded_by: profile.id,
+      })
+    }
+
     await supabase.from('assignments')
       .update({ status: 'submitted', updated_at: new Date().toISOString() })
       .eq('id', selected.id)
@@ -236,13 +303,21 @@ export default function Assignments() {
       review_comment: reviewComment || null,
       updated_at: new Date().toISOString(),
     }).eq('id', selected.id)
+
+    if (kind === 'approve') {
+      // Clear any clearance issue this overdue, non-event assignment opened.
+      await supabase.from('clearances')
+        .update({ status: 'cleared', cleared_by: profile.id, cleared_at: new Date().toISOString() })
+        .eq('assignment_id', selected.id)
+        .neq('status', 'cleared')
+    }
+
     setReviewing(false)
     setSelected(null)
     loadAssignments()
   }
 
-  const mine = assignments.filter((a) => !admin || isMyAssignment(a))
-  const list = admin ? assignments : mine
+  const list = admin ? assignments : assignments.filter(isMyAssignment)
 
   return (
     <div className="asg-page">
@@ -293,6 +368,11 @@ export default function Assignments() {
                 const meta = STATUS_META[a.status]
                 const t = targetLabel(a)
                 const TIcon = t.icon
+                const isOverdueTask =
+                  !a.event_id &&
+                  a.due_date &&
+                  a.due_date < toISODate(new Date()) &&
+                  ['pending', 'returned', 'conditional_approved'].includes(a.status)
                 return (
                   <tr key={a.id} onClick={() => openDetail(a)}>
                     <td className="asg-table__title">
@@ -305,7 +385,10 @@ export default function Assignments() {
                       {a.events?.title && <span className="asg-link-chip"><Link2 size={11} /> {a.events.title}</span>}
                       {!a.submissions?.title && !a.events?.title && '—'}
                     </td>
-                    <td>{a.due_date || '—'}</td>
+                    <td>
+                      {a.due_date || '—'}
+                      {isOverdueTask && <span className="asg-badge asg-badge--danger asg-overdue-tag">overdue · clearance issue</span>}
+                    </td>
                     <td><span className={`asg-badge asg-badge--${meta.tone}`}>{meta.label}</span></td>
                     <td><ArrowRight size={14} color="var(--muted)" /></td>
                   </tr>
@@ -470,10 +553,46 @@ export default function Assignments() {
                 </button>
               ) : (
                 <form className="asg-deliverable-form" onSubmit={handleSubmitDeliverable}>
-                  <label className="asg-field">
-                    File
-                    <input type="file" onChange={(e) => setDeliverableFile(e.target.files?.[0] || null)} required />
-                  </label>
+                  <div className="asg-target-tabs">
+                    <button
+                      type="button"
+                      className={`asg-target-tab ${deliverableEntry?.type !== 'link' ? 'asg-target-tab--active' : ''}`}
+                      onClick={() => setDeliverableEntry(null)}
+                    >
+                      Upload File
+                    </button>
+                    <button
+                      type="button"
+                      className={`asg-target-tab ${deliverableEntry?.type === 'link' ? 'asg-target-tab--active' : ''}`}
+                      onClick={() => setDeliverableEntry({ type: 'link', url: '' })}
+                    >
+                      Paste Link
+                    </button>
+                  </div>
+
+                  {deliverableEntry?.type === 'link' ? (
+                    <label className="asg-field">
+                      Link
+                      <input
+                        type="url"
+                        placeholder="https://drive.google.com/..."
+                        value={deliverableEntry.url}
+                        onChange={(e) => setDeliverableEntry({ type: 'link', url: e.target.value })}
+                        required
+                      />
+                    </label>
+                  ) : (
+                    <label className="asg-field">
+                      File <span className="asg-optional">(PDF or Excel)</span>
+                      <input
+                        type="file"
+                        accept=".pdf,.xlsx,.xls"
+                        onChange={(e) => setDeliverableEntry(e.target.files?.[0] || null)}
+                        required
+                      />
+                    </label>
+                  )}
+
                   <label className="asg-field">
                     Note
                     <input value={deliverableNote} onChange={(e) => setDeliverableNote(e.target.value)} placeholder="Optional note" />

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Users, Plus, Loader2, AlertCircle, CheckCircle2, Building2, Copy,
-  Tag, Trash2, X, Camera, Mail, Phone, Pencil, Check,
+  Tag, Trash2, X, Camera, Mail, Phone, Pencil, Check, KeyRound,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -244,11 +244,13 @@ function CreateAdminAccountSection({ onCreated }) {
   )
 }
 
-// ---------- ADMINISTRATOR ACCOUNTS (list + delete) ----------
+// ---------- ADMINISTRATOR ACCOUNTS (list + delete + reset password) ----------
 function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
   const [error, setError] = useState('')
   const [confirmingId, setConfirmingId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [resettingId, setResettingId] = useState(null)
+  const [resetResult, setResetResult] = useState(null)
 
   async function handleDelete(profileId) {
     setError('')
@@ -263,11 +265,35 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
     onChanged()
   }
 
+  async function handleReset(profileId) {
+    setError('')
+    setResetResult(null)
+    setResettingId(profileId)
+    const { data, error: err } = await invokeAccountFn('reset-password', { profile_id: profileId })
+    setResettingId(null)
+    if (err || data?.error) {
+      setError(data?.error || 'Could not reset the password. Please try again.')
+      return
+    }
+    setResetResult(data)
+    onChanged()
+  }
+
   return (
     <div className="acc-card">
       <span className="acc-card__label"><Users size={13} /> Administrator Accounts</span>
       <p className="acc-card__sub">SDAO, Admins, and Academic Directors with a personal login.</p>
 
+      {resetResult && (
+        <div className="acc-result">
+          <CheckCircle2 size={15} />
+          <div>
+            <strong>{resetResult.email}</strong> password reset to <code>{resetResult.temp_password}</code>.
+            They'll be required to change it on next sign-in.
+          </div>
+          <button className="acc-result__close" onClick={() => setResetResult(null)}><X size={14} /></button>
+        </div>
+      )}
       {error && <div className="acc-error"><AlertCircle size={14} /> {error}</div>}
 
       <table className="acc-table">
@@ -300,14 +326,24 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
                         </button>
                       </div>
                     ) : (
-                      <button
-                        className="acc-icon-btn"
-                        onClick={() => setConfirmingId(p.id)}
-                        disabled={isSelf}
-                        title={isSelf ? "You can't delete your own account" : 'Delete account'}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div className="acc-edit-actions">
+                        <button
+                          className="acc-icon-btn"
+                          onClick={() => handleReset(p.id)}
+                          disabled={resettingId === p.id}
+                          title="Reset password to default"
+                        >
+                          {resettingId === p.id ? <Loader2 size={13} className="spin" /> : <KeyRound size={13} />}
+                        </button>
+                        <button
+                          className="acc-icon-btn"
+                          onClick={() => setConfirmingId(p.id)}
+                          disabled={isSelf}
+                          title={isSelf ? "You can't delete your own account" : 'Delete account'}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -826,6 +862,22 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
     onChanged()
   }
 
+  const [resettingId, setResettingId] = useState(null)
+  const [resetResult, setResetResult] = useState(null)
+
+  async function handleReset(m) {
+    setError('')
+    setResetResult(null)
+    setResettingId(m.id)
+    const { data, error: err } = await invokeAccountFn('reset-password', { profile_id: m.profile_id })
+    setResettingId(null)
+    if (err || data?.error) {
+      setError(data?.error || 'Could not reset the password.')
+      return
+    }
+    setResetResult(data)
+  }
+
   return (
     <div className="acc-card">
       <span className="acc-card__label"><Tag size={13} /> Org Memberships &amp; Tags</span>
@@ -834,6 +886,16 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
         everyone holding that position, across every organization.
       </p>
 
+      {resetResult && (
+        <div className="acc-result">
+          <CheckCircle2 size={15} />
+          <div>
+            <strong>{resetResult.email}</strong> password reset to <code>{resetResult.temp_password}</code>.
+            They'll be required to change it on next sign-in.
+          </div>
+          <button className="acc-result__close" onClick={() => setResetResult(null)}><X size={14} /></button>
+        </div>
+      )}
       {error && <div className="acc-error"><AlertCircle size={14} /> {error}</div>}
 
       <form className="acc-form acc-form--inline" onSubmit={handleAdd}>
@@ -890,6 +952,14 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
                     <div className="acc-edit-actions">
                       <button className="acc-icon-btn" onClick={() => startRename(m)} title="Rename holder">
                         <Pencil size={13} />
+                      </button>
+                      <button
+                        className="acc-icon-btn"
+                        onClick={() => handleReset(m)}
+                        disabled={resettingId === m.id}
+                        title="Reset password to default"
+                      >
+                        {resettingId === m.id ? <Loader2 size={13} className="spin" /> : <KeyRound size={13} />}
                       </button>
                       <button className="acc-icon-btn" onClick={() => handleRemove(m)} disabled={removingId === m.id} title="Delete account">
                         {removingId === m.id ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
