@@ -365,17 +365,24 @@ export default function SubmissionBin() {
       return
     }
 
-    try {
-      for (const doc of EVENT_APP_DOCS) await uploadAttachment(sub.id, doc, appFiles[doc])
-      await supabase.from('submission_status_history').insert({
-        submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
-      })
-    } catch {
-      setFormError('Application saved, but a file failed to upload — reopen it from the list to re-attach.')
+    const failedDocs = []
+    for (const doc of EVENT_APP_DOCS) {
+      try {
+        await uploadAttachment(sub.id, doc, appFiles[doc])
+      } catch (uploadErr) {
+        console.error(`Failed to upload ${doc}`, uploadErr)
+        failedDocs.push(doc)
+      }
+    }
+    await supabase.from('submission_status_history').insert({
+      submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
+    })
+    if (failedDocs.length) {
+      setFormError(`Application submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
     }
 
     setSaving(false)
-    setShowAppModal(false)
+    if (!failedDocs.length) setShowAppModal(false)
     loadSubmissions()
   }
 
@@ -412,25 +419,32 @@ export default function SubmissionBin() {
       return
     }
 
-    try {
-      for (const doc of REPORT_DOCS) await uploadAttachment(sub.id, doc, reportFiles[doc])
-      await supabase.from('submission_status_history').insert({
-        submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
-      })
-      if (clearance?.event_id) {
-        const { error: asgErr } = await supabase.from('assignments')
-          .update({ status: 'submitted', submission_id: sub.id, updated_at: new Date().toISOString() })
-          .eq('event_id', clearance.event_id)
-          .eq('auto_generated', true)
-          .in('status', ['pending', 'returned', 'conditional_approved'])
-        if (asgErr) console.error('Failed to update linked assignment status', asgErr)
+    const failedDocs = []
+    for (const doc of REPORT_DOCS) {
+      try {
+        await uploadAttachment(sub.id, doc, reportFiles[doc])
+      } catch (uploadErr) {
+        console.error(`Failed to upload ${doc}`, uploadErr)
+        failedDocs.push(doc)
       }
-    } catch {
-      setFormError('Report saved, but a file failed to upload — reopen it from the list to re-attach.')
+    }
+    await supabase.from('submission_status_history').insert({
+      submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
+    })
+    if (clearance?.event_id) {
+      const { error: asgErr } = await supabase.from('assignments')
+        .update({ status: 'submitted', submission_id: sub.id, updated_at: new Date().toISOString() })
+        .eq('event_id', clearance.event_id)
+        .eq('auto_generated', true)
+        .in('status', ['pending', 'returned', 'conditional_approved'])
+      if (asgErr) console.error('Failed to update linked assignment status', asgErr)
+    }
+    if (failedDocs.length) {
+      setFormError(`Report submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
     }
 
     setSaving(false)
-    setShowReportModal(false)
+    if (!failedDocs.length) setShowReportModal(false)
     loadSubmissions()
   }
 
@@ -452,7 +466,7 @@ export default function SubmissionBin() {
     setResubmitNote('')
     setDetailLoading(true)
     const [{ data: att }, { data: hist }, { data: tasks }, { data: check }, { data: cmts }] = await Promise.all([
-      supabase.from('submission_attachments').select('*').eq('submission_id', sub.id),
+      supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true }),
       supabase.from('submission_status_history')
         .select('*, actor:profiles ( full_name )')
         .eq('submission_id', sub.id)
@@ -548,7 +562,7 @@ export default function SubmissionBin() {
 
   async function refreshAttachments() {
     if (!selected) return
-    const { data } = await supabase.from('submission_attachments').select('*').eq('submission_id', selected.id)
+    const { data } = await supabase.from('submission_attachments').select('*').eq('submission_id', selected.id).order('uploaded_at', { ascending: true })
     setAttachments(data || [])
     if (data?.length) setViewerAttachmentId(data[data.length - 1].id)
   }
@@ -1188,7 +1202,7 @@ export default function SubmissionBin() {
                       </ul>
                     )}
 
-                    {(isOwnerOrg || admin) && (
+                    {(isOwnerOrg || admin) && selected.stage === 'returned' && (
                       <div className="sb-extra-attach">
                         <input
                           className="sb-extra-attach__label"
