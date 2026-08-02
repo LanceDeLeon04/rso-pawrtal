@@ -72,7 +72,7 @@ export default function Login() {
                 id="email"
                 type="text"
                 autoComplete="username"
-                placeholder="e.g. rmdelavina"
+                placeholder="e.g. rmdelavina or scs-sc.president"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

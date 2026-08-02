@@ -13,7 +13,8 @@ const AUTH_EMAIL_DOMAIN = '@pawrtal.local'
 
 function toAuthEmail(usernameOrEmail) {
   const value = (usernameOrEmail || '').trim()
-  return value.includes('@') ? value : `${value}${AUTH_EMAIL_DOMAIN}`
+  if (value.includes('@')) return value.toLowerCase()
+  return `${value.toLowerCase()}${AUTH_EMAIL_DOMAIN}`
 }
 
 export function AuthProvider({ children }) {

@@ -19,6 +19,7 @@ const ROLE_LABELS = {
 
 const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervisor', 'academic_director', 'system_admin']
 const VIEWER_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
+const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
 
 const EMPTY_ADMIN_FORM = {
   full_name: '', username: '', role: ADMIN_ROLES[0], viewer_scopes: [],
@@ -393,12 +394,10 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
           </label>
           <label className="acc-field">
             Position
-            <input
-              value={form.position}
-              onChange={(e) => setForm({ ...form, position: e.target.value })}
-              placeholder="e.g. President"
-              required
-            />
+            <select value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} required>
+              <option value="">Select position</option>
+              {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
             <span className="acc-hint">Also doubles as the cross-org tag (e.g. "all Treasurers").</span>
           </label>
         </div>
@@ -846,7 +845,10 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
           <option value="">Organization</option>
           {orgs.map((o) => <option key={o.id} value={o.id}>{o.acronym}</option>)}
         </select>
-        <input placeholder="Position / tag" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} />
+        <select value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })}>
+          <option value="">Position</option>
+          {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
         <button className="acc-btn acc-btn--gold" type="submit" disabled={saving}>
           {saving ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
         </button>
