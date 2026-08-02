@@ -1,0 +1,15 @@
+# Supabase CLI project config.
+# create-account handles its own auth check inside the function (see
+# index.ts — it reads the Authorization header, verifies the JWT via
+# admin.auth.getUser, and confirms the caller is admin-tier). Supabase's
+# platform-level legacy JWT check runs *before* that code, and on some
+# projects (especially those using the newer publishable/secret API keys)
+# it rejects the request outright — including the browser's CORS preflight
+# OPTIONS request — which surfaces in the browser as a generic CORS error
+# rather than a clear 401. Disabling it here lets the function's own
+# OPTIONS handling and auth logic run as written.
+[functions.create-account]
+verify_jwt = false
+
+[functions.delete-account]
+verify_jwt = false

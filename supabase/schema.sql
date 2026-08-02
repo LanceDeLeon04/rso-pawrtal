@@ -83,7 +83,10 @@ create table org_memberships (
   position text not null, -- e.g. 'President', 'Treasurer', 'Secretary'
   is_primary boolean not null default true,
   created_at timestamptz not null default now(),
-  unique (profile_id, org_id, position)
+  unique (profile_id, org_id, position),
+  -- RSO accounts are position-based (one login per org+position, not per
+  -- person) — see migration 008.
+  unique (org_id, position)
 );
 
 create index idx_org_memberships_position on org_memberships(position);

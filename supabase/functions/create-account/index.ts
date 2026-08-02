@@ -35,6 +35,18 @@ function generatePassword() {
   return pw
 }
 
+// RSO accounts belong to a *position* (e.g. "SCS-SC President"), not a
+// person — the login username is derived from org acronym + position so
+// it's stable and predictable, and can't drift from whatever a person
+// happens to type. Slugify: lowercase, spaces/punctuation -> single dashes.
+function slugify(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
@@ -60,20 +72,66 @@ Deno.serve(async (req) => {
     const body = await req.json()
     const { full_name, username, role, org_id, position, is_primary, viewer_scopes } = body
 
-    if (!full_name?.trim() || !username?.trim() || !role) {
-      return json({ error: 'Full name, username, and role are required.' }, 400)
+    if (!full_name?.trim() || !role) {
+      return json({ error: 'Full name and role are required.' }, 400)
     }
     if (!VALID_ROLES.includes(role)) {
       return json({ error: 'Invalid role.' }, 400)
-    }
-    if (role === 'rso_officer' && (!org_id || !position?.trim())) {
-      return json({ error: 'RSO Officer accounts need an organization and position.' }, 400)
     }
     if (viewer_scopes?.some((s) => !VALID_SCOPES.includes(s))) {
       return json({ error: 'Invalid viewer scope.' }, 400)
     }
 
-    const email = username.includes('@') ? username.trim() : `${username.trim()}@pawrtal.local`
+    let email
+    let usernameSlug
+
+    if (role === 'rso_officer') {
+      // ---------- POSITION-BASED (RSO) ----------
+      // The account belongs to the position, not whoever currently holds
+      // it. Username is always derived server-side from org + position —
+      // never taken from client input — so it can't be spoofed or
+      // mistyped, and stays stable when the holder changes.
+      if (!org_id || !position?.trim()) {
+        return json({ error: 'RSO accounts need an organization and a position.' }, 400)
+      }
+
+      const { data: org, error: orgErr } = await admin
+        .from('organizations')
+        .select('id, acronym')
+        .eq('id', org_id)
+        .single()
+      if (orgErr || !org) return json({ error: 'Organization not found.' }, 400)
+
+      // One account per org+position. If it already exists, the caller
+      // should rename the current holder instead of creating a duplicate.
+      const { data: existingMembership } = await admin
+        .from('org_memberships')
+        .select('id, profiles ( full_name )')
+        .eq('org_id', org_id)
+        .eq('position', position.trim())
+        .maybeSingle()
+      if (existingMembership) {
+        const holder = existingMembership.profiles?.full_name
+        return json({
+          error: `An account for this position already exists${holder ? ` (currently held by ${holder})` : ''}. ` +
+            'Edit the current holder\'s name instead of creating a new account.',
+        }, 409)
+      }
+
+      usernameSlug = `${slugify(org.acronym)}.${slugify(position.trim())}`
+      email = `${usernameSlug}@pawrtal.local`
+    } else {
+      // ---------- PERSONAL (SDAO / Admins / Academic Directors / etc) ----------
+      if (!username?.trim()) {
+        return json({ error: 'Username is required.' }, 400)
+      }
+      if (username.includes('@')) {
+        return json({ error: 'Username should not include "@" — accounts use username@pawrtal.local.' }, 400)
+      }
+      usernameSlug = username.trim()
+      email = `${usernameSlug}@pawrtal.local`
+    }
+
     const tempPassword = generatePassword()
 
     const { data: created, error: createErr } = await admin.auth.admin.createUser({
@@ -96,14 +154,20 @@ Deno.serve(async (req) => {
       return json({ error: profileErr.message }, 400)
     }
 
-    if (role === 'rso_officer' && org_id && position) {
+    if (role === 'rso_officer') {
       const { error: memErr } = await admin.from('org_memberships').insert({
         profile_id: created.user.id,
         org_id,
         position: position.trim(),
         is_primary: is_primary !== false,
       })
-      if (memErr) return json({ error: `Account created, but org assignment failed: ${memErr.message}` }, 207)
+      if (memErr) {
+        // Roll back fully — a position account with no membership row is
+        // not a valid RSO account and would just confuse the next attempt.
+        await admin.from('profiles').delete().eq('id', created.user.id)
+        await admin.auth.admin.deleteUser(created.user.id)
+        return json({ error: `Could not link this account to the position: ${memErr.message}` }, 400)
+      }
     }
 
     if (viewer_scopes?.length) {

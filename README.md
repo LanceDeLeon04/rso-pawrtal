@@ -160,6 +160,14 @@ server-side **Edge Function** instead of a direct client call.
 3. Deploy the function: `supabase functions deploy create-account`
    (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided
    automatically by the platform — no manual secret-setting needed.)
+   The repo's `supabase/config.toml` disables the platform's legacy
+   JWT check for this function specifically, since it verifies the
+   caller itself inside `index.ts`. If you see a CORS error in the
+   browser console when creating an account, it almost always means
+   either this deploy step was skipped/failed, or that setting got
+   reverted — re-run the deploy command and confirm the function shows
+   up under Edge Functions in the Supabase dashboard with a recent
+   "last deployed" time and no errors in its logs tab.
 4. If you already ran the earlier schema/migrations, also run
    `supabase/migrations/006_accounts.sql`. Besides the org_memberships
    write policy Accounts needs, it fixes three RLS gaps this phase
