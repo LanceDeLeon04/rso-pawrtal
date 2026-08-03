@@ -424,3 +424,26 @@
   color: var(--ink);
   resize: vertical;
 }
+
+.asg-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--nu-blue-700);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.asg-icon-btn:hover:not(:disabled) { background: var(--paper); }
+.asg-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.asg-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

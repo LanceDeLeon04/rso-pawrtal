@@ -473,6 +473,22 @@ function OrganizationsSection({ orgs, onChanged }) {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
+
+  async function handleDelete(orgId) {
+    setError('')
+    setDeletingId(orgId)
+    const { error: err } = await supabase.from('organizations').delete().eq('id', orgId)
+    setDeletingId(null)
+    setConfirmDeleteId(null)
+    if (err) {
+      setError('Could not delete this organization. Please try again.')
+      return
+    }
+    onChanged()
+  }
+
   function startEdit(org) {
     setEditingId(org.id)
     setEditError('')
@@ -654,6 +670,7 @@ function OrganizationsSection({ orgs, onChanged }) {
       )}
 
       {editError && <div className="acc-error"><AlertCircle size={14} /> {editError}</div>}
+      {!showForm && error && <div className="acc-error"><AlertCircle size={14} /> {error}</div>}
 
       <table className="acc-table">
         <thead>
@@ -766,10 +783,29 @@ function OrganizationsSection({ orgs, onChanged }) {
                         <X size={13} />
                       </button>
                     </div>
+                  ) : confirmDeleteId === o.id ? (
+                    <div className="acc-edit-actions">
+                      <button
+                        className="acc-icon-btn"
+                        onClick={() => handleDelete(o.id)}
+                        disabled={deletingId === o.id}
+                        title="Confirm delete"
+                      >
+                        {deletingId === o.id ? <Loader2 size={13} className="spin" /> : <Check size={13} />}
+                      </button>
+                      <button className="acc-icon-btn" onClick={() => setConfirmDeleteId(null)} title="Cancel">
+                        <X size={13} />
+                      </button>
+                    </div>
                   ) : (
-                    <button className="acc-icon-btn" onClick={() => startEdit(o)} title="Edit">
-                      <Pencil size={13} />
-                    </button>
+                    <div className="acc-edit-actions">
+                      <button className="acc-icon-btn" onClick={() => startEdit(o)} title="Edit">
+                        <Pencil size={13} />
+                      </button>
+                      <button className="acc-icon-btn" onClick={() => setConfirmDeleteId(o.id)} title="Delete organization">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>

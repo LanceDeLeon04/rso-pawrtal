@@ -192,6 +192,7 @@ export default function CalendarOfActivities() {
       <div className="cal-legend">
         <span className="cal-legend__item"><i className="cal-dot cal-dot--pencil" /> Pencil booked (tentative)</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--reserved" /> Reserved / confirmed</span>
+        <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (pencil booked, needs revision)</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
       </div>
 
@@ -254,6 +255,7 @@ export default function CalendarOfActivities() {
 
             <span className={`cal-status-badge cal-status-badge--${selectedEvent.booking_status}`}>
               {selectedEvent.booking_status === 'pencil' && <Pencil size={12} />}
+              {selectedEvent.booking_status === 'returned' && <Pencil size={12} />}
               {selectedEvent.booking_status === 'reserved' && <BadgeCheck size={12} />}
               {selectedEvent.booking_status.charAt(0).toUpperCase() + selectedEvent.booking_status.slice(1)}
             </span>

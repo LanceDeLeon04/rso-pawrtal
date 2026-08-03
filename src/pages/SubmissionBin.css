@@ -303,6 +303,39 @@
   font-size: 11px;
 }
 
+.sb-sdg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: #fff;
+}
+
+.sb-sdg-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.sb-sdg-item input { width: auto; flex-shrink: 0; }
+
+.sb-sdg-goal {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  background: #fff;
+  margin-top: 5px;
+}
+.sb-sdg-goal:first-of-type { margin-top: 5px; }
+
 /* ---------- Attachments ---------- */
 .sb-attach-group {
   display: flex;
@@ -627,6 +660,12 @@
 
 .sb-icon-btn:hover:not(:disabled) { background: var(--paper); }
 .sb-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.sb-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 /* ---------- Review workspace (two-pane) ---------- */
 .sb-modal--review {

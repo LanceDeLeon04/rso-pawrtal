@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   ClipboardList, Plus, X, Loader2, AlertCircle, Building2, User, Tag,
   CalendarClock, Undo2, CheckCircle2, Download, FileText, ArrowRight,
-  Link2,
+  Link2, Trash2, Check,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -32,6 +32,8 @@ export default function Assignments() {
   const [assignments, setAssignments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
 
   const [people, setPeople] = useState([])
@@ -242,6 +244,20 @@ export default function Assignments() {
     setDetailLoading(false)
   }
 
+  async function handleDelete(assignmentId) {
+    setError('')
+    setDeletingId(assignmentId)
+    const { error: err } = await supabase.from('assignments').delete().eq('id', assignmentId)
+    setDeletingId(null)
+    setConfirmDeleteId(null)
+    if (err) {
+      setError('Could not delete this record. Please try again.')
+      return
+    }
+    if (selected?.id === assignmentId) setSelected(null)
+    loadAssignments()
+  }
+
   function goSubmitReport() {
     navigate('/submissions', { state: { autoOpenReportForEventId: selected.event_id } })
   }
@@ -361,6 +377,7 @@ export default function Assignments() {
                 <th>Due</th>
                 <th>Status</th>
                 <th />
+                {admin && <th />}
               </tr>
             </thead>
             <tbody>
@@ -373,6 +390,7 @@ export default function Assignments() {
                   a.due_date &&
                   a.due_date < toISODate(new Date()) &&
                   ['pending', 'returned', 'conditional_approved'].includes(a.status)
+                const isConfirmingDelete = confirmDeleteId === a.id
                 return (
                   <tr key={a.id} onClick={() => openDetail(a)}>
                     <td className="asg-table__title">
@@ -391,6 +409,29 @@ export default function Assignments() {
                     </td>
                     <td><span className={`asg-badge asg-badge--${meta.tone}`}>{meta.label}</span></td>
                     <td><ArrowRight size={14} color="var(--muted)" /></td>
+                    {admin && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {isConfirmingDelete ? (
+                          <div className="asg-row-actions">
+                            <button
+                              className="asg-icon-btn"
+                              onClick={() => handleDelete(a.id)}
+                              disabled={deletingId === a.id}
+                              title="Confirm delete"
+                            >
+                              {deletingId === a.id ? <Loader2 size={13} className="spin" /> : <Check size={13} />}
+                            </button>
+                            <button className="asg-icon-btn" onClick={() => setConfirmDeleteId(null)} title="Cancel">
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button className="asg-icon-btn" onClick={() => setConfirmDeleteId(a.id)} title="Delete record">
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}

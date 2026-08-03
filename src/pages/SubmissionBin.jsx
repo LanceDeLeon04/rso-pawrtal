@@ -3,15 +3,35 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
-  CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock,
+  CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime, MEDIUM_LABELS } from '../lib/dateUtils'
+import { generateACPFormPdf } from '../lib/acpPdf'
 import './SubmissionBin.css'
 
-const EVENT_APP_DOCS = ['ACP Form', 'Attachments Template']
+// 'ACP Form' used to be a manual upload — it's now auto-generated from
+// the fields below and attached on submit, so it's no longer in this list.
+const EVENT_APP_DOCS = ['Attachments Template']
 const REPORT_DOCS = ['PARF Template', 'Liquidation Report', 'Narrative Report', 'Evaluation Report']
+
+const ACTIVITY_TYPES = [
+  { value: 'org_activity', label: 'Student Organization Activity' },
+  { value: 'university_activity', label: 'University/School Activity' },
+  { value: 'special_event', label: 'Special Event' },
+  { value: 'other', label: 'Others' },
+]
+
+const SDG_OPTIONS = [
+  '1. No Poverty', '2. Zero Hunger', '3. Good Health and Well being',
+  '4. Quality Education', '5. Gender Equality', '6. Clean Water and Sanitation',
+  '7. Affordable and Clean Energy', '8. Decent Work and Economic Growth',
+  '9. Industry, Innovation and Infrastructure', '10. Reduced Inequalities',
+  '11. Sustainable Cities and Communities', '12. Responsible Consumption and Production',
+  '13. Climate Action', '14. Life Below Water', '15. Life on Land',
+  '16. Peace, Justice, and Strong Institutions', '17. Partnership for the Goals',
+]
 
 // Finance/Liquidation documents must be Excel; everything else must be PDF.
 const FINANCE_DOCS = ['Liquidation Report']
@@ -128,6 +148,9 @@ const EMPTY_APP_FORM = {
   title: '', contact_person: '', contact_number: '', venue_id: '',
   venue_detail: '', pencil_booked: '', lab_endorsed: '',
   event_date: '', start_time: '', end_time: '', medium: 'f2f', description: '',
+  position: '', email: '', activity_type: '', activity_type_other: '',
+  target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
+  sdgs: [], sdg_representative: '', learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
 }
 
 export default function SubmissionBin() {
@@ -140,6 +163,9 @@ export default function SubmissionBin() {
 
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [listError, setListError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [deletingSubmissionId, setDeletingSubmissionId] = useState(null)
   const [typeFilter, setTypeFilter] = useState('all')
   const [stageFilter, setStageFilter] = useState('all')
   const [venues, setVenues] = useState([])
@@ -279,7 +305,8 @@ export default function SubmissionBin() {
   }
 
   function openAppModal() {
-    setAppForm(EMPTY_APP_FORM)
+    const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+    setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '', email: profile?.email || '' })
     setAppFiles({})
     setFormError('')
     setShowAppModal(true)
@@ -308,6 +335,26 @@ export default function SubmissionBin() {
 
     if (!appForm.title || !appForm.contact_person || !appForm.venue_id || !appForm.event_date || !appForm.medium) {
       setFormError('Please fill in the event name, contact person, venue, date, and medium.')
+      return
+    }
+    if (!appForm.position || !appForm.email) {
+      setFormError('Please fill in your position and email address.')
+      return
+    }
+    if (!appForm.activity_type || (appForm.activity_type === 'other' && !appForm.activity_type_other.trim())) {
+      setFormError('Please select the type of activity.')
+      return
+    }
+    if (!appForm.target_audience || !appForm.target_participants) {
+      setFormError('Please fill in the target audience and target number of participants.')
+      return
+    }
+    if (!appForm.projected_budget || !appForm.budget_source) {
+      setFormError('Please fill in the projected budget and its source.')
+      return
+    }
+    if (!appForm.learning_goal_1.trim()) {
+      setFormError('Please fill in at least one learning goal/objective.')
       return
     }
 
@@ -352,6 +399,17 @@ export default function SubmissionBin() {
       end_time: appForm.end_time || null,
       medium: appForm.medium,
       description: appForm.description || null,
+      position: appForm.position,
+      email: appForm.email,
+      activity_type: appForm.activity_type,
+      activity_type_other: appForm.activity_type === 'other' ? appForm.activity_type_other.trim() : null,
+      target_audience: appForm.target_audience,
+      target_participants: Number(appForm.target_participants),
+      projected_budget: Number(appForm.projected_budget),
+      budget_source: appForm.budget_source,
+      sdgs: appForm.sdgs,
+      sdg_representative: appForm.sdg_representative || null,
+      learning_goals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
       submitted_by: profile.id,
     }).select().single()
 
@@ -363,6 +421,66 @@ export default function SubmissionBin() {
           : 'Could not submit your application. Please try again.'
       )
       return
+    }
+
+    // Pencil-book this on the calendar right away — while it's under
+    // review/approval it shows as tentative, and stays that way (or goes
+    // gray if returned) until the application is approved or rejected.
+    const { data: newEvent } = await supabase.from('events').insert({
+      title: sub.title,
+      org_id: sub.org_id,
+      contact_person: sub.contact_person,
+      contact_number: sub.contact_number,
+      description: sub.description,
+      venue_id: sub.venue_id,
+      event_date: sub.event_date,
+      start_time: sub.start_time,
+      end_time: sub.end_time,
+      medium: sub.medium,
+      booking_status: 'pencil',
+      submission_id: sub.id,
+      created_by: profile.id,
+    }).select().single()
+    if (newEvent) {
+      await supabase.from('submissions').update({ event_id: newEvent.id }).eq('id', sub.id)
+    }
+
+    // Auto-generate the filled ACP Form PDF from what was just submitted
+    // and attach it — no manual upload needed.
+    try {
+      const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+      const orgName = myMembership?.organizations?.name || ''
+      const venueLabel = selectedVenue?.name === 'Others' ? appForm.venue_detail : [selectedVenue?.name, appForm.venue_detail].filter(Boolean).join(' — ')
+      const timeRange = [appForm.start_time && formatTime(appForm.start_time), appForm.end_time && formatTime(appForm.end_time)].filter(Boolean).join(' – ')
+      const activityTypeLabel = appForm.activity_type === 'other'
+        ? appForm.activity_type_other
+        : ACTIVITY_TYPES.find((t) => t.value === appForm.activity_type)?.label
+
+      const pdfBytes = await generateACPFormPdf({
+        applicationDate: toISODate(new Date()),
+        orgName,
+        contactPerson: appForm.contact_person,
+        position: appForm.position,
+        email: appForm.email,
+        title: appForm.title,
+        activityTypeLabel,
+        venueAddress: venueLabel,
+        targetAudience: appForm.target_audience,
+        targetParticipants: appForm.target_participants,
+        eventDate: appForm.event_date,
+        timeRange,
+        projectedBudget: appForm.projected_budget,
+        budgetSource: appForm.budget_source,
+        sdgs: appForm.sdgs,
+        sdgRepresentative: appForm.sdg_representative,
+        learningGoals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3],
+        description: appForm.description,
+      })
+      const acpFile = new File([pdfBytes], `ACP-Form-${sub.id}.pdf`, { type: 'application/pdf' })
+      await uploadAttachment(sub.id, 'ACP Form', acpFile)
+    } catch (pdfErr) {
+      console.error('Failed to auto-generate ACP Form PDF', pdfErr)
+      setFormError('Application submitted, but the ACP Form PDF could not be generated — you can attach one manually from the list.')
     }
 
     const failedDocs = []
@@ -598,9 +716,55 @@ export default function SubmissionBin() {
       submission_id: selected.id, stage: 'submitted', action: 'resubmitted',
       actor_id: profile.id, comment: resubmitNote.trim() || null,
     })
+
+    // Back to tentative on the calendar — was grayed out ('returned') or,
+    // if it had been cleared entirely, gets a fresh pencil booking.
+    if (selected.type === 'event_application') {
+      if (selected.event_id) {
+        await supabase.from('events').update({ booking_status: 'pencil' }).eq('id', selected.event_id)
+      } else {
+        const { data: newEvent } = await supabase.from('events').insert({
+          title: selected.title,
+          org_id: selected.org_id,
+          contact_person: selected.contact_person,
+          contact_number: selected.contact_number,
+          description: selected.description,
+          venue_id: selected.venue_id,
+          event_date: selected.event_date,
+          start_time: selected.start_time,
+          end_time: selected.end_time,
+          medium: selected.medium,
+          booking_status: 'pencil',
+          submission_id: selected.id,
+          created_by: profile.id,
+        }).select().single()
+        if (newEvent) {
+          await supabase.from('submissions').update({ event_id: newEvent.id }).eq('id', selected.id)
+        }
+      }
+    }
+
     setResubmitting(false)
     setResubmitNote('')
     setSelected(null)
+    loadSubmissions()
+  }
+
+  async function handleDeleteSubmission(sub) {
+    setDeletingSubmissionId(sub.id)
+    // Clear the linked calendar entry too, if it hasn't materialized into
+    // an approved/reserved activity that should stay on record.
+    if (sub.type === 'event_application' && sub.event_id && sub.stage !== 'approved') {
+      await supabase.from('events').delete().eq('id', sub.event_id)
+    }
+    const { error: err } = await supabase.from('submissions').delete().eq('id', sub.id)
+    setDeletingSubmissionId(null)
+    setConfirmDeleteId(null)
+    if (err) {
+      setListError('Could not delete that submission. Please try again.')
+      return
+    }
+    if (selected?.id === sub.id) setSelected(null)
     loadSubmissions()
   }
 
@@ -623,33 +787,56 @@ export default function SubmissionBin() {
 
     if (newStage === 'approved') {
       if (sub.type === 'event_application') {
-        const { data: newEvent } = await supabase.from('events').insert({
-          title: sub.title,
-          org_id: sub.org_id,
-          contact_person: sub.contact_person,
-          contact_number: sub.contact_number,
-          description: sub.description,
-          venue_id: sub.venue_id,
-          event_date: sub.event_date,
-          start_time: sub.start_time,
-          end_time: sub.end_time,
-          medium: sub.medium,
-          booking_status: 'reserved',
-          submission_id: sub.id,
-          created_by: profile.id,
-        }).select().single()
+        // The calendar entry was already pencil-booked at submission time
+        // (and possibly grayed to 'returned' along the way) — just confirm
+        // it rather than creating a duplicate. Fall back to inserting one
+        // only if, for some reason, it isn't there.
+        let eventId = sub.event_id
+        if (eventId) {
+          await supabase.from('events').update({
+            title: sub.title,
+            contact_person: sub.contact_person,
+            contact_number: sub.contact_number,
+            description: sub.description,
+            venue_id: sub.venue_id,
+            event_date: sub.event_date,
+            start_time: sub.start_time,
+            end_time: sub.end_time,
+            medium: sub.medium,
+            booking_status: 'reserved',
+          }).eq('id', eventId)
+        } else {
+          const { data: newEvent } = await supabase.from('events').insert({
+            title: sub.title,
+            org_id: sub.org_id,
+            contact_person: sub.contact_person,
+            contact_number: sub.contact_number,
+            description: sub.description,
+            venue_id: sub.venue_id,
+            event_date: sub.event_date,
+            start_time: sub.start_time,
+            end_time: sub.end_time,
+            medium: sub.medium,
+            booking_status: 'reserved',
+            submission_id: sub.id,
+            created_by: profile.id,
+          }).select().single()
+          if (newEvent) {
+            eventId = newEvent.id
+            await supabase.from('submissions').update({ event_id: eventId }).eq('id', sub.id)
+          }
+        }
 
-        if (newEvent) {
-          await supabase.from('submissions').update({ event_id: newEvent.id }).eq('id', sub.id)
+        if (eventId) {
           const deadline = new Date(sub.event_date)
           deadline.setDate(deadline.getDate() + 7)
           await supabase.from('clearances').insert({
-            org_id: sub.org_id, event_id: newEvent.id, deadline: toISODate(deadline), status: 'pending',
+            org_id: sub.org_id, event_id: eventId, deadline: toISODate(deadline), status: 'pending',
           })
           await supabase.from('assignments').insert({
             title: `Post-Activity Report — ${sub.title}`,
             description: 'Submit the PARF, Liquidation, Narrative, and Evaluation reports for this activity.',
-            event_id: newEvent.id,
+            event_id: eventId,
             assigned_to: sub.submitted_by,
             assigned_by: profile.id,
             due_date: toISODate(deadline),
@@ -678,6 +865,20 @@ export default function SubmissionBin() {
             .eq('auto_generated', true)
             .neq('status', 'approved')
         }
+      }
+    } else if (newStage === 'rejected') {
+      // Clear the calendar entirely — a rejected application shouldn't
+      // still show up as pencil-booked. If it's resubmitted later (as a
+      // fresh application), a new pencil booking is created at that point.
+      if (sub.type === 'event_application' && sub.event_id) {
+        await supabase.from('events').delete().eq('id', sub.event_id)
+        await supabase.from('submissions').update({ event_id: null }).eq('id', sub.id)
+      }
+    } else if (newStage === 'returned') {
+      // Keep it pencil-booked, but gray it out to signal "still tentative,
+      // waiting on the org to fix and resubmit."
+      if (sub.type === 'event_application' && sub.event_id) {
+        await supabase.from('events').update({ booking_status: 'returned' }).eq('id', sub.event_id)
       }
     }
 
@@ -737,6 +938,7 @@ export default function SubmissionBin() {
       </div>
 
       <div className="sb-list-wrap">
+        {listError && <div className="sb-form-error"><AlertCircle size={14} /> {listError}</div>}
         {loading ? (
           <div className="sb-loading"><Loader2 size={22} className="spin" /></div>
         ) : submissions.length === 0 ? (
@@ -754,11 +956,13 @@ export default function SubmissionBin() {
                 <th>Stage</th>
                 <th>Submitted</th>
                 <th />
+                {admin && <th />}
               </tr>
             </thead>
             <tbody>
               {submissions.map((s) => {
                 const meta = STAGE_META[s.stage]
+                const isConfirmingDelete = confirmDeleteId === s.id
                 return (
                   <tr key={s.id} onClick={() => openDetail(s)}>
                     <td className="sb-table__title">{s.title}</td>
@@ -767,6 +971,29 @@ export default function SubmissionBin() {
                     <td><span className={`sb-badge sb-badge--${meta.tone}`}>{meta.label}</span></td>
                     <td>{s.submitted_at?.slice(0, 10)}</td>
                     <td><ChevronRight size={15} color="var(--muted)" /></td>
+                    {admin && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        {isConfirmingDelete ? (
+                          <div className="sb-row-actions">
+                            <button
+                              className="sb-icon-btn"
+                              onClick={() => handleDeleteSubmission(s)}
+                              disabled={deletingSubmissionId === s.id}
+                              title="Confirm delete"
+                            >
+                              {deletingSubmissionId === s.id ? <Loader2 size={13} className="spin" /> : <Check size={13} />}
+                            </button>
+                            <button className="sb-icon-btn" onClick={() => setConfirmDeleteId(null)} title="Cancel">
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button className="sb-icon-btn" onClick={() => setConfirmDeleteId(s.id)} title="Delete permanently">
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -789,6 +1016,20 @@ export default function SubmissionBin() {
               <input value={appForm.title} onChange={(e) => setAppForm({ ...appForm, title: e.target.value })} required />
             </label>
 
+            <label className="sb-field">
+              Type of Activity
+              <select value={appForm.activity_type} onChange={(e) => setAppForm({ ...appForm, activity_type: e.target.value })} required>
+                <option value="">Select</option>
+                {ACTIVITY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </label>
+            {appForm.activity_type === 'other' && (
+              <label className="sb-field">
+                Specify
+                <input value={appForm.activity_type_other} onChange={(e) => setAppForm({ ...appForm, activity_type_other: e.target.value })} required />
+              </label>
+            )}
+
             <div className="sb-field-row">
               <label className="sb-field">
                 Contact Person
@@ -797,6 +1038,17 @@ export default function SubmissionBin() {
               <label className="sb-field">
                 Contact Number
                 <input value={appForm.contact_number} onChange={(e) => setAppForm({ ...appForm, contact_number: e.target.value })} />
+              </label>
+            </div>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Position
+                <input value={appForm.position} onChange={(e) => setAppForm({ ...appForm, position: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Email Address
+                <input type="email" value={appForm.email} onChange={(e) => setAppForm({ ...appForm, email: e.target.value })} required />
               </label>
             </div>
 
@@ -893,10 +1145,88 @@ export default function SubmissionBin() {
               </label>
             </div>
 
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Target Audience
+                <input value={appForm.target_audience} onChange={(e) => setAppForm({ ...appForm, target_audience: e.target.value })} placeholder="e.g. All BS IT students" required />
+              </label>
+              <label className="sb-field">
+                Target No. of Participants
+                <input type="number" min="1" value={appForm.target_participants} onChange={(e) => setAppForm({ ...appForm, target_participants: e.target.value })} required />
+              </label>
+            </div>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Projected Budget (PHP)
+                <input type="number" min="0" step="0.01" value={appForm.projected_budget} onChange={(e) => setAppForm({ ...appForm, projected_budget: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Source of Budget
+                <input value={appForm.budget_source} onChange={(e) => setAppForm({ ...appForm, budget_source: e.target.value })} placeholder="e.g. Org funds" required />
+              </label>
+            </div>
+
             <label className="sb-field">
               Description
               <textarea rows={2} value={appForm.description} onChange={(e) => setAppForm({ ...appForm, description: e.target.value })} />
             </label>
+
+            <div className="sb-field">
+              <span>Sustainable Development Goals <span className="sb-optional">(check all that apply)</span></span>
+              <div className="sb-sdg-grid">
+                {SDG_OPTIONS.map((label, i) => {
+                  const val = String(i + 1)
+                  const checked = appForm.sdgs.includes(val)
+                  return (
+                    <label key={val} className="sb-sdg-item">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setAppForm({
+                          ...appForm,
+                          sdgs: e.target.checked ? [...appForm.sdgs, val] : appForm.sdgs.filter((s) => s !== val),
+                        })}
+                      />
+                      {label}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            <label className="sb-field">
+              SDG Representative <span className="sb-optional">(optional)</span>
+              <input value={appForm.sdg_representative} onChange={(e) => setAppForm({ ...appForm, sdg_representative: e.target.value })} />
+            </label>
+
+            <div className="sb-field">
+              <span>Learning Goals/Objectives of the Activity</span>
+              <input
+                className="sb-sdg-goal"
+                value={appForm.learning_goal_1}
+                onChange={(e) => setAppForm({ ...appForm, learning_goal_1: e.target.value })}
+                placeholder="1.)"
+                required
+              />
+              <input
+                className="sb-sdg-goal"
+                value={appForm.learning_goal_2}
+                onChange={(e) => setAppForm({ ...appForm, learning_goal_2: e.target.value })}
+                placeholder="2.) (optional)"
+              />
+              <input
+                className="sb-sdg-goal"
+                value={appForm.learning_goal_3}
+                onChange={(e) => setAppForm({ ...appForm, learning_goal_3: e.target.value })}
+                placeholder="3.) (optional)"
+              />
+            </div>
+
+            <div className="sb-form-notice">
+              <FileText size={14} />
+              The Activity Concept Paper (ACP Form) is generated automatically from the fields above and attached to this application — no need to upload it separately.
+            </div>
 
             <div className="sb-attach-group">
               <span className="sb-attach-group__label">Attachments</span>

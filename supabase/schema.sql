@@ -14,7 +14,7 @@ create type user_role as enum (
   'system_admin'
 );
 
-create type booking_status as enum ('pencil', 'reserved', 'cancelled');
+create type booking_status as enum ('pencil', 'reserved', 'cancelled', 'returned');
 
 create type submission_type as enum ('event_application', 'report');
 
@@ -119,7 +119,7 @@ insert into venues (name) values
 create table events (
   id uuid primary key default gen_random_uuid(),
   title text not null,
-  org_id uuid not null references organizations(id),
+  org_id uuid not null references organizations(id) on delete cascade,
   contact_person text not null,
   contact_number text,
   description text,
@@ -153,7 +153,7 @@ create table templates (
 create table submissions (
   id uuid primary key default gen_random_uuid(),
   type submission_type not null,
-  org_id uuid not null references organizations(id),
+  org_id uuid not null references organizations(id) on delete cascade,
   event_id uuid references events(id), -- required for event_application; reports link to the event they close out
   title text not null,
   contact_person text,
@@ -173,6 +173,21 @@ create table submissions (
   venue_tag text,
   pencil_booked boolean,
   lab_endorsed boolean,
+  -- Activity Concept Paper (ACP) fields, filled directly in-app for
+  -- event_application submissions (everything from the paper ACP form
+  -- except the Signatories section). A filled ACP Form PDF is generated
+  -- from these and auto-attached on submit — see migration 014.
+  position text,
+  email text,
+  activity_type text, -- 'org_activity' | 'university_activity' | 'special_event' | 'other'
+  activity_type_other text,
+  target_audience text,
+  target_participants integer,
+  projected_budget numeric(12,2),
+  budget_source text,
+  sdgs text[] not null default '{}',
+  sdg_representative text,
+  learning_goals text[] not null default '{}',
   stage submission_stage not null default 'submitted',
   submitted_by uuid not null references profiles(id),
   submitted_at timestamptz not null default now(),
@@ -253,7 +268,7 @@ create table assignments (
   event_id uuid references events(id) on delete cascade,
   assigned_to uuid references profiles(id),        -- specific user
   assigned_tag text,                                -- cross-org position tag
-  assigned_org_id uuid references organizations(id),-- whole org
+  assigned_org_id uuid references organizations(id) on delete set null,-- whole org
   assigned_by uuid not null references profiles(id),
   due_date date,
   status assignment_status not null default 'pending',
@@ -287,12 +302,12 @@ create table assignment_deliverables (
 -- explains it in the Clearance UI.
 create table clearances (
   id uuid primary key default gen_random_uuid(),
-  org_id uuid not null references organizations(id),
-  event_id uuid references events(id),
+  org_id uuid not null references organizations(id) on delete cascade,
+  event_id uuid references events(id) on delete cascade,
   assignment_id uuid references assignments(id) on delete cascade,
   reason text,
   status clearance_status not null default 'pending',
-  report_submission_id uuid references submissions(id),
+  report_submission_id uuid references submissions(id) on delete set null,
   deadline date not null,
   extended_deadline date,
   cleared_by uuid references profiles(id),
@@ -427,6 +442,11 @@ create policy events_update_admin_or_owner on events for update
     or org_id in (select org_id from org_memberships where profile_id = auth.uid())
   );
 
+-- Admins can remove a booking outright (e.g. clearing the calendar when
+-- an event application is rejected, or deleting a stray/duplicate entry).
+create policy events_delete_admin on events for delete
+  using (is_admin_tier());
+
 -- Submissions: org members see their own org's submissions; admins see all.
 create policy submissions_select on submissions for select
   using (
@@ -464,6 +484,11 @@ create policy submissions_resubmit_owner on submissions for update
   with check (
     org_id in (select org_id from org_memberships where profile_id = auth.uid())
   );
+
+-- Admins can permanently delete an event application or report (and,
+-- via cascade, its attachments/history/checklist/comments).
+create policy submissions_delete_admin on submissions for delete
+  using (is_admin_tier());
 
 create policy submission_attachments_select on submission_attachments for select
   using (
@@ -545,6 +570,9 @@ create policy clearances_select on clearances for select
 create policy clearances_insert_admin on clearances for insert
   with check (is_admin_tier());
 
+create policy clearances_delete_admin on clearances for delete
+  using (is_admin_tier());
+
 create policy clearances_admin_write on clearances for update
   using (is_admin_tier());
 
@@ -568,6 +596,9 @@ create policy assignments_insert_admin on assignments for insert
 -- Admins manage the full lifecycle; assignees may only update their own
 -- (used to submit a deliverable, i.e. flip status to 'submitted').
 create policy assignments_update_admin on assignments for update
+  using (is_admin_tier());
+
+create policy assignments_delete_admin on assignments for delete
   using (is_admin_tier());
 
 create policy assignments_update_assignee on assignments for update

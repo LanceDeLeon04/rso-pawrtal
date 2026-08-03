@@ -122,6 +122,7 @@
 .cal-dot--pencil { background: var(--nu-gold-300); border: 1.5px dashed var(--nu-gold-600); }
 .cal-dot--reserved { background: var(--nu-blue-700); }
 .cal-dot--cancelled { background: var(--line); }
+.cal-dot--returned { background: #b3b3b3; border: 1.5px dashed #8c8c8c; }
 
 .cal-error {
   display: flex;
@@ -270,6 +271,12 @@
   text-decoration: line-through;
 }
 
+.cal-chip--returned {
+  background: #ececec;
+  color: #6b6b6b;
+  border: 1px dashed #a9a9a9;
+}
+
 .cal-chip__org {
   font-weight: 500;
   opacity: 0.85;
@@ -342,6 +349,7 @@
 .cal-status-badge--pencil { background: #fdf3d9; color: #8a6408; }
 .cal-status-badge--reserved { background: #e4ecfb; color: var(--nu-blue-700); }
 .cal-status-badge--cancelled { background: var(--paper); color: var(--muted); }
+.cal-status-badge--returned { background: #ececec; color: #6b6b6b; }
 
 .cal-modal__title {
   font-family: var(--font-display);
