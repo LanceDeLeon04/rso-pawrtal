@@ -399,6 +399,7 @@
 
 .cal-modal__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
 }
@@ -433,6 +434,39 @@
 .cal-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.cal-btn--danger {
+  background: var(--danger);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.cal-btn--danger:hover { filter: brightness(0.92); }
+
+.cal-btn--danger-outline {
+  background: #fff;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.cal-btn--danger-outline:hover { background: #fff5f5; }
+
+.cal-modal__delete-warn {
+  flex-basis: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.4;
 }
 
 /* ---------- Form ---------- */

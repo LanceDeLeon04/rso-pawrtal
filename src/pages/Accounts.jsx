@@ -32,6 +32,8 @@ const ACCREDITATION_LABELS = {
   pending: 'Pending',
 }
 
+const CATEGORY_OPTIONS = ['School Council', 'Academic', 'Special Interest']
+
 const EMPTY_ORG_FORM = {
   name: '', acronym: '', category: '', adviser_name: '',
   accreditation_status: 'pending', contact_email: '', contact_number: '',
@@ -629,7 +631,12 @@ function OrganizationsSection({ orgs, onChanged }) {
           <div className="acc-field-row">
             <label className="acc-field">
               Category
-              <input placeholder="e.g. Academic" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="">Select category</option>
+                {CATEGORY_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </label>
             <label className="acc-field">
               Adviser
@@ -708,12 +715,16 @@ function OrganizationsSection({ orgs, onChanged }) {
                       />
                     </td>
                     <td>
-                      <input
+                      <select
                         className="acc-inline-input"
-                        placeholder="e.g. Academic"
                         value={editForm.category}
                         onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                      />
+                      >
+                        <option value="">Select category</option>
+                        {CATEGORY_OPTIONS.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
                     </td>
                     <td>
                       <input

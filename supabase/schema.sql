@@ -161,6 +161,10 @@ create table submissions (
   -- Event-application specifics (filled when type = 'event_application';
   -- this is what materializes into a real `events` row once approved).
   venue_id uuid references venues(id),
+  -- Set when medium = 'online' instead of a physical venue.
+  -- 'ms_teams' | 'facebook' | 'others' (see venue_detail for the
+  -- free-text "specify" value when online_platform = 'others').
+  online_platform text,
   event_date date,
   start_time time,
   end_time time,
@@ -194,6 +198,10 @@ create table submissions (
   is_continuing boolean not null default false,
   continuing_type text, -- 'year_round' | 'term'
   term_label text,
+  -- Year-Round/Term activities have no single event date to compute a
+  -- +7-day report deadline from, so the SDAO Assistant must manually
+  -- assign this before forwarding (see migration 016).
+  report_submission_date date,
   stage submission_stage not null default 'submitted',
   submitted_by uuid not null references profiles(id),
   submitted_at timestamptz not null default now(),
@@ -468,8 +476,11 @@ create policy submissions_insert on submissions for insert
       -- report submission that would resolve the clearance itself
       type = 'report'
       or not exists (
+        -- only an *overdue* clearance blocks new event applications —
+        -- a merely 'pending' one (still on-going, year-round or
+        -- per-term, deadline not yet passed) does not.
         select 1 from clearances
-        where org_id = submissions.org_id and status in ('pending', 'overdue')
+        where org_id = submissions.org_id and status = 'overdue'
       )
     )
   );

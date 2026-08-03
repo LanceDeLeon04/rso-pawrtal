@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarDays, ChevronLeft, ChevronRight, Plus, X, MapPin, Clock,
-  User, Building2, Pencil, BadgeCheck, Loader2, AlertCircle, Video,
+  User, Building2, Pencil, BadgeCheck, Loader2, AlertCircle, Video, Trash2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -35,6 +35,8 @@ export default function CalendarOfActivities() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const grid = useMemo(() => buildMonthGrid(cursor.year, cursor.month), [cursor])
   const monthLabel = `${MONTH_NAMES[cursor.month]} ${cursor.year}`
@@ -155,6 +157,25 @@ export default function CalendarOfActivities() {
     loadEvents()
   }
 
+  // Deletes the booking outright — the event row (and, via cascade,
+  // anything tied to it: its submission/application, assignments,
+  // clearance) is removed for good, so it can never linger on the
+  // calendar the way a merely "cancelled" booking still can.
+  async function handleDeleteEvent(eventId) {
+    setDeleting(true)
+    const { error: err } = await supabase.from('events').delete().eq('id', eventId)
+    setDeleting(false)
+
+    if (err) {
+      setError('Could not delete this booking. Please try again.')
+      return
+    }
+
+    setConfirmDelete(false)
+    setSelectedEvent(null)
+    loadEvents()
+  }
+
   return (
     <div className="cal-page">
       <div className="cal-toolbar">
@@ -227,7 +248,7 @@ export default function CalendarOfActivities() {
                     <button
                       key={ev.id}
                       className={`cal-chip cal-chip--${ev.booking_status}`}
-                      onClick={() => setSelectedEvent(ev)}
+                      onClick={() => { setSelectedEvent(ev); setConfirmDelete(false) }}
                       title={ev.title}
                     >
                       {ev.title}
@@ -249,7 +270,7 @@ export default function CalendarOfActivities() {
       {selectedEvent && (
         <div className="cal-modal-backdrop" onClick={() => setSelectedEvent(null)}>
           <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="cal-modal__close" onClick={() => setSelectedEvent(null)}>
+            <button className="cal-modal__close" onClick={() => { setSelectedEvent(null); setConfirmDelete(false) }}>
               <X size={18} />
             </button>
 
@@ -302,6 +323,37 @@ export default function CalendarOfActivities() {
                       onClick={() => updateBookingStatus(selectedEvent.id, 'cancelled')}
                     >
                       Cancel Booking
+                    </button>
+                  )}
+                </div>
+
+                <div className="cal-modal__actions">
+                  {confirmDelete ? (
+                    <>
+                      <span className="cal-modal__delete-warn">
+                        <AlertCircle size={13} /> Delete this booking for good? This also removes its linked application/report.
+                      </span>
+                      <button
+                        className="cal-btn cal-btn--danger"
+                        onClick={() => handleDeleteEvent(selectedEvent.id)}
+                        disabled={deleting}
+                      >
+                        {deleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />} Yes, delete
+                      </button>
+                      <button
+                        className="cal-btn cal-btn--outline"
+                        onClick={() => setConfirmDelete(false)}
+                        disabled={deleting}
+                      >
+                        Keep booking
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="cal-btn cal-btn--danger-outline"
+                      onClick={() => setConfirmDelete(true)}
+                    >
+                      <Trash2 size={14} /> Delete from Calendar
                     </button>
                   )}
                 </div>
