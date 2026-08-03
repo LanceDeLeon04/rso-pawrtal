@@ -303,6 +303,54 @@
   font-size: 11px;
 }
 
+.sb-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sb-checkbox-label input { width: auto; }
+
+.sb-continuing-options {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fbfbfb;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sb-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.sb-radio-label input[type="radio"] { width: auto; flex-shrink: 0; }
+
+.sb-term-input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  margin-left: 4px;
+  flex: 1;
+  max-width: 220px;
+}
+
+.sb-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 2px 0 0;
+}
+
 .sb-sdg-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

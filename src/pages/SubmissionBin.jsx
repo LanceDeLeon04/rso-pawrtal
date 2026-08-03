@@ -151,6 +151,7 @@ const EMPTY_APP_FORM = {
   position: '', email: '', activity_type: '', activity_type_other: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   sdgs: [], sdg_representative: '', learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
+  is_continuing: false, continuing_type: 'year_round', term_label: '',
 }
 
 export default function SubmissionBin() {
@@ -306,7 +307,7 @@ export default function SubmissionBin() {
 
   function openAppModal() {
     const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
-    setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '', email: profile?.email || '' })
+    setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '' })
     setAppFiles({})
     setFormError('')
     setShowAppModal(true)
@@ -355,6 +356,10 @@ export default function SubmissionBin() {
     }
     if (!appForm.learning_goal_1.trim()) {
       setFormError('Please fill in at least one learning goal/objective.')
+      return
+    }
+    if (appForm.is_continuing && appForm.continuing_type === 'term' && !appForm.term_label.trim()) {
+      setFormError('Please specify the term (e.g. "1st Term, SY 2026-2027").')
       return
     }
 
@@ -410,6 +415,9 @@ export default function SubmissionBin() {
       sdgs: appForm.sdgs,
       sdg_representative: appForm.sdg_representative || null,
       learning_goals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
+      is_continuing: appForm.is_continuing,
+      continuing_type: appForm.is_continuing ? appForm.continuing_type : null,
+      term_label: appForm.is_continuing && appForm.continuing_type === 'term' ? appForm.term_label.trim() : null,
       submitted_by: profile.id,
     }).select().single()
 
@@ -455,6 +463,9 @@ export default function SubmissionBin() {
       const activityTypeLabel = appForm.activity_type === 'other'
         ? appForm.activity_type_other
         : ACTIVITY_TYPES.find((t) => t.value === appForm.activity_type)?.label
+      const acpDateLabel = appForm.is_continuing
+        ? (appForm.continuing_type === 'term' ? `Term ${appForm.term_label.trim()}` : 'Year-Round')
+        : appForm.event_date
 
       const pdfBytes = await generateACPFormPdf({
         applicationDate: toISODate(new Date()),
@@ -467,7 +478,7 @@ export default function SubmissionBin() {
         venueAddress: venueLabel,
         targetAudience: appForm.target_audience,
         targetParticipants: appForm.target_participants,
-        eventDate: appForm.event_date,
+        eventDate: acpDateLabel,
         timeRange,
         projectedBudget: appForm.projected_budget,
         budgetSource: appForm.budget_source,
@@ -1143,6 +1154,49 @@ export default function SubmissionBin() {
                 End Time
                 <input type="time" value={appForm.end_time} onChange={(e) => setAppForm({ ...appForm, end_time: e.target.value })} />
               </label>
+            </div>
+
+            <div className="sb-field">
+              <label className="sb-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={appForm.is_continuing}
+                  onChange={(e) => setAppForm({ ...appForm, is_continuing: e.target.checked })}
+                />
+                This is a Continuing / Year-Round Activity (or Term-based, not a single date)
+              </label>
+              {appForm.is_continuing && (
+                <div className="sb-continuing-options">
+                  <label className="sb-radio-label">
+                    <input
+                      type="radio"
+                      name="continuing_type"
+                      checked={appForm.continuing_type === 'year_round'}
+                      onChange={() => setAppForm({ ...appForm, continuing_type: 'year_round' })}
+                    />
+                    Year-Round
+                  </label>
+                  <label className="sb-radio-label">
+                    <input
+                      type="radio"
+                      name="continuing_type"
+                      checked={appForm.continuing_type === 'term'}
+                      onChange={() => setAppForm({ ...appForm, continuing_type: 'term' })}
+                    />
+                    Term
+                    <input
+                      className="sb-term-input"
+                      placeholder='e.g. "1, SY 2026-2027"'
+                      value={appForm.term_label}
+                      onFocus={() => setAppForm((f) => ({ ...f, continuing_type: 'term' }))}
+                      onChange={(e) => setAppForm({ ...appForm, continuing_type: 'term', term_label: e.target.value })}
+                    />
+                  </label>
+                  <p className="sb-hint">
+                    The ACP Form will print "{appForm.continuing_type === 'term' ? `Term ${appForm.term_label || '__'}` : 'Year-Round'}" in the Date field instead of the date above. The date above is still used for calendar scheduling and reporting deadlines.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="sb-field-row">

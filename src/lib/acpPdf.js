@@ -93,17 +93,34 @@ export async function generateACPFormPdf(data) {
 
   function twoUpRow(l1, v1, l2, v2, height = 16) {
     const half = W / 2
-    page.drawRectangle({ x: M, y: y - height, width: W, height, borderColor: LINE, borderWidth: 0.75 })
-    page.drawLine({ start: { x: M + half, y }, end: { x: M + half, y: y - height }, thickness: 0.75, color: LINE })
-    const lw = 95
-    page.drawText(l1, { x: M + 5, y: y - height + 5, size: 8.5, font: bold, color: INK })
-    page.drawLine({ start: { x: M + lw, y }, end: { x: M + lw, y: y - height }, thickness: 0.5, color: LINE })
-    page.drawText(String(v1 ?? '—'), { x: M + lw + 5, y: y - height + 5, size: 9, font, color: INK })
+    const labelSize = 8.5
+    const neededLw = Math.max(
+      bold.widthOfTextAtSize(l1, labelSize),
+      bold.widthOfTextAtSize(l2, labelSize),
+    ) + 10
+    // Leave at least ~60pt for the value column on each side.
+    const lw = Math.min(Math.max(neededLw, 70), half - 60)
+    const valSize = 9
+    const v1Lines = wrapText(String(v1 ?? '—'), font, valSize, half - lw - 10)
+    const v2Lines = wrapText(String(v2 ?? '—'), font, valSize, half - lw - 10)
+    const lines = Math.max(v1Lines.length, v2Lines.length)
+    const rowH = Math.max(height, lines * 11 + 6)
 
-    page.drawText(l2, { x: M + half + 5, y: y - height + 5, size: 8.5, font: bold, color: INK })
-    page.drawLine({ start: { x: M + half + lw, y }, end: { x: M + half + lw, y: y - height }, thickness: 0.5, color: LINE })
-    page.drawText(String(v2 ?? '—'), { x: M + half + lw + 5, y: y - height + 5, size: 9, font, color: INK })
-    y -= height
+    page.drawRectangle({ x: M, y: y - rowH, width: W, height: rowH, borderColor: LINE, borderWidth: 0.75 })
+    page.drawLine({ start: { x: M + half, y }, end: { x: M + half, y: y - rowH }, thickness: 0.75, color: LINE })
+
+    page.drawText(l1, { x: M + 5, y: y - rowH + (rowH - labelSize) - 3, size: labelSize, font: bold, color: INK })
+    page.drawLine({ start: { x: M + lw, y }, end: { x: M + lw, y: y - rowH }, thickness: 0.5, color: LINE })
+    v1Lines.forEach((ln, i) => {
+      page.drawText(ln, { x: M + lw + 5, y: y - rowH + (rowH - valSize) - 3 - i * 11, size: valSize, font, color: INK })
+    })
+
+    page.drawText(l2, { x: M + half + 5, y: y - rowH + (rowH - labelSize) - 3, size: labelSize, font: bold, color: INK })
+    page.drawLine({ start: { x: M + half + lw, y }, end: { x: M + half + lw, y: y - rowH }, thickness: 0.5, color: LINE })
+    v2Lines.forEach((ln, i) => {
+      page.drawText(ln, { x: M + half + lw + 5, y: y - rowH + (rowH - valSize) - 3 - i * 11, size: valSize, font, color: INK })
+    })
+    y -= rowH
   }
 
   function sectionLabel(text) {

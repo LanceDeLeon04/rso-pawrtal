@@ -188,6 +188,12 @@ create table submissions (
   sdgs text[] not null default '{}',
   sdg_representative text,
   learning_goals text[] not null default '{}',
+  -- For ongoing/term-based activities without a single date — the ACP
+  -- prints "Year-Round" or "Term <label>" instead of event_date, which
+  -- still holds the effective start date for scheduling purposes.
+  is_continuing boolean not null default false,
+  continuing_type text, -- 'year_round' | 'term'
+  term_label text,
   stage submission_stage not null default 'submitted',
   submitted_by uuid not null references profiles(id),
   submitted_at timestamptz not null default now(),
