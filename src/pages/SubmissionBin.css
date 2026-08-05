@@ -1086,13 +1086,16 @@
   display: block;
 }
 
-.sb-approval-row__form input {
+.sb-approval-row__form input,
+.sb-approval-row__form select {
   flex: 1;
   min-width: 120px;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 8px;
   font-size: 12px;
+  font-family: inherit;
+  background: #fff;
 }
 
 .sb-approval-row__form button {

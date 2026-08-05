@@ -155,6 +155,16 @@ function nextActionFor(role, stage, type) {
 
 const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative' }
 
+// SDG Representatives are a fixed, known set of people (unlike
+// Adviser/Dean, which vary per org) — presented as a dropdown instead
+// of a free-text field so staff can't typo/misspell the name.
+const SDG_REP_NAMES = [
+  'Mr. Gil Mallen',
+  'Ms. Merly Matibag',
+  'Mr. Kim Licerio',
+  'Mr. Joseph De Grano',
+]
+
 async function generateAndSetLink(submissionId, role, name, email, setApprovalLinks, setError, setBusy) {
   setError('')
   if (!name.trim()) {
@@ -1992,11 +2002,21 @@ export default function SubmissionBin() {
                               )}
                               {!locked && canManage && (!link || link.status === 'rejected' || (link.status === 'pending' && new Date(link.expires_at) < new Date())) && (
                                 <div className="sb-approval-row__form">
-                                  <input
-                                    placeholder={`${ROLE_LABELS[role]} full name`}
-                                    value={linkForm[role].name}
-                                    onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], name: e.target.value } }))}
-                                  />
+                                  {role === 'sdg_rep' ? (
+                                    <select
+                                      value={linkForm.sdg_rep.name}
+                                      onChange={(e) => setLinkForm((f) => ({ ...f, sdg_rep: { ...f.sdg_rep, name: e.target.value } }))}
+                                    >
+                                      <option value="">Select SDG Representative…</option>
+                                      {SDG_REP_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      placeholder={`${ROLE_LABELS[role]} full name`}
+                                      value={linkForm[role].name}
+                                      onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], name: e.target.value } }))}
+                                    />
+                                  )}
                                   <input
                                     placeholder="Email (optional)"
                                     value={linkForm[role].email}
