@@ -1,0 +1,155 @@
+.evp {
+  min-height: 100dvh;
+  background: var(--paper);
+  font-family: var(--font-body);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+
+.evp--center {
+  align-items: center;
+  justify-content: center;
+}
+
+.evp__spin {
+  animation: evp-spin 0.9s linear infinite;
+}
+
+@keyframes evp-spin {
+  to { transform: rotate(360deg); }
+}
+
+.evp__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  background: var(--nu-navy);
+  color: #fff;
+}
+
+.evp__logo {
+  height: 40px;
+  width: 40px;
+  object-fit: contain;
+}
+
+.evp__header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+}
+
+.evp__header p {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.evp__body {
+  flex: 1;
+  max-width: 560px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.evp-outcome {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px;
+  border-radius: var(--radius-md);
+}
+
+.evp-outcome--ok {
+  background: #d9f0dc;
+  color: #21653a;
+}
+
+.evp-outcome h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.evp-outcome p {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.evp-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.evp-card h3 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+}
+
+.evp-org {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
+.evp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.evp-field span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
+}
+
+.evp-field strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.evp-approval {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.evp-card--narrow {
+  max-width: 380px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.evp__footer {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 14px;
+}

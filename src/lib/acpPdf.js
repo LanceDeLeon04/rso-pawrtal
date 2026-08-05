@@ -4,7 +4,9 @@
 // client-side (pdf-lib), so it can be generated and attached the moment
 // the student hits Submit, with no manual upload step.
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import QRCode from 'qrcode'
 import { NU_HEADER_LOGO_PNG_BASE64 } from './acpHeaderLogo'
+import { verificationLinkUrl } from './eventVerification'
 
 function base64ToBytes(base64) {
   if (typeof atob === 'function') {
@@ -58,7 +60,11 @@ function wrapText(text, font, size, maxWidth) {
 }
 
 /**
- * @param {object} data - submission fields (org name, contact info, ACP fields)
+ * @param {object} data - submission fields (org name, contact info, ACP fields).
+ *   Optionally pass `data.verification = { token, approvedBy, approvedOn }`
+ *   once the application has been approved — this stamps the form with a
+ *   QR code (linking to /verify/:token) plus the approver name/date, right
+ *   above the auto-generated footer note.
  * @returns {Promise<Uint8Array>}
  */
 export async function generateACPFormPdf(data) {
@@ -221,15 +227,64 @@ export async function generateACPFormPdf(data) {
     })
   }
 
+  // ---------- Approval / verification block (only once approved) ----------
+  // Baked in the moment the application is approved (see SubmissionBin's
+  // approval handler) — a scannable QR code pointing at the public
+  // /verify/:token page, so anyone holding a printed copy of this ACP can
+  // confirm on the spot that it's a genuine, approved activity. Anchored
+  // just above the (fixed-position) footer rather than inline in the flow
+  // above, so it always lands in the same spot regardless of how much
+  // room the sections above it took up.
+  if (data.verification?.token) {
+    const boxH = 78
+    const footerTopY = 70 + 14 // matches the footer's gold rule below
+    const boxTopY = footerTopY + 10 + boxH
+    page.drawRectangle({ x: M, y: boxTopY - boxH, width: W, height: boxH, borderColor: GOLD, borderWidth: 1.25, color: rgb(0.98, 0.98, 0.95) })
+
+    const qrSize = 62
+    const qrX = M + 10
+    const qrY = boxTopY - boxH + (boxH - qrSize) / 2
+    try {
+      const qrUrl = verificationLinkUrl(data.verification.token)
+      const qrDataUrl = await QRCode.toDataURL(qrUrl, { margin: 0, width: 256, color: { dark: '#16264d', light: '#ffffff' } })
+      const qrBytes = base64ToBytes(qrDataUrl.split(',')[1])
+      const qrImage = await doc.embedPng(qrBytes)
+      page.drawImage(qrImage, { x: qrX, y: qrY, width: qrSize, height: qrSize })
+    } catch (qrErr) {
+      // If QR generation fails for any reason, still print the approval
+      // details below — the form just won't have a scannable code.
+      // eslint-disable-next-line no-console
+      console.error('Failed to embed verification QR code', qrErr)
+    }
+
+    const textX = qrX + qrSize + 14
+    const textW = W - (qrSize + 14) - 20
+    let ty = boxTopY - 16
+    page.drawText('APPROVED — VERIFIED ACTIVITY', { x: textX, y: ty, size: 9.5, font: bold, color: NAVY })
+    ty -= 15
+    page.drawText('Approved by', { x: textX, y: ty, size: 7.5, font: bold, color: MUTED })
+    page.drawText(data.verification.approvedBy || '—', { x: textX + 68, y: ty, size: 8.5, font, color: INK })
+    ty -= 12
+    page.drawText('Approved on', { x: textX, y: ty, size: 7.5, font: bold, color: MUTED })
+    page.drawText(data.verification.approvedOn || '—', { x: textX + 68, y: ty, size: 8.5, font, color: INK })
+    ty -= 15
+    wrapText('Scan the QR code to verify this activity is genuinely approved and on record with SDAO.', italic, 7.5, textW)
+      .forEach((ln) => { page.drawText(ln, { x: textX, y: ty, size: 7.5, font: italic, color: MUTED }); ty -= 9.5 })
+  }
+
   // ---------- Footer note (signatories intentionally omitted) ----------
   y = 70
   page.drawLine({ start: { x: M, y: y + 14 }, end: { x: 612 - M, y: y + 14 }, thickness: 1.5, color: GOLD })
   page.drawText(
-    'This ACP was generated automatically from the RSO PAWrtal event application. Review, approval, and',
+    data.verification?.token
+      ? 'This ACP was generated automatically from the RSO PAWrtal event application and has been approved.'
+      : 'This ACP was generated automatically from the RSO PAWrtal event application. Review, approval, and',
     { x: M, y, size: 7.5, font: italic, color: MUTED }
   )
   page.drawText(
-    'signatory sign-off happen digitally within the submission record — see the application for status and history.',
+    data.verification?.token
+      ? 'See the QR code above, or the submission record, for full approval status and history.'
+      : 'signatory sign-off happen digitally within the submission record — see the application for status and history.',
     { x: M, y: y - 10, size: 7.5, font: italic, color: MUTED }
   )
   page.drawText(

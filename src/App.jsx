@@ -13,6 +13,7 @@ import Assignments from './pages/Assignments'
 import Accounts from './pages/Accounts'
 import Settings from './pages/Settings'
 import ExternalApproval from './pages/ExternalApproval'
+import EventVerification from './pages/EventVerification'
 
 export default function App() {
   return (
@@ -25,6 +26,10 @@ export default function App() {
               time-limited link sent by the submitting org; see
               src/lib/approvalLinks.js and migration 019. */}
           <Route path="/approve/:token" element={<ExternalApproval />} />
+          {/* Public — no login. This is what the QR code printed on an
+              approved ACP Form points to; see src/lib/eventVerification.js
+              and migration 021. */}
+          <Route path="/verify/:token" element={<EventVerification />} />
 
           <Route
             element={

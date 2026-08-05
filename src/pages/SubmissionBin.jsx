@@ -13,6 +13,7 @@ import { generateACPFormPdf } from '../lib/acpPdf'
 import {
   orgNeedsDean, approvalLinkUrl, generateApprovalLink, fetchApprovalLinks,
 } from '../lib/approvalLinks'
+import { ensureEventVerificationToken } from '../lib/eventVerification'
 import './SubmissionBin.css'
 
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
@@ -1002,6 +1003,67 @@ export default function SubmissionBin() {
             status: 'pending',
             auto_generated: true,
           })
+
+          // Stamp the approval on the event and issue (or reuse) its
+          // verification token, then regenerate the ACP Form PDF with a
+          // QR code baked in — scanning it opens the public /verify page
+          // confirming Event Name, Venue, Date, Approved on, Approved by.
+          try {
+            const { data: tokenRow } = await ensureEventVerificationToken(eventId)
+            if (tokenRow?.verification_token) {
+              const { data: fullSub } = await supabase
+                .from('submissions')
+                .select('*, organizations ( name ), venues ( name )')
+                .eq('id', sub.id)
+                .single()
+              if (fullSub) {
+                const venueLabel = fullSub.medium === 'online'
+                  ? [ONLINE_PLATFORMS.find((p) => p.value === fullSub.online_platform)?.label, fullSub.online_platform === 'others' ? fullSub.venue_detail : null].filter(Boolean).join(' — ')
+                  : fullSub.venues?.name === 'Others' ? fullSub.venue_detail : [fullSub.venues?.name, fullSub.venue_detail].filter(Boolean).join(' — ')
+                const timeRange = [fullSub.start_time && formatTime(fullSub.start_time), fullSub.end_time && formatTime(fullSub.end_time)].filter(Boolean).join(' – ')
+                const activityTypeLabel = fullSub.activity_type === 'other'
+                  ? fullSub.activity_type_other
+                  : ACTIVITY_TYPES.find((t) => t.value === fullSub.activity_type)?.label
+                const acpDateLabel = fullSub.is_continuing
+                  ? (fullSub.continuing_type === 'term' ? `Term ${(fullSub.term_label || '').trim()}` : 'Year-Round')
+                  : fullSub.event_date
+
+                const pdfBytes = await generateACPFormPdf({
+                  applicationDate: toISODate(new Date(fullSub.submitted_at)),
+                  orgName: fullSub.organizations?.name || '',
+                  contactPerson: fullSub.contact_person,
+                  position: fullSub.position,
+                  email: fullSub.email,
+                  title: fullSub.title,
+                  activityTypeLabel,
+                  venueAddress: venueLabel,
+                  targetAudience: fullSub.target_audience,
+                  targetParticipants: fullSub.target_participants,
+                  eventDate: acpDateLabel,
+                  timeRange,
+                  projectedBudget: fullSub.projected_budget,
+                  budgetSource: fullSub.budget_source,
+                  sdgs: fullSub.sdgs,
+                  sdgRepresentative: fullSub.sdg_representative,
+                  learningGoals: fullSub.learning_goals,
+                  description: fullSub.description,
+                  verification: {
+                    token: tokenRow.verification_token,
+                    approvedBy: profile?.full_name || 'SDAO',
+                    approvedOn: toISODate(new Date(tokenRow.approved_at || new Date())),
+                  },
+                })
+                const acpFile = new File([pdfBytes], `ACP-Form-${sub.id}-approved.pdf`, { type: 'application/pdf' })
+                // Replace the pre-approval ACP Form with the QR-stamped
+                // one rather than appending a second copy.
+                await supabase.from('submission_attachments').delete()
+                  .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+                await uploadAttachment(sub.id, 'ACP Form', acpFile)
+              }
+            }
+          } catch (qrErr) {
+            console.error('Failed to regenerate ACP Form with verification QR code', qrErr)
+          }
         }
       } else if (sub.type === 'report') {
         await supabase.from('clearances')
