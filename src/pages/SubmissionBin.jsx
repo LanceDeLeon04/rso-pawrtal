@@ -327,6 +327,18 @@ export default function SubmissionBin() {
     return templates.find((t) => t.name.toLowerCase() === docName.toLowerCase())
   }
 
+  // signedUrl / stored value looks like:
+  //   https://.../storage/v1/object/sign/submission-attachments/<path>?token=...
+  // or, if createSignedUrl failed at upload time, just the raw <path>.
+  // Either way we want the "<path>" part to pass to storage.remove().
+  function extractStoragePath(fileUrl) {
+    if (!fileUrl) return null
+    const marker = '/submission-attachments/'
+    const idx = fileUrl.indexOf(marker)
+    if (idx === -1) return fileUrl // already a bare path
+    return fileUrl.slice(idx + marker.length).split('?')[0]
+  }
+
   async function uploadAttachment(submissionId, docType, entry) {
     // Pasted link — no storage upload needed, just record the URL.
     if (entry.type === 'link') {
@@ -1055,9 +1067,24 @@ export default function SubmissionBin() {
                 })
                 const acpFile = new File([pdfBytes], `ACP-Form-${sub.id}-approved.pdf`, { type: 'application/pdf' })
                 // Replace the pre-approval ACP Form with the QR-stamped
-                // one rather than appending a second copy.
-                await supabase.from('submission_attachments').delete()
+                // one rather than appending a second copy. Grab the old
+                // row(s) first so we can also clean up their storage
+                // objects — otherwise the file lingers in the bucket
+                // even once the DB row is gone.
+                const { data: oldAcpRows } = await supabase
+                  .from('submission_attachments')
+                  .select('id, file_url')
                   .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+                const { error: delErr } = await supabase.from('submission_attachments').delete()
+                  .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+                if (delErr) {
+                  console.error('Failed to delete pre-approval ACP Form row', delErr)
+                } else {
+                  for (const row of oldAcpRows || []) {
+                    const path = extractStoragePath(row.file_url)
+                    if (path) await supabase.storage.from('submission-attachments').remove([path])
+                  }
+                }
                 await uploadAttachment(sub.id, 'ACP Form', acpFile)
               }
             }
