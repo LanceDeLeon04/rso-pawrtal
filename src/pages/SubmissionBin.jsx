@@ -991,6 +991,18 @@ export default function SubmissionBin() {
           }
         }
 
+        // Defensive cleanup: if an older pencil-booked row for this same
+        // submission is still lingering (e.g. from a resubmission cycle,
+        // or created before event_id got linked back to the submission),
+        // it would otherwise sit on the calendar right alongside the
+        // newly reserved one. Only the row we just reserved should remain.
+        if (eventId) {
+          await supabase.from('events').delete()
+            .eq('submission_id', sub.id)
+            .eq('booking_status', 'pencil')
+            .neq('id', eventId)
+        }
+
         if (eventId) {
           let deadlineISO
           if (sub.is_continuing) {
@@ -1851,7 +1863,7 @@ export default function SubmissionBin() {
                   </div>
 
                   {/* ---------- Adviser / Dean external approvals ---------- */}
-                  {selected.type === 'event_application' && !['approved', 'rejected'].includes(selected.stage) && (() => {
+                  {selected.type === 'event_application' && (selected.stage !== 'rejected' || approvalLinks.length > 0) && (() => {
                     const category = selected.organizations?.category
                     const { adviser, dean, needsDean } = externalApprovalState(approvalLinks, category)
                     const roles = needsDean ? ['adviser', 'dean'] : ['adviser']
@@ -1904,6 +1916,12 @@ export default function SubmissionBin() {
                                   )}
                                   {link.comment && <p className="sb-history-list__comment">"{link.comment}"</p>}
                                   <span className="sb-history-list__time">Expires {new Date(link.expires_at).toLocaleString()}</span>
+                                  {admin && link.status === 'approved' && link.signature_data && (
+                                    <div className="sb-signature-view">
+                                      <span className="sb-signature-view__label">Signature</span>
+                                      <img src={link.signature_data} alt={`${role} signature`} className="sb-signature-view__img" />
+                                    </div>
+                                  )}
                                 </>
                               )}
                               {!locked && canManage && (!link || link.status === 'rejected' || (link.status === 'pending' && new Date(link.expires_at) < new Date())) && (

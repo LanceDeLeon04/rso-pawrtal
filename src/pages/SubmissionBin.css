@@ -1062,6 +1062,30 @@
   margin-top: 6px;
 }
 
+.sb-signature-view {
+  margin-top: 8px;
+}
+
+.sb-signature-view__label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.sb-signature-view__img {
+  max-width: 220px;
+  max-height: 90px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 4px 8px;
+  object-fit: contain;
+  display: block;
+}
+
 .sb-approval-row__form input {
   flex: 1;
   min-width: 120px;

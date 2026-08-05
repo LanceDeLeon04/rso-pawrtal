@@ -31,7 +31,7 @@ export async function generateApprovalLink(submissionId, role, personName, perso
 export async function fetchApprovalLinks(submissionId) {
   const { data, error } = await supabase
     .from('approval_links')
-    .select('id, role, token, person_name, person_email, status, comment, expires_at, decided_at, created_at')
+    .select('id, role, token, person_name, person_email, status, comment, expires_at, decided_at, created_at, signature_data')
     .eq('submission_id', submissionId)
   return { data: data || [], error }
 }
