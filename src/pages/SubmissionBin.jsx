@@ -98,6 +98,7 @@ const STAGE_META = {
 }
 
 const STEPS_EVENT_APP = [
+  { key: 'pre_approval', label: 'Pre-Approval' },
   { key: 'submitted', label: 'SDAO Assistant' },
   { key: 'supervisor_endorsement', label: 'SDAO Supervisor' },
   { key: 'director_approval', label: 'Academic Director' },
@@ -117,9 +118,18 @@ function stepsFor(type) {
   return type === 'report' ? STEPS_REPORT : STEPS_EVENT_APP
 }
 
-function stepIndexFor(type, stage) {
+// `chainComplete` (event applications only) tells us whether the
+// external Adviser -> Dean -> SDG Rep chain has fully cleared yet.
+// The DB doesn't flip `stage` off 'submitted' until that chain
+// resolves (see migration 025), so while it's still pending we show
+// the dedicated "Pre-Approval" step instead of jumping straight to
+// "SDAO Assistant".
+function stepIndexFor(type, stage, chainComplete) {
   const steps = stepsFor(type)
-  if (stage === 'assistant_review') return 0
+  if (type === 'event_application') {
+    if (stage === 'submitted') return chainComplete ? 1 : 0
+    if (stage === 'assistant_review') return 1
+  }
   const i = steps.findIndex((s) => s.key === stage)
   return i === -1 ? 0 : i
 }
@@ -427,11 +437,9 @@ export default function SubmissionBin() {
       await uploadAttachment(sub.id, 'ACP Form', acpFile)
       await supabase.from('submissions').update({ sdg_marked_acp_generated: true }).eq('id', sub.id)
 
-      // Reflect immediately if this submission is still the open one.
-      if (selected?.id === sub.id) {
-        const { data: att } = await supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true })
-        setAttachments(att || [])
-      }
+      // No need to set attachments state here — openDetail awaits this
+      // function before it runs its own attachments fetch, so that
+      // fetch will already pick up the swapped-in ACP Form.
       setSubmissions((prev) => prev.map((s) => (s.id === sub.id ? { ...s, sdg_marked_acp_generated: true } : s)))
     } catch (err) {
       console.error('Failed to regenerate ACP Form with SDG marks', err)
@@ -768,13 +776,16 @@ export default function SubmissionBin() {
     setApprovalLinks([])
     setDetailLoading(true)
     if (sub.type === 'event_application') {
-      fetchApprovalLinks(sub.id).then(({ data }) => {
-        setApprovalLinks(data)
-        const sdgRepLink = data.find((l) => l.role === 'sdg_rep')
-        if (sdgRepLink?.status === 'approved' && !sub.sdg_marked_acp_generated) {
-          regenerateAcpWithSdgMarks(sub)
-        }
-      })
+      const { data: links } = await fetchApprovalLinks(sub.id)
+      setApprovalLinks(links)
+      const sdgRepLink = links.find((l) => l.role === 'sdg_rep')
+      if (sdgRepLink?.status === 'approved' && !sub.sdg_marked_acp_generated) {
+        // Awaited so the old ACP Form row/file is deleted and the new
+        // one uploaded *before* we fetch attachments below — otherwise
+        // that fetch can race the delete and the stale ACP briefly (or
+        // permanently, if it wins the race) reappears in the UI.
+        await regenerateAcpWithSdgMarks(sub)
+      }
     }
     const [{ data: att }, { data: hist }, { data: tasks }, { data: check }, { data: cmts }] = await Promise.all([
       supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true }),
@@ -1744,7 +1755,10 @@ export default function SubmissionBin() {
                     <div className="sb-stepper">
                       {(() => {
                         const steps = stepsFor(selected.type)
-                        const current = stepIndexFor(selected.type, selected.stage)
+                        const chainComplete = selected.type === 'event_application'
+                          ? externalApprovalState(approvalLinks, selected.organizations?.category).complete
+                          : true
+                        const current = stepIndexFor(selected.type, selected.stage, chainComplete)
                         return steps.map((step, i) => {
                           const state = i < current ? 'done' : i === current ? 'active' : 'pending'
                           return (
