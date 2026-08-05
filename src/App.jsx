@@ -12,6 +12,7 @@ import Clearance from './pages/Clearance'
 import Assignments from './pages/Assignments'
 import Accounts from './pages/Accounts'
 import Settings from './pages/Settings'
+import ExternalApproval from './pages/ExternalApproval'
 
 export default function App() {
   return (
@@ -20,6 +21,10 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/change-password" element={<ChangePassword />} />
+          {/* Public — no login. Advisers/Deans open this from a
+              time-limited link sent by the submitting org; see
+              src/lib/approvalLinks.js and migration 019. */}
+          <Route path="/approve/:token" element={<ExternalApproval />} />
 
           <Route
             element={

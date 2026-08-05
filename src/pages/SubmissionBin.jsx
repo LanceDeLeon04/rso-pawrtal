@@ -4,11 +4,15 @@ import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
+  Link2, Copy, Send, ShieldAlert, Hourglass,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime, MEDIUM_LABELS } from '../lib/dateUtils'
 import { generateACPFormPdf } from '../lib/acpPdf'
+import {
+  orgNeedsDean, approvalLinkUrl, generateApprovalLink, fetchApprovalLinks,
+} from '../lib/approvalLinks'
 import './SubmissionBin.css'
 
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
@@ -151,6 +155,32 @@ function nextActionFor(role, stage, type) {
   return null
 }
 
+// Adviser (and Dean, for School Council/Academic orgs) must sign off
+// externally before the SDAO Assistant can pick up an event application.
+function externalApprovalState(links, category) {
+  const adviser = links.find((l) => l.role === 'adviser') || null
+  const needsDean = orgNeedsDean(category)
+  const dean = needsDean ? (links.find((l) => l.role === 'dean') || null) : null
+  const complete = adviser?.status === 'approved' && (!needsDean || dean?.status === 'approved')
+  return { adviser, dean, needsDean, complete }
+}
+
+async function generateAndSetLink(submissionId, role, name, email, setApprovalLinks, setError, setBusy) {
+  setError('')
+  if (!name.trim()) {
+    setError(`Please enter the ${role === 'dean' ? "Dean's" : "Adviser's"} name.`)
+    return
+  }
+  setBusy(role)
+  const { data, error } = await generateApprovalLink(submissionId, role, name.trim(), email.trim())
+  setBusy(null)
+  if (error) {
+    setError(error.message || 'Could not generate the link. Please try again.')
+    return
+  }
+  setApprovalLinks((prev) => [...prev.filter((l) => l.role !== role), data])
+}
+
 const EMPTY_APP_FORM = {
   title: '', contact_person: '', contact_number: '', venue_id: '',
   venue_detail: '', pencil_booked: '', lab_endorsed: '',
@@ -229,6 +259,13 @@ export default function SubmissionBin() {
   const [resubmitting, setResubmitting] = useState(false)
   const [resubmitNote, setResubmitNote] = useState('')
 
+  // Adviser/Dean external approval links (event applications only)
+  const [approvalLinks, setApprovalLinks] = useState([])
+  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' } })
+  const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
+  const [linkError, setLinkError] = useState('')
+  const [copiedRole, setCopiedRole] = useState(null)
+
   useEffect(() => {
     loadSubmissions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -257,7 +294,7 @@ export default function SubmissionBin() {
         event_date, start_time, end_time, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
         stage, submitted_by, submitted_at,
-        organizations ( name, acronym ),
+        organizations ( name, acronym, category ),
         venues ( name ),
         events ( title ),
         submitter:profiles!submissions_submitted_by_fkey ( full_name )
@@ -634,7 +671,13 @@ export default function SubmissionBin() {
     setExtraDocEntry(null)
     setResubmitting(false)
     setResubmitNote('')
+    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' } })
+    setLinkError('')
+    setApprovalLinks([])
     setDetailLoading(true)
+    if (sub.type === 'event_application') {
+      fetchApprovalLinks(sub.id).then(({ data }) => setApprovalLinks(data))
+    }
     const [{ data: att }, { data: hist }, { data: tasks }, { data: check }, { data: cmts }] = await Promise.all([
       supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true }),
       supabase.from('submission_status_history')
@@ -1718,6 +1761,94 @@ export default function SubmissionBin() {
                     )}
                   </div>
 
+                  {/* ---------- Adviser / Dean external approvals ---------- */}
+                  {selected.type === 'event_application' && !['approved', 'rejected'].includes(selected.stage) && (() => {
+                    const category = selected.organizations?.category
+                    const { adviser, dean, needsDean } = externalApprovalState(approvalLinks, category)
+                    const roles = needsDean ? ['adviser', 'dean'] : ['adviser']
+                    const canManage = (isOwnerOrg || admin) && selected.stage === 'submitted'
+
+                    function badgeFor(link) {
+                      if (!link) return <span className="sb-badge sb-badge--muted">Not sent yet</span>
+                      if (link.status === 'pending' && new Date(link.expires_at) < new Date()) {
+                        return <span className="sb-badge sb-badge--danger"><Hourglass size={11} /> Expired</span>
+                      }
+                      if (link.status === 'approved') return <span className="sb-badge sb-badge--ok"><CheckCircle2 size={11} /> Approved</span>
+                      if (link.status === 'rejected') return <span className="sb-badge sb-badge--danger"><Ban size={11} /> Rejected</span>
+                      return <span className="sb-badge sb-badge--warn"><Hourglass size={11} /> Awaiting response</span>
+                    }
+
+                    return (
+                      <div className="sb-detail-section">
+                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> Adviser / Dean Approval</span>
+                        {linkError && <div className="sb-form-error"><AlertCircle size={14} /> {linkError}</div>}
+                        {roles.map((role) => {
+                          const link = role === 'adviser' ? adviser : dean
+                          const locked = role === 'dean' && adviser?.status !== 'approved'
+                          const url = link && link.status !== 'rejected' ? approvalLinkUrl(link.token) : null
+                          return (
+                            <div key={role} className="sb-approval-row">
+                              <div className="sb-approval-row__head">
+                                <strong>{role === 'dean' ? 'Dean' : 'Adviser'}</strong>
+                                {badgeFor(link)}
+                              </div>
+                              {locked && <p className="sb-empty-note">Unlocks once the Adviser approves.</p>}
+                              {!locked && link && (
+                                <>
+                                  <p className="sb-approval-row__person">{link.person_name}{link.person_email ? ` · ${link.person_email}` : ''}</p>
+                                  {url && (
+                                    <div className="sb-approval-row__link">
+                                      <input readOnly value={url} onFocus={(e) => e.target.select()} />
+                                      <button
+                                        type="button"
+                                        className="sb-icon-btn"
+                                        title="Copy link"
+                                        onClick={() => {
+                                          navigator.clipboard?.writeText(url)
+                                          setCopiedRole(role)
+                                          setTimeout(() => setCopiedRole(null), 1500)
+                                        }}
+                                      >
+                                        {copiedRole === role ? <Check size={14} /> : <Copy size={14} />}
+                                      </button>
+                                    </div>
+                                  )}
+                                  {link.comment && <p className="sb-history-list__comment">"{link.comment}"</p>}
+                                  <span className="sb-history-list__time">Expires {new Date(link.expires_at).toLocaleString()}</span>
+                                </>
+                              )}
+                              {!locked && canManage && (!link || link.status === 'rejected' || (link.status === 'pending' && new Date(link.expires_at) < new Date())) && (
+                                <div className="sb-approval-row__form">
+                                  <input
+                                    placeholder={`${role === 'dean' ? 'Dean' : 'Adviser'} full name`}
+                                    value={linkForm[role].name}
+                                    onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], name: e.target.value } }))}
+                                  />
+                                  <input
+                                    placeholder="Email (optional)"
+                                    value={linkForm[role].email}
+                                    onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], email: e.target.value } }))}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="sb-btn sb-btn--gold"
+                                    disabled={generatingLinkRole === role}
+                                    onClick={() => generateAndSetLink(
+                                      selected.id, role, linkForm[role].name, linkForm[role].email,
+                                      setApprovalLinks, setLinkError, setGeneratingLinkRole,
+                                    )}
+                                  >
+                                    {generatingLinkRole === role ? <Loader2 size={14} className="spin" /> : <><Send size={13} /> Generate Link</>}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+
                   {/* ---------- Attachments ---------- */}
                   <div className="sb-detail-section">
                     <span className="sb-detail-section__label">Attachments</span>
@@ -1777,7 +1908,7 @@ export default function SubmissionBin() {
                             <CheckCircle2 size={13} />
                             <div>
                               <span className="sb-history-list__action">
-                                {h.actor?.full_name || 'Someone'} {h.action} this submission
+                                {h.actor?.full_name || h.actor_name || 'Someone'} {h.action} this submission
                               </span>
                               {h.comment && <p className="sb-history-list__comment">"{h.comment}"</p>}
                               <span className="sb-history-list__time">{new Date(h.created_at).toLocaleString()}</span>
@@ -1835,6 +1966,25 @@ export default function SubmissionBin() {
                     const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
                       && (selected.stage === 'submitted' || selected.stage === 'assistant_review')
                     const blocked = assistantTurn && openTasks.length > 0
+
+                    const externalGate = assistantTurn && selected.type === 'event_application'
+                      ? externalApprovalState(approvalLinks, selected.organizations?.category)
+                      : null
+                    if (externalGate && !externalGate.complete) {
+                      return (
+                        <div className="sb-review-actions">
+                          <div className="sb-note sb-note--warn">
+                            <ShieldAlert size={15} />
+                            <span>
+                              {externalGate.adviser?.status === 'approved'
+                                ? 'Waiting on the Dean to approve before this can be forwarded.'
+                                : 'Waiting on the Adviser to approve before this can be forwarded.'}
+                              {' '}Generate their link above if you haven't already sent one.
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    }
 
                     return (
                       <div className="sb-review-actions">

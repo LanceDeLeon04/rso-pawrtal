@@ -1,0 +1,337 @@
+.xap {
+  height: 100dvh;
+  overflow-y: auto;
+  background: var(--paper);
+  font-family: var(--font-body);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+
+.xap--center {
+  align-items: center;
+  justify-content: center;
+}
+
+.xap__spin {
+  animation: xap-spin 0.9s linear infinite;
+}
+
+@keyframes xap-spin {
+  to { transform: rotate(360deg); }
+}
+
+.xap__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  background: var(--nu-navy);
+  color: #fff;
+}
+
+.xap__logo {
+  height: 40px;
+  width: 40px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+}
+
+.xap__header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+}
+
+.xap__header p {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.xap__header > div {
+  flex: 1;
+}
+
+.xap-badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.xap-badge--warn { background: #fbeecb; color: #8a5a06; }
+.xap-badge--ok { background: #d9f0dc; color: #21653a; }
+.xap-badge--danger { background: #f6dede; color: #8a2626; }
+
+.xap__body {
+  flex: 1;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.xap-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.xap-card--narrow {
+  max-width: 380px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.xap-card h2 {
+  margin: 0 0 12px;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+}
+
+.xap-card h3 {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.xap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.xap-grid span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.xap-grid strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.xap-desc {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.xap-desc span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.xap-desc p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.xap-muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.xap-doclist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.xap-doclist a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nu-blue-700);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.xap-doclist a:hover {
+  text-decoration: underline;
+}
+
+.xap-note {
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.xap-note--ok { background: #d9f0dc; color: #21653a; }
+.xap-note--warn { background: #fbeecb; color: #8a5a06; }
+
+.xap-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.xap-msg {
+  padding: 8px 12px;
+  border-radius: 10px;
+  max-width: 85%;
+  font-size: 0.85rem;
+}
+
+.xap-msg--reviewer {
+  background: var(--nu-blue-500);
+  color: #fff;
+  align-self: flex-end;
+}
+
+.xap-msg--sdao {
+  background: #eef0f6;
+  color: var(--ink);
+  align-self: flex-start;
+}
+
+.xap-msg__meta {
+  font-size: 0.68rem;
+  opacity: 0.75;
+  margin-bottom: 3px;
+}
+
+.xap-msg__body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.xap-thread__input {
+  display: flex;
+  gap: 8px;
+}
+
+.xap-thread__input input {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.xap-thread__input button {
+  border: none;
+  background: var(--nu-blue-700);
+  color: #fff;
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.xap-thread__input button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.xap-decision textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  resize: vertical;
+  margin-bottom: 14px;
+}
+
+.xap-sig {
+  margin-bottom: 14px;
+}
+
+.xap-sig label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.xap-error {
+  color: var(--danger);
+  font-size: 0.82rem;
+  margin: 0 0 10px;
+}
+
+.xap-decision__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.xap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: none;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.xap-btn--ok { background: #21653a; color: #fff; }
+.xap-btn--danger { background: var(--danger); color: #fff; }
+.xap-btn:disabled { opacity: 0.6; cursor: default; }
+
+.xap-outcome {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.xap-outcome--ok { color: #21653a; }
+.xap-outcome--danger { color: var(--danger); }
+
+.xap-outcome h3 {
+  margin: 0;
+  justify-content: center;
+  color: inherit;
+}
+
+.xap-outcome p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.xap__footer {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 14px;
+}
