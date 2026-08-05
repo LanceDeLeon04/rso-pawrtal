@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import SignaturePad from '../components/SignaturePad'
+import { SDG_OPTIONS } from '../lib/sdgOptions'
 import './ExternalApproval.css'
 
 const STATUS_META = {
@@ -14,6 +15,8 @@ const STATUS_META = {
   rejected: { label: 'Rejected', tone: 'danger' },
   expired: { label: 'Link expired', tone: 'danger' },
 }
+
+const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative' }
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -40,6 +43,7 @@ export default function ExternalApproval() {
   const [submitting, setSubmitting] = useState(false)
   const [actionError, setActionError] = useState('')
   const [doneDecision, setDoneDecision] = useState(null)
+  const [sdgSelections, setSdgSelections] = useState([])
 
   const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState('')
@@ -61,6 +65,9 @@ export default function ExternalApproval() {
     }
     setPayload(data)
     setMessages(data.messages || [])
+    // Pre-fill with whatever was previously marked (re-issued link, or
+    // navigating back after a partial fill) so nothing is lost.
+    setSdgSelections(data.link?.sdg_selections || [])
   }
 
   async function sendMessage() {
@@ -82,12 +89,17 @@ export default function ExternalApproval() {
       setActionError('Please sign above before approving.')
       return
     }
+    if (decision === 'approved' && payload.link.role === 'sdg_rep' && sdgSelections.length === 0) {
+      setActionError('Please mark at least one SDG before approving.')
+      return
+    }
     setSubmitting(true)
     const { error } = await supabase.rpc('submit_approval_decision', {
       p_token: token,
       p_decision: decision,
       p_comment: comment.trim() || null,
       p_signature: signature,
+      p_sdgs: payload.link.role === 'sdg_rep' ? sdgSelections : null,
     })
     setSubmitting(false)
     if (error) {
@@ -117,12 +129,12 @@ export default function ExternalApproval() {
     )
   }
 
-  const { link, submission, organization, attachments, adviser_status: adviserStatus } = payload
-  const roleLabel = link.role === 'dean' ? 'Dean' : 'Adviser'
+  const { link, submission, organization, attachments, prior_chain_complete: priorChainComplete } = payload
+  const roleLabel = ROLE_LABELS[link.role] || 'Reviewer'
   const effectiveStatus = doneDecision ? (doneDecision === 'approved' ? 'approved' : 'rejected') : link.status
   const meta = STATUS_META[effectiveStatus] || STATUS_META.pending
   const isDecided = effectiveStatus !== 'pending'
-  const deanBlocked = link.role === 'dean' && adviserStatus !== 'approved' && !isDecided
+  const roleBlocked = (link.role === 'dean' || link.role === 'sdg_rep') && !priorChainComplete && !isDecided
 
   return (
     <div className="xap">
@@ -184,11 +196,11 @@ export default function ExternalApproval() {
           </ul>
         </section>
 
-        {link.role === 'dean' && (
-          <div className={`xap-note ${adviserStatus === 'approved' ? 'xap-note--ok' : 'xap-note--warn'}`}>
-            {adviserStatus === 'approved'
-              ? 'The Adviser has approved this application. You may proceed.'
-              : 'Waiting on the Adviser to approve first. You will be able to decide once they do.'}
+        {(link.role === 'dean' || link.role === 'sdg_rep') && (
+          <div className={`xap-note ${priorChainComplete ? 'xap-note--ok' : 'xap-note--warn'}`}>
+            {priorChainComplete
+              ? 'Everyone ahead of you in the review chain has approved. You may proceed.'
+              : 'Waiting on earlier reviewers (Adviser, and Dean if required) to approve first. You will be able to decide once they do.'}
           </div>
         )}
 
@@ -234,10 +246,33 @@ export default function ExternalApproval() {
         ) : (
           <section className="xap-card xap-decision">
             <h3><ShieldCheck size={16} /> Your Decision</h3>
-            {deanBlocked ? (
-              <p className="xap-muted">Decision controls will unlock once the Adviser approves.</p>
+            {roleBlocked ? (
+              <p className="xap-muted">Decision controls will unlock once earlier reviewers approve.</p>
             ) : (
               <>
+                {link.role === 'sdg_rep' && (
+                  <div className="xap-sdg">
+                    <label>Sustainable Development Goals <span className="xap-muted">(mark all that this activity counts toward)</span></label>
+                    <div className="xap-sdg-grid">
+                      {SDG_OPTIONS.map((optLabel, i) => {
+                        const val = String(i + 1)
+                        const checked = sdgSelections.includes(val)
+                        return (
+                          <label key={val} className="xap-sdg-item">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => setSdgSelections((prev) => (
+                                e.target.checked ? [...prev, val] : prev.filter((v) => v !== val)
+                              ))}
+                            />
+                            {optLabel}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
                 <textarea
                   placeholder="Add a comment (required if rejecting)…"
                   value={comment}

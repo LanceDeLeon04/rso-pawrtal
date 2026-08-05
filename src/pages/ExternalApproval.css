@@ -275,6 +275,33 @@
   margin-bottom: 6px;
 }
 
+.xap-sdg {
+  margin-bottom: 16px;
+}
+
+.xap-sdg > label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.xap-sdg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.xap-sdg-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
 .xap-error {
   color: var(--danger);
   font-size: 0.82rem;

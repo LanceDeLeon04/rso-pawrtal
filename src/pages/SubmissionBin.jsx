@@ -11,9 +11,10 @@ import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime, MEDIUM_LABELS } from '../lib/dateUtils'
 import { generateACPFormPdf } from '../lib/acpPdf'
 import {
-  orgNeedsDean, approvalLinkUrl, generateApprovalLink, fetchApprovalLinks,
+  approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
 import { ensureEventVerificationToken } from '../lib/eventVerification'
+import { SDG_OPTIONS } from '../lib/sdgOptions'
 import './SubmissionBin.css'
 
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
@@ -26,16 +27,6 @@ const ACTIVITY_TYPES = [
   { value: 'university_activity', label: 'University/School Activity' },
   { value: 'special_event', label: 'Special Event' },
   { value: 'other', label: 'Others' },
-]
-
-const SDG_OPTIONS = [
-  '1. No Poverty', '2. Zero Hunger', '3. Good Health and Well being',
-  '4. Quality Education', '5. Gender Equality', '6. Clean Water and Sanitation',
-  '7. Affordable and Clean Energy', '8. Decent Work and Economic Growth',
-  '9. Industry, Innovation and Infrastructure', '10. Reduced Inequalities',
-  '11. Sustainable Cities and Communities', '12. Responsible Consumption and Production',
-  '13. Climate Action', '14. Life Below Water', '15. Life on Land',
-  '16. Peace, Justice, and Strong Institutions', '17. Partnership for the Goals',
 ]
 
 // Finance/Liquidation documents must be Excel; everything else must be PDF.
@@ -156,20 +147,18 @@ function nextActionFor(role, stage, type) {
   return null
 }
 
-// Adviser (and Dean, for School Council/Academic orgs) must sign off
-// externally before the SDAO Assistant can pick up an event application.
-function externalApprovalState(links, category) {
-  const adviser = links.find((l) => l.role === 'adviser') || null
-  const needsDean = orgNeedsDean(category)
-  const dean = needsDean ? (links.find((l) => l.role === 'dean') || null) : null
-  const complete = adviser?.status === 'approved' && (!needsDean || dean?.status === 'approved')
-  return { adviser, dean, needsDean, complete }
-}
+// Adviser -> Dean (for School Council/Academic orgs) -> SDG
+// Representative must all sign off externally, in that order, before
+// the SDAO Assistant can pick up an event application. The chain
+// resolution itself lives in lib/approvalLinks.js (externalApprovalState)
+// so the client-side ordering can't drift from what the DB enforces.
+
+const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative' }
 
 async function generateAndSetLink(submissionId, role, name, email, setApprovalLinks, setError, setBusy) {
   setError('')
   if (!name.trim()) {
-    setError(`Please enter the ${role === 'dean' ? "Dean's" : "Adviser's"} name.`)
+    setError(`Please enter the ${role === 'adviser' ? "Adviser's" : `${ROLE_LABELS[role]}'s`} name.`)
     return
   }
   setBusy(role)
@@ -189,7 +178,7 @@ const EMPTY_APP_FORM = {
   event_date: '', start_time: '', end_time: '', medium: 'f2f', description: '',
   position: '', email: '', activity_type: '', activity_type_other: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
-  sdgs: [], sdg_representative: '', learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
+  learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
   is_continuing: false, continuing_type: 'year_round', term_label: '',
 }
 
@@ -262,7 +251,7 @@ export default function SubmissionBin() {
 
   // Adviser/Dean external approval links (event applications only)
   const [approvalLinks, setApprovalLinks] = useState([])
-  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' } })
+  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' } })
   const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
   const [linkError, setLinkError] = useState('')
   const [copiedRole, setCopiedRole] = useState(null)
@@ -294,6 +283,7 @@ export default function SubmissionBin() {
         venue_id, venue_detail, venue_tag, online_platform, pencil_booked, lab_endorsed,
         event_date, start_time, end_time, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
+        sdgs, sdg_representative, sdg_marked_acp_generated,
         stage, submitted_by, submitted_at,
         organizations ( name, acronym, category ),
         venues ( name ),
@@ -363,6 +353,79 @@ export default function SubmissionBin() {
       document_type: docType,
       file_url: signed?.signedUrl || path,
     })
+  }
+
+  // Fired once the SDG Representative has approved their link (writing
+  // marked SDGs onto `submissions.sdgs`) — swaps the blank-boxes ACP
+  // Form generated at submission time for one with the SDGs marked.
+  // Guarded by `sdg_marked_acp_generated` so it only fires once per
+  // submission even if the reviewer reopens the record.
+  async function regenerateAcpWithSdgMarks(sub) {
+    try {
+      const { data: fullSub } = await supabase
+        .from('submissions')
+        .select('*, organizations ( name ), venues ( name )')
+        .eq('id', sub.id)
+        .single()
+      if (!fullSub) return
+
+      const venueLabel = fullSub.medium === 'online'
+        ? [ONLINE_PLATFORMS.find((p) => p.value === fullSub.online_platform)?.label, fullSub.online_platform === 'others' ? fullSub.venue_detail : null].filter(Boolean).join(' — ')
+        : fullSub.venues?.name === 'Others' ? fullSub.venue_detail : [fullSub.venues?.name, fullSub.venue_detail].filter(Boolean).join(' — ')
+      const timeRange = [fullSub.start_time && formatTime(fullSub.start_time), fullSub.end_time && formatTime(fullSub.end_time)].filter(Boolean).join(' – ')
+      const activityTypeLabel = fullSub.activity_type === 'other'
+        ? fullSub.activity_type_other
+        : ACTIVITY_TYPES.find((t) => t.value === fullSub.activity_type)?.label
+      const acpDateLabel = fullSub.is_continuing
+        ? (fullSub.continuing_type === 'term' ? `Term ${(fullSub.term_label || '').trim()}` : 'Year-Round')
+        : fullSub.event_date
+
+      const pdfBytes = await generateACPFormPdf({
+        applicationDate: toISODate(new Date(fullSub.submitted_at)),
+        orgName: fullSub.organizations?.name || '',
+        contactPerson: fullSub.contact_person,
+        position: fullSub.position,
+        email: fullSub.email,
+        title: fullSub.title,
+        activityTypeLabel,
+        venueAddress: venueLabel,
+        targetAudience: fullSub.target_audience,
+        targetParticipants: fullSub.target_participants,
+        eventDate: acpDateLabel,
+        timeRange,
+        projectedBudget: fullSub.projected_budget,
+        budgetSource: fullSub.budget_source,
+        sdgs: fullSub.sdgs,
+        sdgRepresentative: fullSub.sdg_representative,
+        learningGoals: fullSub.learning_goals,
+        description: fullSub.description,
+      })
+      const acpFile = new File([pdfBytes], `ACP-Form-${sub.id}-sdg-marked.pdf`, { type: 'application/pdf' })
+
+      const { data: oldAcpRows } = await supabase
+        .from('submission_attachments')
+        .select('id, file_url')
+        .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+      const { error: delErr } = await supabase.from('submission_attachments').delete()
+        .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+      if (!delErr) {
+        for (const row of oldAcpRows || []) {
+          const path = extractStoragePath(row.file_url)
+          if (path) await supabase.storage.from('submission-attachments').remove([path])
+        }
+      }
+      await uploadAttachment(sub.id, 'ACP Form', acpFile)
+      await supabase.from('submissions').update({ sdg_marked_acp_generated: true }).eq('id', sub.id)
+
+      // Reflect immediately if this submission is still the open one.
+      if (selected?.id === sub.id) {
+        const { data: att } = await supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true })
+        setAttachments(att || [])
+      }
+      setSubmissions((prev) => prev.map((s) => (s.id === sub.id ? { ...s, sdg_marked_acp_generated: true } : s)))
+    } catch (err) {
+      console.error('Failed to regenerate ACP Form with SDG marks', err)
+    }
   }
 
   function openAppModal() {
@@ -495,8 +558,12 @@ export default function SubmissionBin() {
       target_participants: Number(appForm.target_participants),
       projected_budget: Number(appForm.projected_budget),
       budget_source: appForm.budget_source,
-      sdgs: appForm.sdgs,
-      sdg_representative: appForm.sdg_representative || null,
+      // SDGs are no longer self-declared by the student — they're left
+      // blank here and marked externally by the SDG Representative
+      // (see the sdg_rep approval-link step), which also fills in
+      // sdg_representative once they've signed off.
+      sdgs: [],
+      sdg_representative: null,
       learning_goals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
       is_continuing: appForm.is_continuing,
       continuing_type: appForm.is_continuing ? appForm.continuing_type : null,
@@ -572,8 +639,10 @@ export default function SubmissionBin() {
         timeRange,
         projectedBudget: appForm.projected_budget,
         budgetSource: appForm.budget_source,
-        sdgs: appForm.sdgs,
-        sdgRepresentative: appForm.sdg_representative,
+        // Blank at first submission — no marks yet. The ACP is
+        // regenerated with marks once the SDG Representative signs off.
+        sdgs: [],
+        sdgRepresentative: null,
         learningGoals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3],
         description: appForm.description,
       })
@@ -684,12 +753,18 @@ export default function SubmissionBin() {
     setExtraDocEntry(null)
     setResubmitting(false)
     setResubmitNote('')
-    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' } })
+    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' } })
     setLinkError('')
     setApprovalLinks([])
     setDetailLoading(true)
     if (sub.type === 'event_application') {
-      fetchApprovalLinks(sub.id).then(({ data }) => setApprovalLinks(data))
+      fetchApprovalLinks(sub.id).then(({ data }) => {
+        setApprovalLinks(data)
+        const sdgRepLink = data.find((l) => l.role === 'sdg_rep')
+        if (sdgRepLink?.status === 'approved' && !sub.sdg_marked_acp_generated) {
+          regenerateAcpWithSdgMarks(sub)
+        }
+      })
     }
     const [{ data: att }, { data: hist }, { data: tasks }, { data: check }, { data: cmts }] = await Promise.all([
       supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true }),
@@ -1521,33 +1596,15 @@ export default function SubmissionBin() {
               <textarea rows={2} value={appForm.description} onChange={(e) => setAppForm({ ...appForm, description: e.target.value })} />
             </label>
 
-            <div className="sb-field">
-              <span>Sustainable Development Goals <span className="sb-optional">(check all that apply)</span></span>
-              <div className="sb-sdg-grid">
-                {SDG_OPTIONS.map((label, i) => {
-                  const val = String(i + 1)
-                  const checked = appForm.sdgs.includes(val)
-                  return (
-                    <label key={val} className="sb-sdg-item">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => setAppForm({
-                          ...appForm,
-                          sdgs: e.target.checked ? [...appForm.sdgs, val] : appForm.sdgs.filter((s) => s !== val),
-                        })}
-                      />
-                      {label}
-                    </label>
-                  )
-                })}
-              </div>
+            <div className="sb-form-notice">
+              <ShieldAlert size={14} />
+              <span>
+                Sustainable Development Goals aren't marked here — after your Adviser
+                {' '}(and Dean, if applicable) approve, the SDG Representative reviews this
+                application and marks which SDGs it counts toward. You'll see it reflected
+                on the ACP Form once they've signed off.
+              </span>
             </div>
-
-            <label className="sb-field">
-              SDG Representative <span className="sb-optional">(optional)</span>
-              <input value={appForm.sdg_representative} onChange={(e) => setAppForm({ ...appForm, sdg_representative: e.target.value })} />
-            </label>
 
             <div className="sb-field">
               <span>Learning Goals/Objectives of the Activity</span>
@@ -1862,11 +1919,12 @@ export default function SubmissionBin() {
                     )}
                   </div>
 
-                  {/* ---------- Adviser / Dean external approvals ---------- */}
+                  {/* ---------- Adviser / Dean / SDG Rep external approvals ---------- */}
                   {selected.type === 'event_application' && (selected.stage !== 'rejected' || approvalLinks.length > 0) && (() => {
                     const category = selected.organizations?.category
-                    const { adviser, dean, needsDean } = externalApprovalState(approvalLinks, category)
-                    const roles = needsDean ? ['adviser', 'dean'] : ['adviser']
+                    const state = externalApprovalState(approvalLinks, category)
+                    const { chain } = state
+                    const linkByRole = { adviser: state.adviser, dean: state.dean, sdg_rep: state.sdgRep }
                     const canManage = (isOwnerOrg || admin) && selected.stage === 'submitted'
 
                     function badgeFor(link) {
@@ -1881,19 +1939,20 @@ export default function SubmissionBin() {
 
                     return (
                       <div className="sb-detail-section">
-                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> Adviser / Dean Approval</span>
+                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> External Sign-off (Adviser → {state.needsDean ? 'Dean → ' : ''}SDG Representative)</span>
                         {linkError && <div className="sb-form-error"><AlertCircle size={14} /> {linkError}</div>}
-                        {roles.map((role) => {
-                          const link = role === 'adviser' ? adviser : dean
-                          const locked = role === 'dean' && adviser?.status !== 'approved'
+                        {chain.map((role, idx) => {
+                          const link = linkByRole[role]
+                          const prevRole = chain[idx - 1]
+                          const locked = idx > 0 && linkByRole[prevRole]?.status !== 'approved'
                           const url = link && link.status !== 'rejected' ? approvalLinkUrl(link.token) : null
                           return (
                             <div key={role} className="sb-approval-row">
                               <div className="sb-approval-row__head">
-                                <strong>{role === 'dean' ? 'Dean' : 'Adviser'}</strong>
+                                <strong>{ROLE_LABELS[role]}</strong>
                                 {badgeFor(link)}
                               </div>
-                              {locked && <p className="sb-empty-note">Unlocks once the Adviser approves.</p>}
+                              {locked && <p className="sb-empty-note">Unlocks once the {ROLE_LABELS[prevRole]} approves.</p>}
                               {!locked && link && (
                                 <>
                                   <p className="sb-approval-row__person">{link.person_name}{link.person_email ? ` · ${link.person_email}` : ''}</p>
@@ -1914,6 +1973,13 @@ export default function SubmissionBin() {
                                       </button>
                                     </div>
                                   )}
+                                  {role === 'sdg_rep' && link.status === 'approved' && (
+                                    <p className="sb-approval-row__person">
+                                      Marked: {(link.sdg_selections || []).length
+                                        ? link.sdg_selections.map((v) => SDG_OPTIONS[Number(v) - 1]).join(', ')
+                                        : '—'}
+                                    </p>
+                                  )}
                                   {link.comment && <p className="sb-history-list__comment">"{link.comment}"</p>}
                                   <span className="sb-history-list__time">Expires {new Date(link.expires_at).toLocaleString()}</span>
                                   {admin && link.status === 'approved' && link.signature_data && (
@@ -1927,7 +1993,7 @@ export default function SubmissionBin() {
                               {!locked && canManage && (!link || link.status === 'rejected' || (link.status === 'pending' && new Date(link.expires_at) < new Date())) && (
                                 <div className="sb-approval-row__form">
                                   <input
-                                    placeholder={`${role === 'dean' ? 'Dean' : 'Adviser'} full name`}
+                                    placeholder={`${ROLE_LABELS[role]} full name`}
                                     value={linkForm[role].name}
                                     onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], name: e.target.value } }))}
                                   />
@@ -2078,14 +2144,14 @@ export default function SubmissionBin() {
                       ? externalApprovalState(approvalLinks, selected.organizations?.category)
                       : null
                     if (externalGate && !externalGate.complete) {
+                      const linkByRole = { adviser: externalGate.adviser, dean: externalGate.dean, sdg_rep: externalGate.sdgRep }
+                      const waitingOnRole = externalGate.chain.find((role) => linkByRole[role]?.status !== 'approved')
                       return (
                         <div className="sb-review-actions">
                           <div className="sb-note sb-note--warn">
                             <ShieldAlert size={15} />
                             <span>
-                              {externalGate.adviser?.status === 'approved'
-                                ? 'Waiting on the Dean to approve before this can be forwarded.'
-                                : 'Waiting on the Adviser to approve before this can be forwarded.'}
+                              Waiting on the {ROLE_LABELS[waitingOnRole]} to approve before this can be forwarded.
                               {' '}Generate their link above if you haven't already sent one.
                             </span>
                           </div>

@@ -62,9 +62,10 @@ function wrapText(text, font, size, maxWidth) {
 /**
  * @param {object} data - submission fields (org name, contact info, ACP fields).
  *   Optionally pass `data.verification = { token, approvedBy, approvedOn }`
- *   once the application has been approved — this stamps the form with a
- *   QR code (linking to /verify/:token) plus the approver name/date, right
- *   above the auto-generated footer note.
+ *   once the Academic Director has approved the application — this is the
+ *   final regeneration of the ACP and stamps the "AQ Validation" block:
+ *   a scannable QR code (linking to /verify/:token) plus the approver
+ *   name/date, right above the auto-generated footer note.
  * @returns {Promise<Uint8Array>}
  */
 export async function generateACPFormPdf(data) {
@@ -227,14 +228,17 @@ export async function generateACPFormPdf(data) {
     })
   }
 
-  // ---------- Approval / verification block (only once approved) ----------
-  // Baked in the moment the application is approved (see SubmissionBin's
-  // approval handler) — a scannable QR code pointing at the public
-  // /verify/:token page, so anyone holding a printed copy of this ACP can
-  // confirm on the spot that it's a genuine, approved activity. Anchored
-  // just above the (fixed-position) footer rather than inline in the flow
-  // above, so it always lands in the same spot regardless of how much
-  // room the sections above it took up.
+  // ---------- AQ Validation block (only once Director-approved) ----------
+  // Baked in the moment the Academic Director gives final approval (see
+  // SubmissionBin's approval handler) — this is the last of the three ACP
+  // regenerations (blank at submission -> SDG marks after the SDG Rep
+  // signs off -> this final AQ-Validated copy). It carries a scannable
+  // QR code pointing at the public /verify/:token page, so anyone holding
+  // a printed copy of this ACP can confirm on the spot that it's a
+  // genuine, AQ-validated, approved activity. Anchored just above the
+  // (fixed-position) footer rather than inline in the flow above, so it
+  // always lands in the same spot regardless of how much room the
+  // sections above it took up.
   if (data.verification?.token) {
     const boxH = 78
     const footerTopY = 70 + 14 // matches the footer's gold rule below
@@ -260,7 +264,7 @@ export async function generateACPFormPdf(data) {
     const textX = qrX + qrSize + 14
     const textW = W - (qrSize + 14) - 20
     let ty = boxTopY - 16
-    page.drawText('APPROVED — VERIFIED ACTIVITY', { x: textX, y: ty, size: 9.5, font: bold, color: NAVY })
+    page.drawText('AQ VALIDATION — APPROVED & VERIFIED ACTIVITY', { x: textX, y: ty, size: 9.5, font: bold, color: NAVY })
     ty -= 15
     page.drawText('Approved by', { x: textX, y: ty, size: 7.5, font: bold, color: MUTED })
     page.drawText(data.verification.approvedBy || '—', { x: textX + 68, y: ty, size: 8.5, font, color: INK })
@@ -268,7 +272,7 @@ export async function generateACPFormPdf(data) {
     page.drawText('Approved on', { x: textX, y: ty, size: 7.5, font: bold, color: MUTED })
     page.drawText(data.verification.approvedOn || '—', { x: textX + 68, y: ty, size: 8.5, font, color: INK })
     ty -= 15
-    wrapText('Scan the QR code to verify this activity is genuinely approved and on record with SDAO.', italic, 7.5, textW)
+    wrapText('Scan the QR code to verify this activity is AQ-validated, genuinely approved, and on record with SDAO.', italic, 7.5, textW)
       .forEach((ln) => { page.drawText(ln, { x: textX, y: ty, size: 7.5, font: italic, color: MUTED }); ty -= 9.5 })
   }
 
@@ -277,7 +281,7 @@ export async function generateACPFormPdf(data) {
   page.drawLine({ start: { x: M, y: y + 14 }, end: { x: 612 - M, y: y + 14 }, thickness: 1.5, color: GOLD })
   page.drawText(
     data.verification?.token
-      ? 'This ACP was generated automatically from the RSO PAWrtal event application and has been approved.'
+      ? 'This ACP was generated automatically from the RSO PAWrtal event application and has passed AQ Validation.'
       : 'This ACP was generated automatically from the RSO PAWrtal event application. Review, approval, and',
     { x: M, y, size: 7.5, font: italic, color: MUTED }
   )

@@ -1,0 +1,17 @@
+-- ============================================================
+-- 024: Add 'sdg_rep' as an external approval-link role
+-- ============================================================
+-- SDG marking moves out of the student-filled application form and
+-- becomes a gated external sign-off, exactly like Adviser/Dean —
+-- the SDG Representative is never a Pawrtal account holder and the
+-- SDGs an activity counts toward must be marked by them, not
+-- self-declared by the submitting officer.
+--
+-- Chain order (event applications):
+--   Adviser -> Dean (if org category requires one) -> SDG Representative
+--   -> SDAO Assistant -> SDAO Supervisor -> Academic Director
+--
+-- ALTER TYPE ... ADD VALUE cannot be used in the same transaction as
+-- statements that reference the new value, so this is kept as its
+-- own migration file (025 adds the columns/functions that use it).
+alter type approval_link_role add value if not exists 'sdg_rep';

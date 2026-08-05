@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Plus, X, MapPin, Clock,
+  CalendarDays, ChevronLeft, ChevronRight, X, MapPin, Clock,
   User, Building2, Pencil, BadgeCheck, Loader2, AlertCircle, Video, Trash2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
@@ -10,31 +10,19 @@ import {
 } from '../lib/dateUtils'
 import './CalendarOfActivities.css'
 
-const EMPTY_FORM = {
-  title: '', org_id: '', contact_person: '', contact_number: '',
-  description: '', venue_id: '', event_date: '', start_time: '',
-  end_time: '', booking_status: 'pencil', medium: 'f2f',
-}
-
 export default function CalendarOfActivities() {
   const { profile } = useAuth()
   const admin = isAdminTier(profile?.role)
-  const myOrgId = profile?.org_memberships?.[0]?.org_id
 
   const today = new Date()
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() })
   const [venues, setVenues] = useState([])
-  const [orgs, setOrgs] = useState([])
   const [venueFilter, setVenueFilter] = useState('all')
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const [selectedEvent, setSelectedEvent] = useState(null)
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [form, setForm] = useState(EMPTY_FORM)
-  const [saving, setSaving] = useState(false)
-  const [formError, setFormError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
@@ -43,12 +31,10 @@ export default function CalendarOfActivities() {
 
   useEffect(() => {
     async function loadStatics() {
-      const [{ data: v }, { data: o }] = await Promise.all([
+      const [{ data: v }] = await Promise.all([
         supabase.from('venues').select('id, name, location').eq('is_active', true).order('name'),
-        supabase.from('organizations').select('id, name, acronym').eq('is_active', true).order('acronym'),
       ])
       setVenues(v || [])
-      setOrgs(o || [])
     }
     loadStatics()
   }, [])
@@ -106,51 +92,6 @@ export default function CalendarOfActivities() {
     setCursor({ year: today.getFullYear(), month: today.getMonth() })
   }
 
-  function openAddModal(prefillDate) {
-    setForm({
-      ...EMPTY_FORM,
-      org_id: admin ? '' : myOrgId || '',
-      event_date: prefillDate ? toISODate(prefillDate) : '',
-    })
-    setFormError('')
-    setShowAddModal(true)
-  }
-
-  async function handleCreateEvent(e) {
-    e.preventDefault()
-    setFormError('')
-
-    if (!form.title || !form.org_id || !form.contact_person || !form.event_date) {
-      setFormError('Please fill in event name, organization, contact person, and date.')
-      return
-    }
-
-    setSaving(true)
-    const { error: err } = await supabase.from('events').insert({
-      title: form.title,
-      org_id: form.org_id,
-      contact_person: form.contact_person,
-      contact_number: form.contact_number || null,
-      description: form.description || null,
-      venue_id: form.venue_id || null,
-      event_date: form.event_date,
-      start_time: form.start_time || null,
-      end_time: form.end_time || null,
-      booking_status: form.booking_status,
-      medium: form.medium,
-      created_by: profile.id,
-    })
-    setSaving(false)
-
-    if (err) {
-      setFormError('Could not save this booking. Please try again.')
-      return
-    }
-
-    setShowAddModal(false)
-    loadEvents()
-  }
-
   async function updateBookingStatus(eventId, status) {
     await supabase.from('events').update({ booking_status: status }).eq('id', eventId)
     setSelectedEvent(null)
@@ -203,10 +144,6 @@ export default function CalendarOfActivities() {
               <option key={v.id} value={v.id}>{v.name}</option>
             ))}
           </select>
-
-          <button className="cal-add-btn" onClick={() => openAddModal(null)}>
-            <Plus size={16} /> Book Activity
-          </button>
         </div>
       </div>
 
@@ -216,6 +153,9 @@ export default function CalendarOfActivities() {
         <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (pencil booked, needs revision)</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
       </div>
+      <p className="cal-empty-note">
+        Activities are booked automatically from Event Applications in the Submission Bin — there's no direct booking from the calendar.
+      </p>
 
       {error && (
         <div className="cal-error"><AlertCircle size={15} /> {error}</div>
@@ -238,7 +178,6 @@ export default function CalendarOfActivities() {
               <div
                 key={date.toISOString()}
                 className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''}`}
-                onDoubleClick={() => inMonth && openAddModal(date)}
               >
                 <div className="cal-cell__head">
                   <span className="cal-cell__num">{date.getDate()}</span>
@@ -364,102 +303,6 @@ export default function CalendarOfActivities() {
               </p>
             )}
           </div>
-        </div>
-      )}
-
-      {showAddModal && (
-        <div className="cal-modal-backdrop" onClick={() => setShowAddModal(false)}>
-          <form className="cal-modal cal-modal--form" onClick={(e) => e.stopPropagation()} onSubmit={handleCreateEvent}>
-            <button type="button" className="cal-modal__close" onClick={() => setShowAddModal(false)}>
-              <X size={18} />
-            </button>
-            <h3 className="cal-modal__title">Book an Activity</h3>
-
-            {formError && <div className="cal-form-error"><AlertCircle size={14} /> {formError}</div>}
-
-            <label className="cal-field">
-              Event Name
-              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-            </label>
-
-            {admin ? (
-              <label className="cal-field">
-                Organization
-                <select value={form.org_id} onChange={(e) => setForm({ ...form, org_id: e.target.value })} required>
-                  <option value="">Select organization</option>
-                  {orgs.map((o) => <option key={o.id} value={o.id}>{o.acronym} — {o.name}</option>)}
-                </select>
-              </label>
-            ) : (
-              <label className="cal-field">
-                Organization
-                <input value={orgs.find((o) => o.id === myOrgId)?.acronym || ''} disabled />
-              </label>
-            )}
-
-            <div className="cal-field-row">
-              <label className="cal-field">
-                Contact Person
-                <input value={form.contact_person} onChange={(e) => setForm({ ...form, contact_person: e.target.value })} required />
-              </label>
-              <label className="cal-field">
-                Contact Number
-                <input value={form.contact_number} onChange={(e) => setForm({ ...form, contact_number: e.target.value })} />
-              </label>
-            </div>
-
-            <div className="cal-field-row">
-              <label className="cal-field">
-                Date
-                <input type="date" value={form.event_date} onChange={(e) => setForm({ ...form, event_date: e.target.value })} required />
-              </label>
-              <label className="cal-field">
-                Venue
-                <select value={form.venue_id} onChange={(e) => setForm({ ...form, venue_id: e.target.value })}>
-                  <option value="">Select venue</option>
-                  {venues.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </select>
-              </label>
-            </div>
-
-            <div className="cal-field-row">
-              <label className="cal-field">
-                Start Time
-                <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
-              </label>
-              <label className="cal-field">
-                End Time
-                <input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
-              </label>
-            </div>
-
-            <div className="cal-field-row">
-              <label className="cal-field">
-                Medium
-                <select value={form.medium} onChange={(e) => setForm({ ...form, medium: e.target.value })}>
-                  <option value="f2f">Face-to-Face</option>
-                  <option value="online">Online</option>
-                  <option value="off_campus">Off-Campus</option>
-                </select>
-              </label>
-              <label className="cal-field">
-                Booking Type
-                <select value={form.booking_status} onChange={(e) => setForm({ ...form, booking_status: e.target.value })}>
-                  <option value="pencil">Pencil book (tentative)</option>
-                  <option value="reserved">Reserve / confirm</option>
-                </select>
-              </label>
-            </div>
-
-            <label className="cal-field">
-              Description
-              <textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            </label>
-
-            <button type="submit" className="cal-btn cal-btn--gold cal-btn--full" disabled={saving}>
-              {saving ? <Loader2 size={15} className="spin" /> : 'Save Booking'}
-            </button>
-          </form>
         </div>
       )}
     </div>

@@ -10,6 +10,14 @@ export function orgNeedsDean(category) {
   return DEAN_REQUIRED_CATEGORIES.includes(category)
 }
 
+// Full external sign-off chain for an event application, in order.
+// The SDG Representative always comes last — after the Adviser (and
+// Dean, if the org's category requires one) — and is the one who
+// actually checks/marks the SDGs; the submitting student never does.
+export function externalApprovalChain(category) {
+  return orgNeedsDean(category) ? ['adviser', 'dean', 'sdg_rep'] : ['adviser', 'sdg_rep']
+}
+
 export function approvalLinkUrl(token) {
   return `${window.location.origin}/approve/${token}`
 }
@@ -26,14 +34,44 @@ export async function generateApprovalLink(submissionId, role, personName, perso
   return { data, error }
 }
 
-// All approval links (adviser/dean) tied to a submission, for showing
-// status/links inside Submission Bin.
+// All approval links (adviser/dean/sdg_rep) tied to a submission, for
+// showing status/links inside Submission Bin.
 export async function fetchApprovalLinks(submissionId) {
   const { data, error } = await supabase
     .from('approval_links')
-    .select('id, role, token, person_name, person_email, status, comment, expires_at, decided_at, created_at, signature_data')
+    .select('id, role, token, person_name, person_email, status, comment, expires_at, decided_at, created_at, signature_data, sdg_selections')
     .eq('submission_id', submissionId)
   return { data: data || [], error }
+}
+
+// Resolves the state of the whole Adviser -> Dean -> SDG Rep chain
+// for a submission, mirroring the ordering/gating enforced server-side
+// in migration 021. `complete` only becomes true once every required
+// link (including the SDG Rep, who must have actually marked SDGs) is
+// approved.
+export function externalApprovalState(links, category) {
+  const chain = externalApprovalChain(category)
+  const byRole = Object.fromEntries(chain.map((role) => [role, links.find((l) => l.role === role) || null]))
+  let complete = true
+  let unlockedUpTo = 0
+  for (let i = 0; i < chain.length; i++) {
+    const link = byRole[chain[i]]
+    if (link?.status === 'approved') {
+      unlockedUpTo = i + 1
+    } else {
+      complete = false
+      break
+    }
+  }
+  return {
+    chain,
+    adviser: byRole.adviser || null,
+    dean: byRole.dean || null,
+    sdgRep: byRole.sdg_rep || null,
+    needsDean: chain.includes('dean'),
+    complete,
+    unlockedUpTo, // number of chain steps fully approved so far
+  }
 }
 
 // Post an internal (SDAO/org-side) message onto an existing link's
