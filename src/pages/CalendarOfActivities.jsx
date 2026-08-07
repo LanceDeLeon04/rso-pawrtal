@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   CalendarDays, ChevronLeft, ChevronRight, X, MapPin, Clock,
   User, Building2, Pencil, BadgeCheck, Loader2, AlertCircle, Video, Trash2,
-  Ban, Move,
+  Ban, Move, PartyPopper, GraduationCap,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isFMO } from '../context/AuthContext'
@@ -38,6 +38,13 @@ export default function CalendarOfActivities() {
   const [savingBlock, setSavingBlock] = useState(false)
   const [selectedBlock, setSelectedBlock] = useState(null)
 
+  const [restrictedPeriods, setRestrictedPeriods] = useState([])
+  const [showPeriodModal, setShowPeriodModal] = useState(false)
+  const [periodForm, setPeriodForm] = useState({ kind: 'holiday', label: '', start_date: '', end_date: '', note: '' })
+  const [savingPeriod, setSavingPeriod] = useState(false)
+  const [selectedPeriod, setSelectedPeriod] = useState(null)
+  const [periodError, setPeriodError] = useState('')
+
   const grid = useMemo(() => buildMonthGrid(cursor.year, cursor.month), [cursor])
   const monthLabel = `${MONTH_NAMES[cursor.month]} ${cursor.year}`
 
@@ -54,8 +61,24 @@ export default function CalendarOfActivities() {
   useEffect(() => {
     loadEvents()
     loadBlocks()
+    loadRestrictedPeriods()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor, venueFilter])
+
+  async function loadRestrictedPeriods() {
+    const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
+    const rangeEnd = toISODate(new Date(cursor.year, cursor.month + 1, 0))
+
+    // Overlap: a period is visible this month if it starts on/before
+    // the month's last day AND ends on/after the month's first day.
+    const { data } = await supabase
+      .from('restricted_periods')
+      .select('id, kind, label, start_date, end_date, note')
+      .lte('start_date', rangeEnd)
+      .gte('end_date', rangeStart)
+      .order('start_date', { ascending: true })
+    setRestrictedPeriods(data || [])
+  }
 
   async function loadBlocks() {
     const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
@@ -113,6 +136,44 @@ export default function CalendarOfActivities() {
   function blocksForDay(date) {
     const iso = toISODate(date)
     return blocks.filter((b) => b.block_date === iso)
+  }
+
+  function periodsForDay(date) {
+    const iso = toISODate(date)
+    return restrictedPeriods.filter((p) => p.start_date <= iso && p.end_date >= iso)
+  }
+
+  async function handleSchedulePeriod(e) {
+    e.preventDefault()
+    setPeriodError('')
+    if (!periodForm.label.trim() || !periodForm.start_date || !periodForm.end_date) return
+    if (periodForm.end_date < periodForm.start_date) {
+      setPeriodError('End date can\'t be before the start date.')
+      return
+    }
+    setSavingPeriod(true)
+    const { error: err } = await supabase.from('restricted_periods').insert({
+      kind: periodForm.kind,
+      label: periodForm.label.trim(),
+      start_date: periodForm.start_date,
+      end_date: periodForm.end_date,
+      note: periodForm.note.trim() || null,
+      created_by: profile?.id,
+    })
+    setSavingPeriod(false)
+    if (err) {
+      setPeriodError('Could not schedule this period. Please try again.')
+      return
+    }
+    setShowPeriodModal(false)
+    setPeriodForm({ kind: 'holiday', label: '', start_date: '', end_date: '', note: '' })
+    loadRestrictedPeriods()
+  }
+
+  async function handleUnschedulePeriod(periodId) {
+    await supabase.from('restricted_periods').delete().eq('id', periodId)
+    setSelectedPeriod(null)
+    loadRestrictedPeriods()
   }
 
   async function handleBlockDate(e) {
@@ -244,6 +305,14 @@ export default function CalendarOfActivities() {
               <Ban size={14} /> Block Date
             </button>
           )}
+          {canManageVenues && (
+            <button
+              className="cal-btn cal-btn--outline"
+              onClick={() => { setPeriodError(''); setPeriodForm({ kind: 'holiday', label: '', start_date: '', end_date: '', note: '' }); setShowPeriodModal(true) }}
+            >
+              <PartyPopper size={14} /> Schedule Holiday / Exam Period
+            </button>
+          )}
         </div>
       </div>
 
@@ -252,6 +321,8 @@ export default function CalendarOfActivities() {
         <span className="cal-legend__item"><i className="cal-dot cal-dot--reserved" /> Reserved / confirmed</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (pencil booked, needs revision)</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
+        <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
+        <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam period (booking discouraged)</span>
       </div>
       <p className="cal-empty-note">
         Activities are booked automatically from Event Applications in the Submission Bin — there's no direct booking from the calendar.
@@ -274,16 +345,28 @@ export default function CalendarOfActivities() {
           {grid.map(({ date, inMonth }) => {
             const dayEvents = eventsForDay(date)
             const dayBlocks = blocksForDay(date)
+            const dayPeriods = periodsForDay(date)
             const isToday = toISODate(date) === toISODate(today)
+            const iso = toISODate(date)
             return (
               <div
                 key={date.toISOString()}
-                className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''}`}
+                className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''} ${dayPeriods.length ? `cal-cell--${dayPeriods[0].kind}` : ''}`}
               >
                 <div className="cal-cell__head">
                   <span className="cal-cell__num">{date.getDate()}</span>
                 </div>
                 <div className="cal-cell__events">
+                  {dayPeriods.filter((p) => p.start_date === iso).map((p) => (
+                    <button
+                      key={p.id}
+                      className={`cal-chip cal-chip--${p.kind}`}
+                      onClick={() => setSelectedPeriod(p)}
+                      title={p.label}
+                    >
+                      {p.kind === 'exam_period' ? <GraduationCap size={11} /> : <PartyPopper size={11} />} {p.label}
+                    </button>
+                  ))}
                   {dayBlocks.map((b) => (
                     <button
                       key={b.id}
@@ -522,6 +605,96 @@ export default function CalendarOfActivities() {
                   {savingBlock ? <Loader2 size={14} className="spin" /> : 'Block Date'}
                 </button>
                 <button className="cal-btn cal-btn--outline" type="button" onClick={() => setShowBlockModal(false)} disabled={savingBlock}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {selectedPeriod && (
+        <div className="cal-modal-backdrop" onClick={() => setSelectedPeriod(null)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setSelectedPeriod(null)}>
+              <X size={18} />
+            </button>
+            <span className={`cal-status-badge cal-status-badge--${selectedPeriod.kind}`}>
+              {selectedPeriod.kind === 'exam_period' ? <GraduationCap size={12} /> : <PartyPopper size={12} />}
+              {selectedPeriod.kind === 'exam_period' ? 'Exam Period' : 'Holiday'}
+            </span>
+            <h3 className="cal-modal__title">{selectedPeriod.label}</h3>
+            <div className="cal-modal__details">
+              <div className="cal-modal__row">
+                <CalendarDays size={14} /> {selectedPeriod.start_date}
+                {selectedPeriod.end_date !== selectedPeriod.start_date && ` – ${selectedPeriod.end_date}`}
+              </div>
+              <p className="cal-modal__desc">
+                <AlertCircle size={13} /> Booking activities on these dates is not recommended and is only
+                allowed under extraordinary circumstances.
+              </p>
+              {selectedPeriod.note && <p className="cal-modal__desc">{selectedPeriod.note}</p>}
+              {canManageVenues && (
+                <div className="cal-modal__actions">
+                  <button className="cal-btn cal-btn--danger-outline" onClick={() => handleUnschedulePeriod(selectedPeriod.id)}>
+                    <Trash2 size={14} /> Unschedule This Period
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPeriodModal && (
+        <div className="cal-modal-backdrop" onClick={() => setShowPeriodModal(false)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setShowPeriodModal(false)}>
+              <X size={18} />
+            </button>
+            <h3 className="cal-modal__title"><PartyPopper size={16} /> Schedule Holiday / Exam Period</h3>
+            {periodError && <div className="cal-error"><AlertCircle size={14} /> {periodError}</div>}
+            <form className="cal-move-form" onSubmit={handleSchedulePeriod}>
+              <label className="cal-move-form__field">
+                Type
+                <select value={periodForm.kind} onChange={(e) => setPeriodForm({ ...periodForm, kind: e.target.value })} required>
+                  <option value="holiday">Holiday</option>
+                  <option value="exam_period">Exam Week (include the week before, if applicable)</option>
+                </select>
+              </label>
+              <label className="cal-move-form__field">
+                Label
+                <input type="text" value={periodForm.label}
+                  onChange={(e) => setPeriodForm({ ...periodForm, label: e.target.value })}
+                  placeholder={periodForm.kind === 'exam_period' ? 'e.g. Midterm Exams (incl. pre-exam week)' : 'e.g. National Heroes Day'}
+                  required />
+              </label>
+              <div className="cal-move-form__row">
+                <label className="cal-move-form__field">
+                  Start Date
+                  <input type="date" value={periodForm.start_date}
+                    onChange={(e) => setPeriodForm({ ...periodForm, start_date: e.target.value })} required />
+                </label>
+                <label className="cal-move-form__field">
+                  End Date
+                  <input type="date" value={periodForm.end_date}
+                    onChange={(e) => setPeriodForm({ ...periodForm, end_date: e.target.value })} required />
+                </label>
+              </div>
+              <label className="cal-move-form__field">
+                Note <span className="acc-optional">(optional)</span>
+                <input type="text" value={periodForm.note}
+                  onChange={(e) => setPeriodForm({ ...periodForm, note: e.target.value })}
+                  placeholder="Shown to applicants on the notice" />
+              </label>
+              <p className="cal-empty-note">
+                This doesn't block submissions — it flags the dates as discouraged for new activities and
+                shows a notice on the Event Application form and here on the calendar.
+              </p>
+              <div className="cal-modal__actions">
+                <button className="cal-btn cal-btn--gold" type="submit" disabled={savingPeriod}>
+                  {savingPeriod ? <Loader2 size={14} className="spin" /> : 'Schedule Period'}
+                </button>
+                <button className="cal-btn cal-btn--outline" type="button" onClick={() => setShowPeriodModal(false)} disabled={savingPeriod}>
                   Cancel
                 </button>
               </div>

@@ -4,7 +4,7 @@ import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
-  Link2, Copy, Send, ShieldAlert, Hourglass,
+  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -200,6 +200,7 @@ const EMPTY_APP_FORM = {
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
   is_continuing: false, continuing_type: 'year_round', term_label: '',
+  restricted_period_ack: false, restricted_period_justification: '',
 }
 
 export default function SubmissionBin() {
@@ -224,6 +225,9 @@ export default function SubmissionBin() {
   const [showAppModal, setShowAppModal] = useState(false)
   const [appForm, setAppForm] = useState(EMPTY_APP_FORM)
   const [appFiles, setAppFiles] = useState({})
+  const [venueConflict, setVenueConflict] = useState(null)
+  const [checkingVenue, setCheckingVenue] = useState(false)
+  const [restrictedPeriods, setRestrictedPeriods] = useState([])
 
   const [showReportModal, setShowReportModal] = useState(false)
   const [reportClearanceId, setReportClearanceId] = useState('')
@@ -290,13 +294,34 @@ export default function SubmissionBin() {
   }, [myOrgId])
 
   useEffect(() => {
+    // Live venue-availability check as the applicant picks a venue +
+    // date in the New Application form — re-runs whenever either
+    // changes so stale conflicts (or stale "all clear") don't linger.
+    if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !appForm.venue_id || !appForm.event_date) {
+      setVenueConflict(null)
+      return
+    }
+    let cancelled = false
+    setCheckingVenue(true)
+    checkVenueAvailability(appForm.venue_id, appForm.event_date).then((msg) => {
+      if (!cancelled) {
+        setVenueConflict(msg)
+        setCheckingVenue(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [showAppModal, appForm.venue_id, appForm.event_date, appForm.medium, appForm.is_continuing])
+
+  useEffect(() => {
     async function loadStatics() {
-      const [{ data: v }, { data: t }] = await Promise.all([
+      const [{ data: v }, { data: t }, { data: rp }] = await Promise.all([
         supabase.from('venues').select('id, name').eq('is_active', true).order('name'),
         supabase.from('templates').select('id, name, category, file_url'),
+        supabase.from('restricted_periods').select('id, kind, label, start_date, end_date, note'),
       ])
       setVenues(v || [])
       setTemplates(t || [])
+      setRestrictedPeriods(rp || [])
     }
     loadStatics()
   }, [])
@@ -312,6 +337,7 @@ export default function SubmissionBin() {
         event_date, start_time, end_time, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
         sdgs, sdg_representative, sdg_marked_acp_generated,
+        restricted_period_ack, restricted_period_justification,
         stage, submitted_by, submitted_at,
         organizations ( name, acronym, category ),
         venues ( name ),
@@ -360,6 +386,48 @@ export default function SubmissionBin() {
 
     setOpenClearances(reconciled)
     return reconciled
+  }
+
+  // A venue is unavailable for a date if it's already 'pencil' booked or
+  // 'reserved' by another activity's events row, or admin/FMO has marked
+  // that date 'blocked' for maintenance/holidays via venue_blocks.
+  // 'cancelled' and 'returned' bookings don't hold the slot.
+  async function checkVenueAvailability(venueId, date) {
+    if (!venueId || !date) return null
+
+    const [{ data: existingEvents }, { data: existingBlocks }] = await Promise.all([
+      supabase
+        .from('events')
+        .select('id, booking_status, organizations ( acronym )')
+        .eq('venue_id', venueId)
+        .eq('event_date', date)
+        .in('booking_status', ['pencil', 'reserved']),
+      supabase
+        .from('venue_blocks')
+        .select('id, reason')
+        .eq('venue_id', venueId)
+        .eq('block_date', date),
+    ])
+
+    if (existingBlocks && existingBlocks.length > 0) {
+      const reason = existingBlocks[0].reason
+      return `This venue is blocked on this date${reason ? ` (${reason})` : ''}. Please pick another date or venue.`
+    }
+    if (existingEvents && existingEvents.length > 0) {
+      const status = existingEvents[0].booking_status
+      return `This venue is already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by another activity. Please pick another date or venue.`
+    }
+    return null
+  }
+
+  // Holiday / exam-week (+ the week before) advisory: unlike the venue
+  // conflict check above, this never blocks submission — it's flagged
+  // by admin/SDAO/QMO/FMO on the Calendar as a date range where new
+  // activities are discouraged. The applicant just has to acknowledge
+  // it, and may add a justification if the case is extraordinary.
+  function restrictedPeriodFor(date) {
+    if (!date) return null
+    return restrictedPeriods.find((p) => p.start_date <= date && p.end_date >= date) || null
   }
 
   function templateFor(docName) {
@@ -478,6 +546,8 @@ export default function SubmissionBin() {
   const overdueClearances = openClearances.filter((c) => c.status === 'overdue')
   const clearanceBlocked = overdueClearances.length > 0
 
+  const activeRestrictedPeriod = !appForm.is_continuing ? restrictedPeriodFor(appForm.event_date) : null
+
   function openAppModal() {
     // Clearance gate: an org with a settled-past-deadline clearance
     // (an unresolved activity report, or an overdue non-event task)
@@ -490,6 +560,7 @@ export default function SubmissionBin() {
     setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '' })
     setAppFiles({})
     setFormError('')
+    setVenueConflict(null)
     setShowAppModal(true)
   }
 
@@ -559,6 +630,28 @@ export default function SubmissionBin() {
       setFormError('Please specify the term (e.g. "1st Term, SY 2026-2027").')
       return
     }
+    if (activeRestrictedPeriod) {
+      if (!appForm.restricted_period_ack) {
+        setFormError('Please acknowledge the holiday/exam period notice before submitting.')
+        return
+      }
+      if (!appForm.restricted_period_justification.trim()) {
+        setFormError('Please briefly explain the extraordinary circumstance for booking during this period.')
+        return
+      }
+    }
+
+    // Re-check venue availability right before submitting — guards
+    // against another org grabbing the slot (or FMO blocking it)
+    // between the live check above and now.
+    if (!appForm.is_continuing && appForm.medium !== 'online' && appForm.venue_id && appForm.event_date) {
+      const conflictMsg = await checkVenueAvailability(appForm.venue_id, appForm.event_date)
+      if (conflictMsg) {
+        setVenueConflict(conflictMsg)
+        setFormError(conflictMsg)
+        return
+      }
+    }
 
     const isOnline = appForm.medium === 'online'
     const selectedVenue = isOnline ? null : venues.find((v) => v.id === appForm.venue_id)
@@ -625,6 +718,8 @@ export default function SubmissionBin() {
       is_continuing: appForm.is_continuing,
       continuing_type: appForm.is_continuing ? appForm.continuing_type : null,
       term_label: appForm.is_continuing && appForm.continuing_type === 'term' ? appForm.term_label.trim() : null,
+      restricted_period_ack: !!activeRestrictedPeriod && appForm.restricted_period_ack,
+      restricted_period_justification: activeRestrictedPeriod ? appForm.restricted_period_justification.trim() : null,
       submitted_by: profile.id,
     }).select().single()
 
@@ -1604,6 +1699,48 @@ export default function SubmissionBin() {
               </label>
             </div>
 
+            {checkingVenue && (
+              <div className="sb-form-notice"><Loader2 size={14} className="spin" /> Checking venue availability…</div>
+            )}
+            {venueConflict && (
+              <div className="sb-form-error"><AlertCircle size={14} /> {venueConflict}</div>
+            )}
+
+            {activeRestrictedPeriod && (
+              <div className="sb-restricted-notice">
+                <PartyPopper size={15} />
+                <div className="sb-restricted-notice__body">
+                  <strong>
+                    {activeRestrictedPeriod.kind === 'exam_period' ? 'Exam period' : 'Holiday'}: {activeRestrictedPeriod.label}
+                  </strong>
+                  <span>
+                    Booking activities on this date is not recommended and is only allowed under
+                    extraordinary circumstances.
+                    {activeRestrictedPeriod.note && ` ${activeRestrictedPeriod.note}`}
+                  </span>
+                  <label className="sb-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={appForm.restricted_period_ack}
+                      onChange={(e) => setAppForm({ ...appForm, restricted_period_ack: e.target.checked })}
+                    />
+                    I acknowledge this and confirm this is an extraordinary circumstance.
+                  </label>
+                  {appForm.restricted_period_ack && (
+                    <label className="sb-field">
+                      Please briefly explain the extraordinary circumstance
+                      <input
+                        value={appForm.restricted_period_justification}
+                        onChange={(e) => setAppForm({ ...appForm, restricted_period_justification: e.target.value })}
+                        placeholder="e.g. Required by an accreditation deadline that can't be moved"
+                        required
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="sb-field">
               <label className="sb-checkbox-label">
                 <input
@@ -1727,7 +1864,14 @@ export default function SubmissionBin() {
               ))}
             </div>
 
-            <button type="submit" className="sb-btn sb-btn--gold sb-btn--full" disabled={saving}>
+            <button
+              type="submit"
+              className="sb-btn sb-btn--gold sb-btn--full"
+              disabled={
+                saving || !!venueConflict || checkingVenue ||
+                (!!activeRestrictedPeriod && (!appForm.restricted_period_ack || !appForm.restricted_period_justification.trim()))
+              }
+            >
               {saving ? <Loader2 size={15} className="spin" /> : 'Submit Application'}
             </button>
           </form>
@@ -1848,6 +1992,12 @@ export default function SubmissionBin() {
                       {selected.lab_endorsed !== null && selected.lab_endorsed !== undefined && (
                         <div className="sb-detail-row">
                           <Check size={13} /> Lab Owner Endorsed: {selected.lab_endorsed ? 'Yes' : 'No'}
+                        </div>
+                      )}
+                      {selected.restricted_period_ack && (
+                        <div className="sb-detail-row sb-detail-row--warn">
+                          <PartyPopper size={13} /> Submitted despite holiday/exam period notice
+                          {selected.restricted_period_justification && `: "${selected.restricted_period_justification}"`}
                         </div>
                       )}
                       <div className="sb-detail-row">

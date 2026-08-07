@@ -129,6 +129,8 @@
 .cal-dot--reserved { background: var(--nu-blue-700); }
 .cal-dot--cancelled { background: var(--line); }
 .cal-dot--returned { background: #b3b3b3; border: 1.5px dashed #8c8c8c; }
+.cal-dot--holiday { background: #f4c7ce; border: 1px solid #7a1f2b; }
+.cal-dot--exam_period { background: #c9d2f0; border: 1px solid var(--nu-blue-700); }
 
 .cal-error {
   display: flex;
@@ -218,6 +220,19 @@
   background: #fff9ea;
 }
 
+.cal-cell--holiday {
+  background: #fdeef0;
+}
+
+.cal-cell--exam_period {
+  background: #eef1fb;
+}
+
+.cal-cell--today.cal-cell--holiday,
+.cal-cell--today.cal-cell--exam_period {
+  background: #fff9ea;
+}
+
 .cal-cell__head {
   display: flex;
   justify-content: flex-end;
@@ -279,7 +294,25 @@
   gap: 4px;
 }
 
+.cal-chip--holiday {
+  background: #f4c7ce;
+  color: #7a1f2b;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-chip--exam_period {
+  background: #c9d2f0;
+  color: var(--nu-blue-700);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .cal-status-badge--blocked { background: #3a3a3a; color: #fff; }
+.cal-status-badge--holiday { background: #f4c7ce; color: #7a1f2b; display: flex; align-items: center; gap: 4px; }
+.cal-status-badge--exam_period { background: #c9d2f0; color: var(--nu-blue-700); display: flex; align-items: center; gap: 4px; }
 
 .cal-move-form {
   display: flex;
