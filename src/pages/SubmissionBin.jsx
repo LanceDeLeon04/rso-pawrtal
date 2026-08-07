@@ -76,10 +76,11 @@ const NIGHT_BEFORE_INGRESS_VENUES = [
 const NIGHT_BEFORE_START_MIN = 19 * 60 // 7:00 PM
 const NIGHT_BEFORE_END_MIN = 21 * 60   // 9:00 PM
 
-// Venues that need a free-text specific (room number / which lab / what).
+// Venues that need a specific location picked (room / lab) or typed
+// (Others) before the venue selection is complete.
 const VENUE_DETAIL_PROMPTS = {
-  Room: 'Identify room number',
-  Laboratory: 'Identify which lab (e.g. ComLab)',
+  Room: 'Select the building, floor, and room',
+  Laboratory: 'Select the laboratory',
   Others: 'Please specify',
 }
 
@@ -204,6 +205,7 @@ async function generateAndSetLink(submissionId, role, name, email, setApprovalLi
 const EMPTY_APP_FORM = {
   title: '', contact_person: '', contact_number: '', venue_id: '',
   venue_detail: '', pencil_booked: '', lab_endorsed: '',
+  room_building: '', room_floor: '', room_number: '', lab_id: '',
   online_platform: '',
   event_date: '', start_time: '', end_time: '', medium: 'f2f', description: '',
   position: '', email: '', activity_type: '', activity_type_other: '',
@@ -231,6 +233,8 @@ export default function SubmissionBin() {
   const [typeFilter, setTypeFilter] = useState('all')
   const [stageFilter, setStageFilter] = useState('all')
   const [venues, setVenues] = useState([])
+  const [venueRooms, setVenueRooms] = useState([])
+  const [venueLabs, setVenueLabs] = useState([])
   const [templates, setTemplates] = useState([])
   const [openClearances, setOpenClearances] = useState([])
 
@@ -355,14 +359,18 @@ export default function SubmissionBin() {
 
   useEffect(() => {
     async function loadStatics() {
-      const [{ data: v }, { data: t }, { data: rp }] = await Promise.all([
+      const [{ data: v }, { data: t }, { data: rp }, { data: rooms }, { data: labs }] = await Promise.all([
         supabase.from('venues').select('id, name').eq('is_active', true).order('name'),
         supabase.from('templates').select('id, name, category, file_url'),
         supabase.from('restricted_periods').select('id, kind, label, start_date, end_date, note'),
+        supabase.from('venue_rooms').select('id, building, floor, room_number').order('building').order('floor').order('sort_order'),
+        supabase.from('venue_labs').select('id, name, care_of, location').order('sort_order'),
       ])
       setVenues(v || [])
       setTemplates(t || [])
       setRestrictedPeriods(rp || [])
+      setVenueRooms(rooms || [])
+      setVenueLabs(labs || [])
     }
     loadStatics()
   }, [])
@@ -803,6 +811,10 @@ export default function SubmissionBin() {
   const displayEgressTime = displayedBuffer ? formatTime(minutesToClock(displayedBuffer[1])) : ''
 
   const selectedVenueName = venues.find((v) => v.id === appForm.venue_id)?.name
+  const roomBuildingOptions = [...new Set(venueRooms.map((r) => r.building))]
+  const roomFloorOptions = [...new Set(venueRooms.filter((r) => r.building === appForm.room_building).map((r) => r.floor))]
+  const roomNumberOptions = venueRooms.filter((r) => r.building === appForm.room_building && r.floor === appForm.room_floor)
+  const selectedLab = venueLabs.find((l) => l.id === appForm.lab_id)
   const nightBeforeEligible = appForm.medium !== 'online' && !appForm.is_continuing && NIGHT_BEFORE_INGRESS_VENUES.includes(selectedVenueName)
   const nightBeforeDateISO = appForm.event_date ? dayBefore(appForm.event_date) : ''
   const nightBeforeDateLabel = nightBeforeDateISO
@@ -1892,6 +1904,7 @@ export default function SubmissionBin() {
                     // Switching medium clears whichever venue/platform
                     // fields don't apply to the new selection.
                     venue_id: '', venue_detail: '', pencil_booked: '', lab_endorsed: '',
+                    room_building: '', room_floor: '', room_number: '', lab_id: '',
                     online_platform: '',
                   })}
                   required
@@ -1921,7 +1934,7 @@ export default function SubmissionBin() {
                   Venue
                   <select
                     value={appForm.venue_id}
-                    onChange={(e) => setAppForm({ ...appForm, venue_id: e.target.value, venue_detail: '', pencil_booked: '', lab_endorsed: '' })}
+                    onChange={(e) => setAppForm({ ...appForm, venue_id: e.target.value, venue_detail: '', pencil_booked: '', lab_endorsed: '', room_building: '', room_floor: '', room_number: '', lab_id: '' })}
                     required
                   >
                     <option value="">Select venue</option>
@@ -1962,13 +1975,103 @@ export default function SubmissionBin() {
                     Ensure that you have pencil booked this with INSPIRE or Facilities Office before submitting.
                   </div>
 
-                  {detailPrompt && (
+                  {venueName === 'Room' && (
+                    <div className="sb-field-row">
+                      <label className="sb-field">
+                        Building
+                        <select
+                          value={appForm.room_building}
+                          onChange={(e) => setAppForm({ ...appForm, room_building: e.target.value, room_floor: '', room_number: '', venue_detail: '' })}
+                          required
+                        >
+                          <option value="">Select building</option>
+                          {roomBuildingOptions.map((b) => (
+                            <option key={b} value={b}>{b}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="sb-field">
+                        Floor
+                        <select
+                          value={appForm.room_floor}
+                          onChange={(e) => setAppForm({ ...appForm, room_floor: e.target.value, room_number: '', venue_detail: '' })}
+                          disabled={!appForm.room_building}
+                          required
+                        >
+                          <option value="">Select floor</option>
+                          {roomFloorOptions.map((f) => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="sb-field">
+                        Room
+                        <select
+                          value={appForm.room_number}
+                          onChange={(e) => {
+                            const room = roomNumberOptions.find((r) => r.room_number === e.target.value)
+                            setAppForm({
+                              ...appForm,
+                              room_number: e.target.value,
+                              venue_detail: room ? `${room.building}, ${room.floor} Flr — ${room.room_number}` : '',
+                            })
+                          }}
+                          disabled={!appForm.room_floor}
+                          required
+                        >
+                          <option value="">Select room</option>
+                          {roomNumberOptions.map((r) => (
+                            <option key={r.id} value={r.room_number}>{r.room_number}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+
+                  {venueName === 'Laboratory' && (
+                    <>
+                      <label className="sb-field">
+                        Laboratory
+                        <select
+                          value={appForm.lab_id}
+                          onChange={(e) => {
+                            const lab = venueLabs.find((l) => l.id === e.target.value)
+                            setAppForm({
+                              ...appForm,
+                              lab_id: e.target.value,
+                              venue_detail: lab ? `${lab.name} c/o ${lab.care_of}, ${lab.location}` : '',
+                            })
+                          }}
+                          required
+                        >
+                          <option value="">Select laboratory</option>
+                          {venueLabs.map((l) => (
+                            <option key={l.id} value={l.id}>{l.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      {selectedLab && (
+                        <div className="sb-field-row">
+                          <label className="sb-field">
+                            Care of
+                            <input value={selectedLab.care_of} disabled />
+                          </label>
+                          <label className="sb-field">
+                            Location
+                            <input value={selectedLab.location} disabled />
+                          </label>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {detailPrompt && venueName !== 'Room' && venueName !== 'Laboratory' && (
                     <label className="sb-field">
                       {detailPrompt}
                       <input
                         value={appForm.venue_detail}
                         onChange={(e) => setAppForm({ ...appForm, venue_detail: e.target.value })}
-                        placeholder={venueName === 'Room' ? 'e.g. Room 301' : venueName === 'Laboratory' ? 'e.g. ComLab (ITSO)' : 'e.g. Covered Court'}
+                        placeholder="e.g. Covered Court"
                         required
                       />
                     </label>

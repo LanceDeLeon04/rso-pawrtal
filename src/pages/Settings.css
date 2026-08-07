@@ -121,14 +121,50 @@
   flex: 1;
 }
 
-.set-field input {
+.set-field input,
+.set-field select {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: 13px;
   font-family: inherit;
   color: var(--ink);
+  background: #fff;
 }
+
+.set-btn--outline {
+  background: #fff;
+  color: var(--nu-blue-700);
+  border: 1px solid var(--line);
+}
+.set-btn--outline:hover { background: var(--paper); }
+
+.set-icon-btn--danger { color: var(--danger); }
+.set-icon-btn--danger:hover { background: #fdecec; }
+
+.set-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.set-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.set-tab {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.set-tab--active { background: var(--nu-navy); color: #fff; border-color: var(--nu-navy); }
 
 .set-field-row {
   display: flex;

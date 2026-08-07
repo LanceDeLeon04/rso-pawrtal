@@ -16,7 +16,7 @@ const NAV_ITEMS = [
   { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true },
   { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true },
   { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon, hideForFMO: true },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
 const ROLE_LABELS = {
@@ -108,11 +108,9 @@ export default function Layout() {
 
               {menuOpen && (
                 <div className="topbar__menu" onClick={(e) => e.stopPropagation()}>
-                  {!fmo && (
-                    <NavLink to="/settings" className="topbar__menu-item" onClick={() => setMenuOpen(false)}>
-                      <SettingsIcon size={15} /> Settings
-                    </NavLink>
-                  )}
+                  <NavLink to="/settings" className="topbar__menu-item" onClick={() => setMenuOpen(false)}>
+                    <SettingsIcon size={15} /> Settings
+                  </NavLink>
                   <button className="topbar__menu-item topbar__menu-item--danger" onClick={signOut}>
                     <LogOut size={15} /> Sign out
                   </button>

@@ -76,7 +76,7 @@ export default function App() {
             />
             <Route
               path="/settings"
-              element={<ProtectedRoute excludeRoles={['fmo']}><Settings /></ProtectedRoute>}
+              element={<Settings />}
             />
           </Route>
 
