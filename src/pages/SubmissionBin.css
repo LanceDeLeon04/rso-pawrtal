@@ -176,6 +176,11 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-width: 720px;
+}
+
+@media (max-width: 780px) {
+  .sb-modal--form { max-width: 100%; }
 }
 
 .sb-modal--detail {

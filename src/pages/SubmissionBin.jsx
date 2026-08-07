@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
-import { toISODate, formatTime, MEDIUM_LABELS } from '../lib/dateUtils'
+import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES } from '../lib/dateUtils'
 import { generateACPFormPdf } from '../lib/acpPdf'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
@@ -66,6 +66,16 @@ const INSPIRE_VENUES = [
   'Multi-Sports Center', 'INSPIRE Lounge', 'Hoops Center', 'Wellness Center',
   'High Performance Gym', 'AGETAC Pool', 'Driveway', 'Football Pitch',
 ]
+// Venues big enough to need setup the night before — applicants can
+// request to start ingress 7:00 PM–9:00 PM the day before the actual
+// event date, as long as nothing else is booked at that venue during
+// that window (see nightBeforeConflict below).
+const NIGHT_BEFORE_INGRESS_VENUES = [
+  'Auditorium', 'Multi-Sports Center', 'Hoops Center', 'Driveway', 'Football Pitch', 'LRC',
+]
+const NIGHT_BEFORE_START_MIN = 19 * 60 // 7:00 PM
+const NIGHT_BEFORE_END_MIN = 21 * 60   // 9:00 PM
+
 // Venues that need a free-text specific (room number / which lab / what).
 const VENUE_DETAIL_PROMPTS = {
   Room: 'Identify room number',
@@ -201,6 +211,8 @@ const EMPTY_APP_FORM = {
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
   is_continuing: false, continuing_type: 'year_round', term_label: '',
   restricted_period_ack: false, restricted_period_justification: '',
+  wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
+  night_before_ingress: false,
 }
 
 export default function SubmissionBin() {
@@ -226,7 +238,10 @@ export default function SubmissionBin() {
   const [appForm, setAppForm] = useState(EMPTY_APP_FORM)
   const [appFiles, setAppFiles] = useState({})
   const [venueConflict, setVenueConflict] = useState(null)
+  const [venueAdvisory, setVenueAdvisory] = useState(null)
   const [checkingVenue, setCheckingVenue] = useState(false)
+  const [nightBeforeConflict, setNightBeforeConflict] = useState(null)
+  const [checkingNightBefore, setCheckingNightBefore] = useState(false)
   const [restrictedPeriods, setRestrictedPeriods] = useState([])
 
   const [showReportModal, setShowReportModal] = useState(false)
@@ -299,18 +314,44 @@ export default function SubmissionBin() {
     // changes so stale conflicts (or stale "all clear") don't linger.
     if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !appForm.venue_id || !appForm.event_date) {
       setVenueConflict(null)
+      setVenueAdvisory(null)
       return
     }
     let cancelled = false
     setCheckingVenue(true)
-    checkVenueAvailability(appForm.venue_id, appForm.event_date).then((msg) => {
+    checkVenueAvailability(
+      appForm.venue_id, appForm.event_date, appForm.start_time, appForm.end_time,
+      appForm.wants_additional_time ? appForm.additional_ingress_time : '',
+      appForm.wants_additional_time ? appForm.additional_egress_time : '',
+    ).then((result) => {
       if (!cancelled) {
-        setVenueConflict(msg)
+        setVenueConflict(result?.blocking ? result.message : null)
+        setVenueAdvisory(result && !result.blocking ? result.message : null)
         setCheckingVenue(false)
       }
     })
     return () => { cancelled = true }
-  }, [showAppModal, appForm.venue_id, appForm.event_date, appForm.medium, appForm.is_continuing])
+  }, [showAppModal, appForm.venue_id, appForm.event_date, appForm.medium, appForm.is_continuing, appForm.start_time, appForm.end_time, appForm.wants_additional_time, appForm.additional_ingress_time, appForm.additional_egress_time])
+
+  useEffect(() => {
+    // Live check for the night-before-ingress option — only relevant
+    // for the handful of venues large enough to need setup that early.
+    const venueName = venues.find((v) => v.id === appForm.venue_id)?.name
+    if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !appForm.venue_id || !appForm.event_date || !NIGHT_BEFORE_INGRESS_VENUES.includes(venueName)) {
+      setNightBeforeConflict(null)
+      return
+    }
+    let cancelled = false
+    setCheckingNightBefore(true)
+    checkNightBeforeAvailability(appForm.venue_id, appForm.event_date).then((message) => {
+      if (!cancelled) {
+        setNightBeforeConflict(message)
+        setCheckingNightBefore(false)
+        if (message) setAppForm((prev) => (prev.night_before_ingress ? { ...prev, night_before_ingress: false } : prev))
+      }
+    })
+    return () => { cancelled = true }
+  }, [showAppModal, appForm.venue_id, appForm.event_date, appForm.medium, appForm.is_continuing, venues])
 
   useEffect(() => {
     async function loadStatics() {
@@ -334,7 +375,7 @@ export default function SubmissionBin() {
       .select(`
         id, type, org_id, event_id, title, contact_person, contact_number,
         venue_id, venue_detail, venue_tag, online_platform, pencil_booked, lab_endorsed,
-        event_date, start_time, end_time, medium, description,
+        event_date, start_time, end_time, additional_ingress_time, additional_egress_time, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
         sdgs, sdg_representative, sdg_marked_acp_generated,
         restricted_period_ack, restricted_period_justification,
@@ -392,13 +433,81 @@ export default function SubmissionBin() {
   // 'reserved' by another activity's events row, or admin/FMO has marked
   // that date 'blocked' for maintenance/holidays via venue_blocks.
   // 'cancelled' and 'returned' bookings don't hold the slot.
-  async function checkVenueAvailability(venueId, date) {
+  // Bookings on the same venue + date are allowed to coexist as long as
+  // their times don't overlap. Every booking automatically gets a 2-hour
+  // ingress buffer before its start and a 2-hour egress buffer after its
+  // end (setup/teardown) — but the venue itself can only be entered from
+  // 6:00 AM and must be cleared by 9:00 PM, so that buffer is capped at
+  // the gate hours (an event starting before 8:00 AM or ending after
+  // 7:00 PM won't get the full 2 hours on that side by default).
+  // Applicants can request additional ingress/egress time beyond that
+  // cap; if it goes past the gate hours, a Security Office letter is
+  // required (see gateCappedIngress/gateCappedEgress/additionalTimeNeedsLetter below).
+  //
+  // Buffers only matter against the OTHER booking's actual event time —
+  // i.e. a conflict is when one activity's real (unbuffered) event time
+  // falls inside another's buffered window. It's fine for two buffers to
+  // overlap each other with no real time inside either: e.g. Event A
+  // 7–10 AM (buffers 6 AM–12 PM) and Event B 1–5 PM (buffers 11 AM–7 PM)
+  // overlap only in their buffer zones (11 AM–12 PM), which just means A
+  // will still be egressing while B is ingressing — allowed, just
+  // flagged as a heads-up rather than blocked. Requested *additional*
+  // time is held to a stricter standard (see checkVenueAvailability).
+  const INGRESS_EGRESS_BUFFER_MIN = 2 * 60
+  const GATE_OPEN_MIN = 6 * 60   // 6:00 AM — venue can't be entered earlier
+  const GATE_CLOSE_MIN = 21 * 60 // 9:00 PM — venue must be cleared by then
+
+  function toMinutes(t) {
+    if (!t) return null
+    const [h, m] = t.split(':').map(Number)
+    return h * 60 + m
+  }
+
+  // The event's real, unbuffered time — used to tell "another activity is
+  // actually happening then" apart from "another activity is merely
+  // setting up or tearing down then".
+  function coreWindow(startTime, endTime) {
+    const start = toMinutes(startTime)
+    const end = toMinutes(endTime)
+    if (start == null || end == null) return null
+    return [start, end]
+  }
+
+  // Returns the [start, end] window (in minutes-from-midnight) a booking
+  // actually occupies: 2hr ingress/egress buffers, capped to gate hours
+  // (6 AM–9 PM) unless additional ingress/egress time was requested for
+  // that side, in which case the requested time is used instead of the
+  // cap. Clamped to a single day since events don't span dates.
+  function bufferedWindow(startTime, endTime, additionalIngressTime, additionalEgressTime) {
+    const core = coreWindow(startTime, endTime)
+    if (!core) return null
+    const [start, end] = core
+    const normalIngress = Math.max(GATE_OPEN_MIN, start - INGRESS_EGRESS_BUFFER_MIN)
+    const normalEgress = Math.min(GATE_CLOSE_MIN, end + INGRESS_EGRESS_BUFFER_MIN)
+    const wantIngress = toMinutes(additionalIngressTime)
+    const wantEgress = toMinutes(additionalEgressTime)
+    const ingressStart = wantIngress != null ? Math.min(wantIngress, normalIngress) : normalIngress
+    const egressEnd = wantEgress != null ? Math.max(wantEgress, normalEgress) : normalEgress
+    return [Math.max(0, ingressStart), Math.min(24 * 60, egressEnd)]
+  }
+
+  function windowsOverlap(a, b) {
+    return a[0] < b[1] && b[0] < a[1]
+  }
+
+  // Returns null when the venue/time is clear, or
+  // { blocking: true, message } for a real conflict that must block
+  // submission, or { blocking: false, message } for a heads-up (buffer
+  // zones overlap, but neither activity's real time is affected).
+  // additionalIngressTime / additionalEgressTime are the requested
+  // additional-time values (if any) for the booking being checked.
+  async function checkVenueAvailability(venueId, date, startTime, endTime, additionalIngressTime, additionalEgressTime) {
     if (!venueId || !date) return null
 
     const [{ data: existingEvents }, { data: existingBlocks }] = await Promise.all([
       supabase
         .from('events')
-        .select('id, booking_status, organizations ( acronym )')
+        .select('id, booking_status, start_time, end_time, additional_ingress_time, additional_egress_time, organizations ( acronym )')
         .eq('venue_id', venueId)
         .eq('event_date', date)
         .in('booking_status', ['pencil', 'reserved']),
@@ -411,11 +520,121 @@ export default function SubmissionBin() {
 
     if (existingBlocks && existingBlocks.length > 0) {
       const reason = existingBlocks[0].reason
-      return `This venue is blocked on this date${reason ? ` (${reason})` : ''}. Please pick another date or venue.`
+      return { blocking: true, message: `This venue is blocked on this date${reason ? ` (${reason})` : ''}. Please pick another date or venue.` }
     }
+
     if (existingEvents && existingEvents.length > 0) {
-      const status = existingEvents[0].booking_status
-      return `This venue is already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by another activity. Please pick another date or venue.`
+      const newCore = coreWindow(startTime, endTime)
+      const newBuffered = bufferedWindow(startTime, endTime, additionalIngressTime, additionalEgressTime)
+      const normalIngress = newCore ? Math.max(GATE_OPEN_MIN, newCore[0] - INGRESS_EGRESS_BUFFER_MIN) : null
+      const normalEgress = newCore ? Math.min(GATE_CLOSE_MIN, newCore[1] + INGRESS_EGRESS_BUFFER_MIN) : null
+
+      // If we don't have a concrete time range for the new booking, we
+      // can't safely prove there's no overlap, so fall back to the old
+      // "whole day" block.
+      if (!newCore || !newBuffered) {
+        const status = existingEvents[0].booking_status
+        return { blocking: true, message: `This venue is already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by another activity. Please pick another date or venue.` }
+      }
+
+      let advisory = null
+      for (const ev of existingEvents) {
+        const evCore = coreWindow(ev.start_time, ev.end_time)
+        const evBuffered = bufferedWindow(ev.start_time, ev.end_time, ev.additional_ingress_time, ev.additional_egress_time)
+        const orgLabel = ev.organizations?.acronym || 'another activity'
+
+        // No concrete time range for the existing booking either — can't
+        // prove no overlap, fall back to a whole-day block.
+        if (!evCore || !evBuffered) {
+          const status = ev.booking_status
+          return { blocking: true, message: `This venue is already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by another activity. Please pick another date or venue.` }
+        }
+
+        // Real conflict: one activity's actual event time falls inside
+        // the other's buffered (ingress/egress-padded, incl. any granted
+        // additional time) window.
+        if (windowsOverlap(newCore, evBuffered) || windowsOverlap(evCore, newBuffered)) {
+          const status = ev.booking_status
+          return { blocking: true, message: `This venue is already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date during an overlapping time (including ingress/egress buffers). Please pick another time, date, or venue.` }
+        }
+
+        // Requested *additional* time is held to a stricter standard: the
+        // extra sliver beyond the normal (gate-capped) buffer can't
+        // overlap another activity's core time or its egress buffer —
+        // only overlapping that activity's ingress buffer is allowed.
+        const evBlockingForAdditional = [evCore[0], Math.min(GATE_CLOSE_MIN, evCore[1] + INGRESS_EGRESS_BUFFER_MIN)]
+        const wantIngress = toMinutes(additionalIngressTime)
+        const wantEgress = toMinutes(additionalEgressTime)
+        if (wantIngress != null && wantIngress < normalIngress) {
+          const extraSliver = [Math.max(0, wantIngress), normalIngress]
+          if (windowsOverlap(extraSliver, evBlockingForAdditional)) {
+            return { blocking: true, message: `Your requested additional ingress time overlaps ${orgLabel}'s schedule at this venue. Please pick another time.` }
+          }
+        }
+        if (wantEgress != null && wantEgress > normalEgress) {
+          const extraSliver = [normalEgress, Math.min(24 * 60, wantEgress)]
+          if (windowsOverlap(extraSliver, evBlockingForAdditional)) {
+            return { blocking: true, message: `Your requested additional egress time overlaps ${orgLabel}'s schedule at this venue. Please pick another time.` }
+          }
+        }
+
+        // Buffer-only overlap — neither activity's real time is affected,
+        // just their setup/teardown windows brushing against each other.
+        if (windowsOverlap(newBuffered, evBuffered)) {
+          advisory = newCore[0] >= evCore[1]
+            ? `Heads up: you'll be ingressing while ${orgLabel} is still egressing from this venue beforehand. This is fine — just coordinate with them on the day.`
+            : `Heads up: ${orgLabel} will be ingressing while you're still egressing from this venue afterward. This is fine — just coordinate with them on the day.`
+        }
+      }
+      if (advisory) return { blocking: false, message: advisory }
+    }
+    return null
+  }
+
+  // Calendar date-1 as an ISO string, for the night-before-ingress window.
+  function dayBefore(dateStr) {
+    if (!dateStr) return null
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return toISODate(new Date(y, m - 1, d - 1))
+  }
+
+  // Night-before ingress (7:00 PM–9:00 PM the day before the actual
+  // event date) is only offered for venues large enough to need
+  // setup that early, and only if nothing else at that venue is
+  // already occupying that window on that prior date. Returns a
+  // conflict message (button should be disabled) or null (clear).
+  async function checkNightBeforeAvailability(venueId, eventDate) {
+    const priorDate = dayBefore(eventDate)
+    if (!venueId || !priorDate) return null
+
+    const [{ data: priorEvents }, { data: priorBlocks }] = await Promise.all([
+      supabase
+        .from('events')
+        .select('id, booking_status, start_time, end_time, additional_ingress_time, additional_egress_time, organizations ( acronym )')
+        .eq('venue_id', venueId)
+        .eq('event_date', priorDate)
+        .in('booking_status', ['pencil', 'reserved']),
+      supabase
+        .from('venue_blocks')
+        .select('id, reason')
+        .eq('venue_id', venueId)
+        .eq('block_date', priorDate),
+    ])
+
+    if (priorBlocks && priorBlocks.length > 0) {
+      return `This venue is blocked the night before (${priorBlocks[0].reason || 'maintenance/holiday'}) — ingress request unavailable.`
+    }
+
+    const nightWindow = [NIGHT_BEFORE_START_MIN, NIGHT_BEFORE_END_MIN]
+    for (const ev of priorEvents || []) {
+      const evBuffered = bufferedWindow(ev.start_time, ev.end_time, ev.additional_ingress_time, ev.additional_egress_time)
+      if (!evBuffered) {
+        return `This venue already has an event booked the night before — ingress request unavailable.`
+      }
+      if (windowsOverlap(nightWindow, evBuffered)) {
+        const orgLabel = ev.organizations?.acronym || 'another activity'
+        return `${orgLabel} already has this venue booked the night before during 7:00–9:00 PM — ingress request unavailable.`
+      }
     }
     return null
   }
@@ -547,6 +766,51 @@ export default function SubmissionBin() {
   const clearanceBlocked = overdueClearances.length > 0
 
   const activeRestrictedPeriod = !appForm.is_continuing ? restrictedPeriodFor(appForm.event_date) : null
+  // Every activity auto-gets a 2-hour ingress buffer before its start and
+  // a 2-hour egress buffer after its end, but the venue can only be
+  // entered from 6:00 AM and must be cleared by 9:00 PM — so an event
+  // starting before 8:00 AM won't get the full 2 hours of ingress (it's
+  // capped at 6:00 AM), and one ending after 7:00 PM won't get the full
+  // 2 hours of egress (capped at 9:00 PM). This is just informational —
+  // it doesn't block submission or need a letter by itself.
+  const gateCappedIngress = !appForm.is_continuing && !!appForm.start_time && appForm.start_time < '08:00'
+  const gateCappedEgress = !appForm.is_continuing && !!appForm.end_time && appForm.end_time > '19:00'
+
+  // Requesting additional ingress/egress time beyond the gate-capped
+  // buffer, past the actual gate hours (before 6:00 AM / after 9:00 PM),
+  // requires a Security Office letter.
+  const additionalIngressNeedsLetter = appForm.wants_additional_time && !!appForm.additional_ingress_time && appForm.additional_ingress_time < '06:00'
+  const additionalEgressNeedsLetter = appForm.wants_additional_time && !!appForm.additional_egress_time && appForm.additional_egress_time > '21:00'
+  const additionalTimeNeedsLetter = additionalIngressNeedsLetter || additionalEgressNeedsLetter
+
+  // The actual ingress/egress clock times to show under the Start/End
+  // Time fields — the normal 2-hour buffer capped to gate hours, widened
+  // to cover any requested additional time.
+  function minutesToClock(min) {
+    if (min == null) return null
+    const h = Math.floor(min / 60) % 24
+    const m = min % 60
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+  const displayedBuffer = !appForm.is_continuing && appForm.start_time && appForm.end_time
+    ? bufferedWindow(
+        appForm.start_time, appForm.end_time,
+        appForm.wants_additional_time ? appForm.additional_ingress_time : '',
+        appForm.wants_additional_time ? appForm.additional_egress_time : '',
+      )
+    : null
+  const displayIngressTime = displayedBuffer ? formatTime(minutesToClock(displayedBuffer[0])) : ''
+  const displayEgressTime = displayedBuffer ? formatTime(minutesToClock(displayedBuffer[1])) : ''
+
+  const selectedVenueName = venues.find((v) => v.id === appForm.venue_id)?.name
+  const nightBeforeEligible = appForm.medium !== 'online' && !appForm.is_continuing && NIGHT_BEFORE_INGRESS_VENUES.includes(selectedVenueName)
+  const nightBeforeDateISO = appForm.event_date ? dayBefore(appForm.event_date) : ''
+  const nightBeforeDateLabel = nightBeforeDateISO
+    ? (() => {
+        const [y, m, d] = nightBeforeDateISO.split('-').map(Number)
+        return `${MONTH_NAMES[m - 1]} ${d}, ${y}`
+      })()
+    : ''
 
   function openAppModal() {
     // Clearance gate: an org with a settled-past-deadline clearance
@@ -561,6 +825,7 @@ export default function SubmissionBin() {
     setAppFiles({})
     setFormError('')
     setVenueConflict(null)
+    setVenueAdvisory(null)
     setShowAppModal(true)
   }
 
@@ -645,12 +910,18 @@ export default function SubmissionBin() {
     // against another org grabbing the slot (or FMO blocking it)
     // between the live check above and now.
     if (!appForm.is_continuing && appForm.medium !== 'online' && appForm.venue_id && appForm.event_date) {
-      const conflictMsg = await checkVenueAvailability(appForm.venue_id, appForm.event_date)
-      if (conflictMsg) {
-        setVenueConflict(conflictMsg)
-        setFormError(conflictMsg)
+      const result = await checkVenueAvailability(
+        appForm.venue_id, appForm.event_date, appForm.start_time, appForm.end_time,
+        appForm.wants_additional_time ? appForm.additional_ingress_time : '',
+        appForm.wants_additional_time ? appForm.additional_egress_time : '',
+      )
+      if (result?.blocking) {
+        setVenueConflict(result.message)
+        setFormError(result.message)
         return
       }
+      setVenueConflict(null)
+      setVenueAdvisory(result && !result.blocking ? result.message : null)
     }
 
     const isOnline = appForm.medium === 'online'
@@ -720,6 +991,9 @@ export default function SubmissionBin() {
       term_label: appForm.is_continuing && appForm.continuing_type === 'term' ? appForm.term_label.trim() : null,
       restricted_period_ack: !!activeRestrictedPeriod && appForm.restricted_period_ack,
       restricted_period_justification: activeRestrictedPeriod ? appForm.restricted_period_justification.trim() : null,
+      additional_ingress_time: appForm.wants_additional_time && appForm.additional_ingress_time ? appForm.additional_ingress_time : null,
+      additional_egress_time: appForm.wants_additional_time && appForm.additional_egress_time ? appForm.additional_egress_time : null,
+      night_before_ingress: nightBeforeEligible && !nightBeforeConflict && appForm.night_before_ingress,
       submitted_by: profile.id,
     }).select().single()
 
@@ -750,6 +1024,9 @@ export default function SubmissionBin() {
         event_date: sub.event_date || toISODate(new Date()),
         start_time: sub.start_time,
         end_time: sub.end_time,
+        additional_ingress_time: sub.additional_ingress_time,
+        additional_egress_time: sub.additional_egress_time,
+        night_before_ingress: sub.night_before_ingress,
         medium: sub.medium,
         booking_status: 'pencil',
         submission_id: sub.id,
@@ -1074,6 +1351,9 @@ export default function SubmissionBin() {
           event_date: selected.event_date,
           start_time: selected.start_time,
           end_time: selected.end_time,
+          additional_ingress_time: selected.additional_ingress_time,
+          additional_egress_time: selected.additional_egress_time,
+          night_before_ingress: selected.night_before_ingress,
           medium: selected.medium,
           booking_status: 'pencil',
           submission_id: selected.id,
@@ -1153,6 +1433,9 @@ export default function SubmissionBin() {
           event_date: reportSubmissionDate,
           start_time: selected.start_time,
           end_time: selected.end_time,
+          additional_ingress_time: selected.additional_ingress_time,
+          additional_egress_time: selected.additional_egress_time,
+          night_before_ingress: selected.night_before_ingress,
           medium: selected.medium,
           booking_status: 'pencil',
           submission_id: selected.id,
@@ -1196,6 +1479,9 @@ export default function SubmissionBin() {
             event_date: calendarDate,
             start_time: sub.start_time,
             end_time: sub.end_time,
+            additional_ingress_time: sub.additional_ingress_time,
+            additional_egress_time: sub.additional_egress_time,
+            night_before_ingress: sub.night_before_ingress,
             medium: sub.medium,
             booking_status: 'reserved',
           }).eq('id', eventId)
@@ -1210,6 +1496,9 @@ export default function SubmissionBin() {
             event_date: calendarDate,
             start_time: sub.start_time,
             end_time: sub.end_time,
+            additional_ingress_time: sub.additional_ingress_time,
+            additional_egress_time: sub.additional_egress_time,
+            night_before_ingress: sub.night_before_ingress,
             medium: sub.medium,
             booking_status: 'reserved',
             submission_id: sub.id,
@@ -1257,6 +1546,38 @@ export default function SubmissionBin() {
             status: 'pending',
             auto_generated: true,
           })
+
+          // Requested additional ingress/egress time that falls outside
+          // gate hours (before 6:00 AM / after 9:00 PM): now that the
+          // Academic Director has approved, automatically assign the org
+          // President to submit the Security Office letter, due 3 days
+          // before the event, via the Assignments tab.
+          const needsSecurityLetter = !sub.is_continuing && (
+            (!!sub.additional_ingress_time && sub.additional_ingress_time < '06:00') ||
+            (!!sub.additional_egress_time && sub.additional_egress_time > '21:00')
+          )
+          if (needsSecurityLetter && sub.event_date) {
+            const { data: presidentMembership } = await supabase
+              .from('org_memberships')
+              .select('profile_id')
+              .eq('org_id', sub.org_id)
+              .eq('position', 'President')
+              .maybeSingle()
+            const securityDue = new Date(sub.event_date)
+            securityDue.setDate(securityDue.getDate() - 3)
+            await supabase.from('assignments').insert({
+              title: `Security Office Letter — ${sub.title}`,
+              description: 'This activity requested ingress before 6:00 AM or egress after 9:00 PM. Submit a letter to the Security Office for approval.',
+              event_id: eventId,
+              assigned_to: presidentMembership?.profile_id || null,
+              assigned_tag: presidentMembership?.profile_id ? null : 'President',
+              assigned_org_id: presidentMembership?.profile_id ? null : sub.org_id,
+              assigned_by: profile.id,
+              due_date: toISODate(securityDue),
+              status: 'pending',
+              auto_generated: true,
+            })
+          }
 
           // Stamp the approval on the event and issue (or reuse) its
           // verification token, then regenerate the ACP Form PDF with a
@@ -1692,18 +2013,100 @@ export default function SubmissionBin() {
               <label className="sb-field">
                 Start Time
                 <input type="time" value={appForm.is_continuing ? '' : appForm.start_time} onChange={(e) => setAppForm({ ...appForm, start_time: e.target.value })} disabled={appForm.is_continuing} />
+                {displayIngressTime && <span className="sb-hint">Ingress from {displayIngressTime}</span>}
               </label>
               <label className="sb-field">
                 End Time
                 <input type="time" value={appForm.is_continuing ? '' : appForm.end_time} onChange={(e) => setAppForm({ ...appForm, end_time: e.target.value })} disabled={appForm.is_continuing} />
+                {displayEgressTime && <span className="sb-hint">Egress until {displayEgressTime}</span>}
               </label>
             </div>
+
+            {(gateCappedIngress || gateCappedEgress) && !appForm.is_continuing && (
+              <div className="sb-form-notice">
+                <AlertCircle size={14} />
+                {gateCappedIngress && gateCappedEgress
+                  ? 'This activity starts before 8:00 AM and ends after 7:00 PM, so ingress is only available from 6:00 AM and egress only until 9:00 PM.'
+                  : gateCappedIngress
+                    ? 'This activity starts before 8:00 AM, so ingress is only available from 6:00 AM.'
+                    : 'This activity ends after 7:00 PM, so egress is only available until 9:00 PM.'}
+                {' '}Need more than that? Use "Request additional ingress/egress time" below.
+              </div>
+            )}
+
+            {!appForm.is_continuing && (
+              <div className="sb-field">
+                <button
+                  type="button"
+                  className="sb-btn sb-btn--outline sb-btn--sm"
+                  onClick={() => setAppForm({
+                    ...appForm,
+                    wants_additional_time: !appForm.wants_additional_time,
+                    additional_ingress_time: appForm.wants_additional_time ? '' : appForm.additional_ingress_time,
+                    additional_egress_time: appForm.wants_additional_time ? '' : appForm.additional_egress_time,
+                  })}
+                >
+                  {appForm.wants_additional_time ? 'Cancel additional time request' : 'Request additional ingress / egress time'}
+                </button>
+                {appForm.wants_additional_time && (
+                  <div className="sb-field-row">
+                    <label className="sb-field">
+                      Requested Ingress Time
+                      <input
+                        type="time"
+                        value={appForm.additional_ingress_time}
+                        onChange={(e) => setAppForm({ ...appForm, additional_ingress_time: e.target.value })}
+                        placeholder="Earlier than the default buffer"
+                      />
+                    </label>
+                    <label className="sb-field">
+                      Requested Egress Time
+                      <input
+                        type="time"
+                        value={appForm.additional_egress_time}
+                        onChange={(e) => setAppForm({ ...appForm, additional_egress_time: e.target.value })}
+                        placeholder="Later than the default buffer"
+                      />
+                    </label>
+                  </div>
+                )}
+                {additionalTimeNeedsLetter && (
+                  <div className="sb-form-error">
+                    <AlertCircle size={14} />
+                    Your requested {additionalIngressNeedsLetter && additionalEgressNeedsLetter ? 'ingress and egress times fall' : additionalIngressNeedsLetter ? 'ingress time falls' : 'egress time falls'} outside gate hours (before 6:00 AM or after 9:00 PM). A letter must be submitted to the Security Office for approval. Once approved by the Academic Director, this will be automatically assigned to the org President via the Assignment tab, due 3 days before the event.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {nightBeforeEligible && (
+              <div className="sb-field sb-night-before">
+                <label className="sb-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={appForm.night_before_ingress}
+                    disabled={!!nightBeforeConflict || checkingNightBefore}
+                    onChange={(e) => setAppForm({ ...appForm, night_before_ingress: e.target.checked })}
+                  />
+                  Request ingress the night before{nightBeforeDateLabel ? ` (${nightBeforeDateLabel}, 7:00–9:00 PM)` : ' (7:00–9:00 PM the day before)'}
+                </label>
+                {checkingNightBefore && (
+                  <div className="sb-form-notice"><Loader2 size={14} className="spin" /> Checking venue availability the night before…</div>
+                )}
+                {!checkingNightBefore && nightBeforeConflict && (
+                  <div className="sb-form-error"><AlertCircle size={14} /> {nightBeforeConflict}</div>
+                )}
+              </div>
+            )}
 
             {checkingVenue && (
               <div className="sb-form-notice"><Loader2 size={14} className="spin" /> Checking venue availability…</div>
             )}
             {venueConflict && (
               <div className="sb-form-error"><AlertCircle size={14} /> {venueConflict}</div>
+            )}
+            {!venueConflict && venueAdvisory && (
+              <div className="sb-form-notice"><AlertCircle size={14} /> {venueAdvisory}</div>
             )}
 
             {activeRestrictedPeriod && (
