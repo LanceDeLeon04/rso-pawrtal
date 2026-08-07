@@ -135,3 +135,11 @@ export const ADMIN_ROLES = [
 export function isAdminTier(role) {
   return ADMIN_ROLES.includes(role)
 }
+
+// FMO (Facilities Management Office) — a limited tier, not admin.
+// Access is restricted to Dashboard + Calendar (see Layout.jsx /
+// App.jsx), but on the calendar it can block venue dates and
+// reschedule bookings.
+export function isFMO(role) {
+  return role === 'fmo'
+}

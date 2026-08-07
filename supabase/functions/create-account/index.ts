@@ -13,7 +13,7 @@ const ADMIN_ROLES = [
   'sdao_assistant', 'crso_chairperson', 'qmo',
   'sdao_supervisor', 'academic_director', 'system_admin',
 ]
-const VALID_ROLES = ['rso_officer', ...ADMIN_ROLES]
+const VALID_ROLES = ['rso_officer', 'fmo', ...ADMIN_ROLES]
 const VALID_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 
 const cors = {

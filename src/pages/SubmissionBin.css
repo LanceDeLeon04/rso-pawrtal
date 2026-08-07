@@ -268,6 +268,24 @@
   font-size: 12px;
 }
 
+/* ---------- Clearance gate notice ---------- */
+.sb-clearance-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fdecec;
+  color: var(--danger);
+  border: 1px solid #f3caca;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.sb-clearance-notice span { flex: 1; }
+
+.sb-btn--sm { padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+
 /* ---------- Venue booking (pencil-booking confirmation) ---------- */
 .sb-venue-booking {
   display: flex;

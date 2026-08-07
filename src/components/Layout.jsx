@@ -5,18 +5,18 @@ import {
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
   Bell, ChevronsLeft, ChevronsRight, ChevronDown,
 } from 'lucide-react'
-import { useAuth, isAdminTier } from '../context/AuthContext'
+import { useAuth, isAdminTier, isFMO } from '../context/AuthContext'
 import './Layout.css'
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/calendar', label: 'Calendar of Activities', icon: CalendarDays },
-  { to: '/submissions', label: 'Submission Bin', icon: Inbox },
-  { to: '/templates', label: 'Templates', icon: FileText },
-  { to: '/clearance', label: 'Clearance', icon: ShieldCheck },
-  { to: '/assignments', label: 'Assignments', icon: ClipboardList },
-  { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon },
+  { to: '/submissions', label: 'Submission Bin', icon: Inbox, hideForFMO: true },
+  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true },
+  { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true },
+  { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true },
+  { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true },
+  { to: '/settings', label: 'Settings', icon: SettingsIcon, hideForFMO: true },
 ]
 
 const ROLE_LABELS = {
@@ -27,6 +27,7 @@ const ROLE_LABELS = {
   sdao_supervisor: 'SDAO Supervisor',
   academic_director: 'Academic Director',
   system_admin: 'System Admin',
+  fmo: 'Facilities Management Office',
 }
 
 function initialsOf(name) {
@@ -42,7 +43,8 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false)
 
   const admin = isAdminTier(profile?.role)
-  const visibleNav = NAV_ITEMS.filter((item) => !item.adminOnly || admin)
+  const fmo = isFMO(profile?.role)
+  const visibleNav = NAV_ITEMS.filter((item) => (!item.adminOnly || admin) && (!fmo || !item.hideForFMO))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
   const orgLabel = profile?.org_memberships?.[0]?.organizations?.acronym
 
@@ -106,9 +108,11 @@ export default function Layout() {
 
               {menuOpen && (
                 <div className="topbar__menu" onClick={(e) => e.stopPropagation()}>
-                  <NavLink to="/settings" className="topbar__menu-item" onClick={() => setMenuOpen(false)}>
-                    <SettingsIcon size={15} /> Settings
-                  </NavLink>
+                  {!fmo && (
+                    <NavLink to="/settings" className="topbar__menu-item" onClick={() => setMenuOpen(false)}>
+                      <SettingsIcon size={15} /> Settings
+                    </NavLink>
+                  )}
                   <button className="topbar__menu-item topbar__menu-item--danger" onClick={signOut}>
                     <LogOut size={15} /> Sign out
                   </button>

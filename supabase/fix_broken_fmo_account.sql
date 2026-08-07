@@ -1,0 +1,22 @@
+-- ============================================================
+-- One-time fix: remove the FMO account created by the old
+-- seed_fmo_account.sql raw-SQL insert.
+-- ============================================================
+-- That script inserted directly into auth.users instead of going
+-- through Supabase's user-creation API. The row logs in fine, but
+-- Supabase's Admin API (which the reset-password / delete-account
+-- Edge Functions use) doesn't fully agree with rows created that
+-- way, which is why password reset fails silently at the gateway
+-- for this one account while every properly-created account works.
+--
+-- Run this once in the Supabase SQL Editor, then recreate the
+-- Facilities account through the app instead (Accounts page ->
+-- "Create Account for Administrators" -> role: Facilities
+-- Management Office). That goes through admin.auth.admin.createUser()
+-- like every other account and won't hit this problem.
+--
+-- Safe to run even if the account has already been deleted/renamed —
+-- it only matches on the known seed email.
+
+delete from auth.users where email = 'fmo.access@pawrtal.local';
+-- public.profiles row is removed automatically via ON DELETE CASCADE.

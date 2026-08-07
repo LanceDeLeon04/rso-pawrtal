@@ -40,13 +40,27 @@ export default function App() {
           >
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/calendar" element={<CalendarOfActivities />} />
-            <Route path="/submissions" element={<SubmissionBin />} />
-            <Route path="/templates" element={<Templates />} />
-            <Route path="/clearance" element={<Clearance />} />
+            {/* FMO is a limited tier — Dashboard + Calendar only — so every
+                other route below explicitly excludes 'fmo'. */}
+            <Route
+              path="/submissions"
+              element={<ProtectedRoute excludeRoles={['fmo']}><SubmissionBin /></ProtectedRoute>}
+            />
+            <Route
+              path="/templates"
+              element={<ProtectedRoute excludeRoles={['fmo']}><Templates /></ProtectedRoute>}
+            />
+            <Route
+              path="/clearance"
+              element={<ProtectedRoute excludeRoles={['fmo']}><Clearance /></ProtectedRoute>}
+            />
             {/* No allowedRoles here on purpose — RSO Officers need this page too,
                 to see and act on tasks assigned to them. Assignments.jsx itself
                 already gates creation/review controls to admin-tier roles. */}
-            <Route path="/assignments" element={<Assignments />} />
+            <Route
+              path="/assignments"
+              element={<ProtectedRoute excludeRoles={['fmo']}><Assignments /></ProtectedRoute>}
+            />
             <Route
               path="/accounts"
               element={
@@ -60,7 +74,10 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/settings" element={<Settings />} />
+            <Route
+              path="/settings"
+              element={<ProtectedRoute excludeRoles={['fmo']}><Settings /></ProtectedRoute>}
+            />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

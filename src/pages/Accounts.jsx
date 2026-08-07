@@ -15,9 +15,13 @@ const ROLE_LABELS = {
   sdao_supervisor: 'SDAO Supervisor',
   academic_director: 'Academic Director',
   system_admin: 'System Admin',
+  fmo: 'Facilities Management Office',
 }
 
 const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervisor', 'academic_director', 'system_admin']
+// FMO isn't admin-tier (no submissions/clearance/accounts access — see
+// Layout.jsx / App.jsx) but is created the same "personal account" way.
+const OTHER_CREATABLE_ROLES = ['fmo']
 const VIEWER_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
 
@@ -66,7 +70,11 @@ export default function Accounts() {
     setLoading(false)
   }
 
-  const adminProfiles = profiles.filter((p) => ADMIN_ROLES.includes(p.role))
+  // Admin-tier roles plus other "personal account" roles created through the
+  // same form (currently just FMO) — all of them need to show up here so
+  // their password can be reset / account deleted. Filtering to ADMIN_ROLES
+  // alone silently hid FMO from this list even though it's a real profile.
+  const adminProfiles = profiles.filter((p) => [...ADMIN_ROLES, ...OTHER_CREATABLE_ROLES].includes(p.role))
 
   return (
     <div className="acc-page">
@@ -219,6 +227,7 @@ function CreateAdminAccountSection({ onCreated }) {
           Role
           <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value, viewer_scopes: [] })}>
             {ADMIN_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+            {OTHER_CREATABLE_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
           </select>
         </label>
 
@@ -284,7 +293,7 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
   return (
     <div className="acc-card">
       <span className="acc-card__label"><Users size={13} /> Administrator Accounts</span>
-      <p className="acc-card__sub">SDAO, Admins, and Academic Directors with a personal login.</p>
+      <p className="acc-card__sub">SDAO, Admins, Academic Directors, and Facilities (FMO) with a personal login.</p>
 
       {resetResult && (
         <div className="acc-result">

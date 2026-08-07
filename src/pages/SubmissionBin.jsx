@@ -282,6 +282,14 @@ export default function SubmissionBin() {
   }, [typeFilter, stageFilter, profile?.id])
 
   useEffect(() => {
+    // Load clearance status up front (not just when the Submit Report
+    // modal opens) so the "settle clearance first" notice and the New
+    // Application gate are in place as soon as the page loads.
+    if (!admin && myOrgId) loadOpenClearances()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myOrgId])
+
+  useEffect(() => {
     async function loadStatics() {
       const [{ data: v }, { data: t }] = await Promise.all([
         supabase.from('venues').select('id, name').eq('is_active', true).order('name'),
@@ -323,14 +331,35 @@ export default function SubmissionBin() {
   }
 
   async function loadOpenClearances() {
-    if (!myOrgId) return
+    if (!myOrgId) return []
     const { data } = await supabase
       .from('clearances')
-      .select('id, event_id, deadline, status, events ( title, event_date )')
+      .select('id, event_id, deadline, extended_deadline, status, events ( title, event_date )')
       .eq('org_id', myOrgId)
       .in('status', ['pending', 'overdue', 'extended'])
-    setOpenClearances(data || [])
-    return data || []
+
+    // Self-healing: flip any pending/extended row whose effective deadline
+    // has already passed to 'overdue' — there's no server cron, so this
+    // reconciles status on every load (same approach as Clearance.jsx).
+    // This matters here specifically because the clearance gate on new
+    // Event Application submissions only blocks on status = 'overdue',
+    // so a stale 'pending' row past its deadline would otherwise let a
+    // new application slip through.
+    const today = toISODate(new Date())
+    const rows = data || []
+    const toFlip = rows.filter((c) => {
+      if (!['pending', 'extended'].includes(c.status)) return false
+      const effective = c.extended_deadline || c.deadline
+      return effective < today
+    })
+    if (toFlip.length > 0) {
+      await Promise.all(toFlip.map((c) => supabase.from('clearances').update({ status: 'overdue' }).eq('id', c.id)))
+    }
+    const flippedIds = new Set(toFlip.map((c) => c.id))
+    const reconciled = rows.map((c) => (flippedIds.has(c.id) ? { ...c, status: 'overdue' } : c))
+
+    setOpenClearances(reconciled)
+    return reconciled
   }
 
   function templateFor(docName) {
@@ -446,7 +475,17 @@ export default function SubmissionBin() {
     }
   }
 
+  const overdueClearances = openClearances.filter((c) => c.status === 'overdue')
+  const clearanceBlocked = overdueClearances.length > 0
+
   function openAppModal() {
+    // Clearance gate: an org with a settled-past-deadline clearance
+    // (an unresolved activity report, or an overdue non-event task)
+    // can't start a new Event Application until it's resolved — this
+    // mirrors the DB-level RLS policy on submissions, but blocks it in
+    // the UI up front instead of letting the org fill out the whole
+    // form first.
+    if (clearanceBlocked) return
     const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
     setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '' })
     setAppFiles({})
@@ -1286,12 +1325,30 @@ export default function SubmissionBin() {
             <button className="sb-btn sb-btn--outline" onClick={() => openReportModal()}>
               <ClipboardList size={15} /> Submit Report
             </button>
-            <button className="sb-btn sb-btn--gold" onClick={openAppModal}>
+            <button
+              className="sb-btn sb-btn--gold"
+              onClick={openAppModal}
+              disabled={clearanceBlocked}
+              title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before applying for a new activity.' : undefined}
+            >
               <Plus size={15} /> New Application
             </button>
           </div>
         )}
       </div>
+
+      {!admin && clearanceBlocked && (
+        <div className="sb-clearance-notice">
+          <ShieldAlert size={16} />
+          <span>
+            Your organization has {overdueClearances.length} overdue clearance{overdueClearances.length > 1 ? 's' : ''}
+            {' '}— settle {overdueClearances.length > 1 ? 'them' : 'it'} before submitting a new Event Application.
+          </span>
+          <button className="sb-btn sb-btn--outline sb-btn--sm" onClick={() => openReportModal()}>
+            Submit Report
+          </button>
+        </div>
+      )}
 
       <div className="sb-list-wrap">
         {listError && <div className="sb-form-error"><AlertCircle size={14} /> {listError}</div>}

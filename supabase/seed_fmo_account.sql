@@ -1,0 +1,21 @@
+-- ============================================================
+-- DEPRECATED — do not run this script.
+-- ============================================================
+-- This used to insert a Facilities Management Office account
+-- directly into auth.users. That bypasses Supabase's user-creation
+-- API and produces auth.users rows that Supabase's Admin API
+-- doesn't fully agree with later — in practice this shows up as
+-- password reset (and potentially delete) silently failing for
+-- that account with a generic gateway error, while every other,
+-- properly-created account works fine.
+--
+-- If you already ran the old version of this script, run
+-- supabase/fix_broken_fmo_account.sql once to remove the broken row.
+--
+-- To create (or recreate) the FMO account, use the app instead:
+--   Accounts page -> "Create Account for Administrators" section ->
+--   Role: Facilities Management Office
+-- This goes through the create-account Edge Function and
+-- admin.auth.admin.createUser(), the same path every other account
+-- (SDAO, admins, etc.) uses, so it behaves identically to them for
+-- password reset and deletion.
