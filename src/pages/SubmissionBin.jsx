@@ -862,6 +862,15 @@ export default function SubmissionBin() {
     e.preventDefault()
     setFormError('')
 
+    // Re-check the clearance gate at submit time, not just when the modal
+    // was opened — an org can go from clear to overdue while the modal is
+    // sitting open (e.g. a deadline passes, or another tab flips a task to
+    // overdue), and the Submit button has no `disabled` wiring of its own.
+    if (clearanceBlocked) {
+      setFormError("Your organization has an overdue clearance — settle it before submitting a new Event Application.")
+      return
+    }
+
     if (!appForm.title || !appForm.contact_person || !appForm.medium) {
       setFormError('Please fill in the event name, contact person, and medium.')
       return
@@ -2379,9 +2388,10 @@ export default function SubmissionBin() {
               type="submit"
               className="sb-btn sb-btn--gold sb-btn--full"
               disabled={
-                saving || !!venueConflict || checkingVenue ||
+                saving || !!venueConflict || checkingVenue || clearanceBlocked ||
                 (!!activeRestrictedPeriod && (!appForm.restricted_period_ack || !appForm.restricted_period_justification.trim()))
               }
+              title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.' : undefined}
             >
               {saving ? <Loader2 size={15} className="spin" /> : 'Submit Application'}
             </button>
