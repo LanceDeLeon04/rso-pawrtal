@@ -35,6 +35,9 @@ export default function Clearance() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [orgFilter, setOrgFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all') // all | event | task
+  const [orgs, setOrgs] = useState([])
 
   const [extendTarget, setExtendTarget] = useState(null)
   const [extendDate, setExtendDate] = useState('')
@@ -46,6 +49,12 @@ export default function Clearance() {
     loadClearances()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id])
+
+  useEffect(() => {
+    if (!admin) return
+    supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym')
+      .then(({ data }) => setOrgs(data || []))
+  }, [admin])
 
   async function loadClearances() {
     if (!profile) return
@@ -101,8 +110,14 @@ export default function Clearance() {
   }
 
   const filtered = useMemo(
-    () => (statusFilter === 'all' ? clearances : clearances.filter((c) => c.status === statusFilter)),
-    [clearances, statusFilter]
+    () => clearances.filter((c) => {
+      if (statusFilter !== 'all' && c.status !== statusFilter) return false
+      if (admin && orgFilter !== 'all' && c.org_id !== orgFilter) return false
+      if (typeFilter === 'event' && !c.event_id) return false
+      if (typeFilter === 'task' && c.event_id) return false
+      return true
+    }),
+    [clearances, statusFilter, orgFilter, typeFilter, admin]
   )
 
   const summary = useMemo(() => {
@@ -171,6 +186,20 @@ export default function Clearance() {
           task left past its due date opens one too. No report, no new submissions until it's cleared.
         </p>
       </div>
+
+      {admin && (
+        <div className="clr-filters">
+          <select className="clr-select" value={orgFilter} onChange={(e) => setOrgFilter(e.target.value)}>
+            <option value="all">All organizations</option>
+            {orgs.map((o) => <option key={o.id} value={o.id}>{o.acronym}</option>)}
+          </select>
+          <select className="clr-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="all">Events + Tasks</option>
+            <option value="event">Event reports only</option>
+            <option value="task">Task issues only</option>
+          </select>
+        </div>
+      )}
 
       <div className="clr-summary">
         {Object.entries(STATUS_META).map(([key, meta]) => {

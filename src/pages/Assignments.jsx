@@ -35,12 +35,18 @@ export default function Assignments() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [orgFilter, setOrgFilter] = useState('all')
+  const [targetTypeFilter, setTargetTypeFilter] = useState('all')
+  const [overdueOnly, setOverdueOnly] = useState(false)
+  const [search, setSearch] = useState('')
 
   const [people, setPeople] = useState([])
   const [orgs, setOrgs] = useState([])
   const [positions, setPositions] = useState([])
   const [pendingSubmissions, setPendingSubmissions] = useState([])
   const [events, setEvents] = useState([])
+  const [profileOrgMap, setProfileOrgMap] = useState({}) // profile_id -> Set(org_id)
+  const [tagOrgMap, setTagOrgMap] = useState({}) // position -> Set(org_id)
 
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -66,9 +72,8 @@ export default function Assignments() {
   useEffect(() => {
     if (!canManage) return
     async function loadStatics() {
-      const [{ data: p }, { data: o }, { data: m }, { data: s }, { data: e }] = await Promise.all([
+      const [{ data: p }, { data: m }, { data: s }, { data: e }] = await Promise.all([
         supabase.from('profiles').select('id, full_name, role').order('full_name'),
-        supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym'),
         supabase.from('org_memberships').select('position'),
         supabase.from('submissions')
           .select('id, title, organizations ( acronym )')
@@ -76,13 +81,38 @@ export default function Assignments() {
         supabase.from('events').select('id, title, event_date').order('event_date', { ascending: false }).limit(50),
       ])
       setPeople(p || [])
-      setOrgs(o || [])
       setPositions([...new Set((m || []).map((r) => r.position))])
       setPendingSubmissions(s || [])
       setEvents(e || [])
     }
     loadStatics()
   }, [canManage])
+
+  // Org list + org lookup maps are needed for the org filter for any
+  // admin-tier viewer, not just those who can create assignments — a
+  // CRSO Chairperson or QMO reviewing this page still needs to be able
+  // to narrow the list down to a single org.
+  useEffect(() => {
+    if (!admin) return
+    async function loadOrgFilterData() {
+      const [{ data: o }, { data: m }] = await Promise.all([
+        supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym'),
+        supabase.from('org_memberships').select('profile_id, org_id, position'),
+      ])
+      setOrgs(o || [])
+      const pMap = {}
+      const tMap = {}
+      ;(m || []).forEach((row) => {
+        if (!pMap[row.profile_id]) pMap[row.profile_id] = new Set()
+        pMap[row.profile_id].add(row.org_id)
+        if (!tMap[row.position]) tMap[row.position] = new Set()
+        tMap[row.position].add(row.org_id)
+      })
+      setProfileOrgMap(pMap)
+      setTagOrgMap(tMap)
+    }
+    loadOrgFilterData()
+  }, [admin])
 
   async function loadAssignments() {
     if (!profile) return
@@ -95,8 +125,8 @@ export default function Assignments() {
         assigned_org_id, due_date, status, review_comment, auto_generated, created_at,
         assignee:profiles!assignments_assigned_to_fkey ( full_name ),
         org:organizations!assignments_assigned_org_id_fkey ( acronym ),
-        submissions ( title, organizations ( acronym ) ),
-        events ( title, event_date )
+        submissions ( title, org_id, organizations ( acronym ) ),
+        events ( title, event_date, org_id )
       `)
       .order('created_at', { ascending: false })
 
@@ -333,7 +363,41 @@ export default function Assignments() {
     loadAssignments()
   }
 
-  const list = admin ? assignments : assignments.filter(isMyAssignment)
+  function matchesOrg(a, orgId) {
+    if (orgId === 'all') return true
+    if (a.assigned_org_id === orgId) return true
+    if (a.assigned_to && profileOrgMap[a.assigned_to]?.has(orgId)) return true
+    if (a.assigned_tag && tagOrgMap[a.assigned_tag]?.has(orgId)) return true
+    if (a.submissions?.org_id === orgId) return true
+    if (a.events?.org_id === orgId) return true
+    return false
+  }
+
+  function isOverdueTask(a) {
+    return (
+      !a.event_id &&
+      a.due_date &&
+      a.due_date < toISODate(new Date()) &&
+      ['pending', 'returned', 'conditional_approved'].includes(a.status)
+    )
+  }
+
+  const baseList = admin ? assignments : assignments.filter(isMyAssignment)
+  const list = baseList.filter((a) => {
+    if (admin && orgFilter !== 'all' && !matchesOrg(a, orgFilter)) return false
+    if (admin && targetTypeFilter !== 'all') {
+      const kind = a.assigned_to ? 'user' : a.assigned_tag ? 'tag' : a.assigned_org_id ? 'org' : null
+      if (kind !== targetTypeFilter) return false
+    }
+    if (admin && overdueOnly && !isOverdueTask(a)) return false
+    if (admin && search.trim()) {
+      const q = search.trim().toLowerCase()
+      const hay = [a.title, a.description, a.assignee?.full_name, a.org?.acronym, a.assigned_tag]
+        .filter(Boolean).join(' ').toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    return true
+  })
 
   return (
     <div className="asg-page">
@@ -349,6 +413,31 @@ export default function Assignments() {
             <option value="all">All statuses</option>
             {Object.entries(STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
+          {admin && (
+            <>
+              <select className="asg-select" value={orgFilter} onChange={(e) => setOrgFilter(e.target.value)}>
+                <option value="all">All organizations</option>
+                {orgs.map((o) => <option key={o.id} value={o.id}>{o.acronym}</option>)}
+              </select>
+              <select className="asg-select" value={targetTypeFilter} onChange={(e) => setTargetTypeFilter(e.target.value)}>
+                <option value="all">All target types</option>
+                <option value="user">Specific User</option>
+                <option value="tag">Tagged Group</option>
+                <option value="org">Whole Org</option>
+              </select>
+              <label className="asg-checkbox-filter">
+                <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
+                Overdue / clearance issue
+              </label>
+              <input
+                className="asg-select asg-search-input"
+                type="text"
+                placeholder="Search title, assignee, org…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </>
+          )}
           {canManage && (
             <button className="asg-btn asg-btn--gold" onClick={openNewModal}>
               <Plus size={15} /> New Assignment

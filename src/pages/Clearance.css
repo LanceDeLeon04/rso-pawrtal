@@ -22,6 +22,22 @@
   max-width: 640px;
 }
 
+.clr-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.clr-select {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  min-width: 160px;
+}
+
 /* ---------- Summary cards ---------- */
 .clr-summary {
   display: grid;

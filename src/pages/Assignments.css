@@ -32,6 +32,21 @@
 .asg-toolbar__actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.asg-checkbox-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.asg-search-input {
+  min-width: 200px;
 }
 
 .asg-select {

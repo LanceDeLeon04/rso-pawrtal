@@ -17,6 +17,11 @@
 .sb-toolbar__filters {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sb-search-input {
+  min-width: 200px;
 }
 
 .sb-select {

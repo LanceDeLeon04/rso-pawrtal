@@ -262,6 +262,9 @@ export default function SubmissionBin() {
   const [deletingSubmissionId, setDeletingSubmissionId] = useState(null)
   const [typeFilter, setTypeFilter] = useState('all')
   const [stageFilter, setStageFilter] = useState('all')
+  const [orgFilter, setOrgFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const [filterOrgs, setFilterOrgs] = useState([])
   const [venues, setVenues] = useState([])
   const [venueRooms, setVenueRooms] = useState([])
   const [venueLabs, setVenueLabs] = useState([])
@@ -339,7 +342,13 @@ export default function SubmissionBin() {
   useEffect(() => {
     loadSubmissions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [typeFilter, stageFilter, profile?.id])
+  }, [typeFilter, stageFilter, orgFilter, profile?.id])
+
+  useEffect(() => {
+    if (!admin) return
+    supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym')
+      .then(({ data }) => setFilterOrgs(data || []))
+  }, [admin])
 
   useEffect(() => {
     // Whether "New Merchandise Proposal" is available for RSO officers
@@ -444,6 +453,7 @@ export default function SubmissionBin() {
 
     if (!admin && myOrgId) q = q.eq('org_id', myOrgId)
     if (!admin && !myOrgId) q = q.eq('org_id', '00000000-0000-0000-0000-000000000000')
+    if (admin && orgFilter !== 'all') q = q.eq('org_id', orgFilter)
     if (typeFilter !== 'all') q = q.eq('type', typeFilter)
     if (stageFilter !== 'all') q = q.eq('stage', stageFilter)
 
@@ -1975,6 +1985,15 @@ export default function SubmissionBin() {
     await performAction('advance', nextAction, 'conditionally approved (task deadline extended)')
   }
 
+  const visibleSubmissions = search.trim()
+    ? submissions.filter((s) => {
+        const q = search.trim().toLowerCase()
+        const hay = [s.title, s.contact_person, s.organizations?.acronym, s.organizations?.name, s.submitter?.full_name]
+          .filter(Boolean).join(' ').toLowerCase()
+        return hay.includes(q)
+      })
+    : submissions
+
   return (
     <div className="sb-page">
       <div className="sb-toolbar">
@@ -1991,6 +2010,21 @@ export default function SubmissionBin() {
               <option key={k} value={k}>{v.label}</option>
             ))}
           </select>
+          {admin && (
+            <>
+              <select className="sb-select" value={orgFilter} onChange={(e) => setOrgFilter(e.target.value)}>
+                <option value="all">All organizations</option>
+                {filterOrgs.map((o) => <option key={o.id} value={o.id}>{o.acronym}</option>)}
+              </select>
+              <input
+                className="sb-select sb-search-input"
+                type="text"
+                placeholder="Search title, contact, org…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </>
+          )}
         </div>
 
         {!admin && (
@@ -2032,10 +2066,10 @@ export default function SubmissionBin() {
         {listError && <div className="sb-form-error"><AlertCircle size={14} /> {listError}</div>}
         {loading ? (
           <div className="sb-loading"><Loader2 size={22} className="spin" /></div>
-        ) : submissions.length === 0 ? (
+        ) : visibleSubmissions.length === 0 ? (
           <div className="sb-empty">
             <Inbox size={26} strokeWidth={1.6} />
-            <p>No submissions here yet.</p>
+            <p>{submissions.length === 0 ? 'No submissions here yet.' : 'Nothing matches this search.'}</p>
           </div>
         ) : (
           <div className="table-scroll">
@@ -2052,7 +2086,7 @@ export default function SubmissionBin() {
               </tr>
             </thead>
             <tbody>
-              {submissions.map((s) => {
+              {visibleSubmissions.map((s) => {
                 const meta = STAGE_META[s.stage]
                 const isConfirmingDelete = confirmDeleteId === s.id
                 return (
