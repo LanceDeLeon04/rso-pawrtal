@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, CalendarDays, Inbox, FileText, ShieldCheck,
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
-  Bell, ChevronsLeft, ChevronsRight, ChevronDown,
+  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X,
 } from 'lucide-react'
 import { useAuth, isAdminTier, isFMO } from '../context/AuthContext'
 import './Layout.css'
@@ -18,6 +18,12 @@ const NAV_ITEMS = [
   { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
+
+const ACCREDITATION_LABELS = {
+  accredited: 'Accredited',
+  probationary: 'Probationary',
+  pending: 'Pending',
+}
 
 const ROLE_LABELS = {
   rso_officer: 'RSO Officer',
@@ -41,13 +47,16 @@ export default function Layout() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [orgModalOpen, setOrgModalOpen] = useState(false)
 
   const admin = isAdminTier(profile?.role)
   const fmo = isFMO(profile?.role)
   const visibleNav = NAV_ITEMS.filter((item) => (!item.adminOnly || admin) && (!fmo || !item.hideForFMO))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
-  const orgLabel = profile?.org_memberships?.[0]?.organizations?.acronym
-  const isCOLOrg = profile?.org_memberships?.[0]?.organizations?.category === 'COL'
+  const org = profile?.org_memberships?.[0]?.organizations
+  const orgLabel = org?.acronym
+  const orgName = org?.name || org?.acronym
+  const isCOLOrg = org?.category === 'COL'
   const roleLabel = profile?.role === 'rso_officer' && isCOLOrg
     ? 'COL Officer'
     : (ROLE_LABELS[profile?.role] || profile?.role)
@@ -102,6 +111,24 @@ export default function Layout() {
               <span className="topbar__dot" />
             </button>
 
+            {org && (
+              <button
+                type="button"
+                className="topbar__org"
+                title={orgName}
+                onClick={() => setOrgModalOpen(true)}
+              >
+                {org.logo_url ? (
+                  <img src={org.logo_url} alt={orgName} className="topbar__org-logo" />
+                ) : (
+                  <div className="topbar__org-logo topbar__org-logo--fallback">
+                    {orgName?.[0]?.toUpperCase() || '?'}
+                  </div>
+                )}
+                <span className="topbar__org-tooltip">{orgName}</span>
+              </button>
+            )}
+
             <div className="topbar__user" onClick={() => setMenuOpen((v) => !v)}>
               {profile?.photo_url ? (
                 <img src={profile.photo_url} alt="" className="topbar__avatar" />
@@ -139,6 +166,48 @@ export default function Layout() {
           <span className="footer__sep">•</span>
           <span>RSO PAWrtal</span>
         </footer>
+      </div>
+
+      {orgModalOpen && org && (
+        <OrgInfoModal org={org} orgName={orgName} onClose={() => setOrgModalOpen(false)} />
+      )}
+    </div>
+  )
+}
+
+function OrgInfoModal({ org, orgName, onClose }) {
+  return (
+    <div className="topbar-org-modal__backdrop" onClick={onClose}>
+      <div className="topbar-org-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="topbar-org-modal__close" onClick={onClose} aria-label="Close">
+          <X size={16} />
+        </button>
+
+        <div className="topbar-org-modal__head">
+          {org.logo_url ? (
+            <img src={org.logo_url} alt="" className="topbar-org-modal__logo" />
+          ) : (
+            <div className="topbar-org-modal__logo topbar-org-modal__logo--fallback">
+              <Building2 size={22} />
+            </div>
+          )}
+          <div>
+            <h3>{org.acronym}</h3>
+            <p>{orgName}</p>
+          </div>
+        </div>
+
+        <section className="topbar-org-modal__section">
+          <h4>Org Details</h4>
+          <div className="topbar-org-modal__grid">
+            <div><span>Category</span><strong>{org.category || '—'}</strong></div>
+            <div><span>Adviser</span><strong>{org.adviser_name || '—'}</strong></div>
+            <div><span>Accreditation</span><strong>{ACCREDITATION_LABELS[org.accreditation_status] || '—'}</strong></div>
+            <div><span>Status</span><strong>{org.is_active ? 'Active' : 'Inactive'}</strong></div>
+            <div><span>Contact Email</span><strong>{org.contact_email || '—'}</strong></div>
+            <div><span>Contact Number</span><strong>{org.contact_number || '—'}</strong></div>
+          </div>
+        </section>
       </div>
     </div>
   )
