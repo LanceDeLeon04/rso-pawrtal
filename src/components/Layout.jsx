@@ -47,13 +47,23 @@ export default function Layout() {
   const visibleNav = NAV_ITEMS.filter((item) => (!item.adminOnly || admin) && (!fmo || !item.hideForFMO))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
   const orgLabel = profile?.org_memberships?.[0]?.organizations?.acronym
+  const isCOLOrg = profile?.org_memberships?.[0]?.organizations?.category === 'COL'
+  const roleLabel = profile?.role === 'rso_officer' && isCOLOrg
+    ? 'COL Officer'
+    : (ROLE_LABELS[profile?.role] || profile?.role)
 
   return (
     <div className="shell">
       <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}>
         <div className="sidebar__brand">
-          <img src="/icon.png" alt="" className="sidebar__mark" />
-          {!collapsed && <span className="sidebar__brand-text">RSO PAWrtal</span>}
+          {collapsed ? (
+            <img src="/icon.png" alt="RSO PAWrtal" className="sidebar__mark sidebar__mark--collapsed" />
+          ) : (
+            <>
+              <img src="/nu-shield.svg" alt="NU" className="sidebar__nu-mark" />
+              <img src="/pawrtal-logo.png" alt="RSO PAWrtal" className="sidebar__pawrtal-mark" />
+            </>
+          )}
         </div>
 
         <nav className="sidebar__nav">
@@ -102,7 +112,7 @@ export default function Layout() {
               )}
               <div className="topbar__user-meta">
                 <span className="topbar__user-name">{profile?.full_name || '—'}</span>
-                <span className="topbar__user-role">{ROLE_LABELS[profile?.role] || profile?.role}</span>
+                <span className="topbar__user-role">{roleLabel}</span>
               </div>
               <ChevronDown size={15} className="topbar__chevron" />
 

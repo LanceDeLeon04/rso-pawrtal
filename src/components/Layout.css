@@ -39,6 +39,30 @@
   flex-shrink: 0;
 }
 
+.sidebar--collapsed .sidebar__brand {
+  justify-content: center;
+  padding: 4px 0 20px;
+}
+
+.sidebar__mark--collapsed {
+  border-radius: 8px;
+}
+
+.sidebar__nu-mark {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.sidebar__pawrtal-mark {
+  height: 26px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
 .sidebar__brand-text {
   font-family: var(--font-display);
   font-weight: 600;
