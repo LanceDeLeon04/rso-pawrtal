@@ -9,25 +9,38 @@ import {
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES } from '../lib/dateUtils'
-import { generateACPFormPdf } from '../lib/acpPdf'
+import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
 import { ensureEventVerificationToken } from '../lib/eventVerification'
 import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import { SDG_OPTIONS } from '../lib/sdgOptions'
+import { MERCHANDISE_TYPES } from '../lib/merchandiseOptions'
 import './SubmissionBin.css'
 
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
 // the fields below and attached on submit, so it's no longer in this list.
 const EVENT_APP_DOCS = ['Attachments Template']
 const REPORT_DOCS = ['PARF Template', 'Liquidation Report', 'Narrative Report', 'Evaluation Report']
+const MERCH_DOCS = ['Design Concept', 'Quotation from Supplier']
 
 const ACTIVITY_TYPES = [
   { value: 'org_activity', label: 'Student Organization Activity' },
   { value: 'university_activity', label: 'University/School Activity' },
   { value: 'special_event', label: 'Special Event' },
   { value: 'other', label: 'Others' },
+]
+
+// Merchandise Proposals always have "Type of Activity" = Marketing
+// Proposal (set automatically, not user-selected) and have no start/end
+// time (release date only). Instead they collect whether the item is a
+// permanent catalog offering or exclusive to the current academic year —
+// this prints on the Merchandise Request Form where Time would otherwise go.
+const MERCH_ACTIVITY_TYPE_LABEL = 'Marketing Proposal'
+const MERCH_DURATIONS = [
+  { value: 'permanent', label: 'Permanent Merchandise' },
+  { value: 'exclusive_ay', label: 'Exclusive this Academic Year' },
 ]
 
 // Finance/Liquidation documents must be Excel; everything else must be PDF.
@@ -138,7 +151,7 @@ function stepsFor(type) {
 // "SDAO Assistant".
 function stepIndexFor(type, stage, chainComplete) {
   const steps = stepsFor(type)
-  if (type === 'event_application') {
+  if (type === 'event_application' || type === 'merchandise') {
     if (stage === 'submitted') return chainComplete ? 1 : 0
     if (stage === 'assistant_review') return 1
   }
@@ -175,7 +188,7 @@ function nextActionFor(role, stage, type) {
 // resolution itself lives in lib/approvalLinks.js (externalApprovalState)
 // so the client-side ordering can't drift from what the DB enforces.
 
-const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative' }
+const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative', marketing_rep: 'Marketing' }
 
 // SDG Representatives are a fixed, known set of people (unlike
 // Adviser/Dean, which vary per org) — presented as a dropdown instead
@@ -218,6 +231,23 @@ const EMPTY_APP_FORM = {
   night_before_ingress: false,
 }
 
+// Merchandise Proposal collects the same fields as an Event Application
+// (contact/position info, medium & venue, date/time, target audience,
+// budget, description, learning goals) — except the title (auto-set to
+// "[Org] Merchandise Proposal") and the SDG section, which is replaced
+// on this form by the Types of Merchandise checklist. Continuing-activity,
+// restricted-period, and additional ingress/egress-time booking logic are
+// event-venue-booking concerns and intentionally don't apply here.
+const EMPTY_MERCH_FORM = {
+  contact_person: '', contact_number: '',
+  venue_id: '', venue_detail: '', online_platform: '',
+  event_date: '', medium: 'f2f', description: '',
+  position: '', email: '',
+  target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
+  learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
+  merchandise_duration: '',
+}
+
 export default function SubmissionBin() {
   const { profile } = useAuth()
   const admin = isAdminTier(profile?.role)
@@ -252,6 +282,12 @@ export default function SubmissionBin() {
   const [showReportModal, setShowReportModal] = useState(false)
   const [reportClearanceId, setReportClearanceId] = useState('')
   const [reportFiles, setReportFiles] = useState({})
+
+  const [allowMerchandise, setAllowMerchandise] = useState(false)
+  const [showMerchModal, setShowMerchModal] = useState(false)
+  const [merchForm, setMerchForm] = useState(EMPTY_MERCH_FORM)
+  const [merchTypes, setMerchTypes] = useState([])
+  const [merchFiles, setMerchFiles] = useState({})
 
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
@@ -295,7 +331,7 @@ export default function SubmissionBin() {
 
   // Adviser/Dean external approval links (event applications only)
   const [approvalLinks, setApprovalLinks] = useState([])
-  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' } })
+  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
   const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
   const [linkError, setLinkError] = useState('')
   const [copiedRole, setCopiedRole] = useState(null)
@@ -304,6 +340,13 @@ export default function SubmissionBin() {
     loadSubmissions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeFilter, stageFilter, profile?.id])
+
+  useEffect(() => {
+    // Whether "New Merchandise Proposal" is available for RSO officers
+    // right now — set by SDAO/Admin from Settings.
+    supabase.from('app_settings').select('value').eq('key', 'allow_merchandise_submission').single()
+      .then(({ data }) => setAllowMerchandise(!!data?.value))
+  }, [])
 
   useEffect(() => {
     // Load clearance status up front (not just when the Submit Report
@@ -386,7 +429,10 @@ export default function SubmissionBin() {
         venue_id, venue_detail, venue_tag, online_platform, pencil_booked, lab_endorsed,
         event_date, start_time, end_time, additional_ingress_time, additional_egress_time, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
+        position, email, activity_type, activity_type_other, target_audience, target_participants,
+        projected_budget, budget_source, learning_goals,
         sdgs, sdg_representative, sdg_marked_acp_generated,
+        merchandise_types, merchandise_duration, marketing_representative,
         restricted_period_ack, restricted_period_justification,
         stage, submitted_by, submitted_at,
         organizations ( name, acronym, category ),
@@ -874,6 +920,16 @@ export default function SubmissionBin() {
     setShowReportModal(true)
   }
 
+  function openMerchModal() {
+    if (!allowMerchandise) return
+    const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+    setMerchForm({ ...EMPTY_MERCH_FORM, position: myMembership?.position || '' })
+    setMerchTypes([])
+    setMerchFiles({})
+    setFormError('')
+    setShowMerchModal(true)
+  }
+
   useEffect(() => {
     if (location.state?.autoOpenReportForEventId && myOrgId) {
       openReportModal(location.state.autoOpenReportForEventId)
@@ -1211,6 +1267,172 @@ export default function SubmissionBin() {
     loadSubmissions()
   }
 
+  async function handleSubmitMerch(e) {
+    e.preventDefault()
+    setFormError('')
+
+    if (clearanceBlocked) {
+      setFormError("Your organization has an overdue clearance — settle it before submitting a new Merchandise Proposal.")
+      return
+    }
+
+    if (merchTypes.length === 0) {
+      setFormError('Please check at least one type of merchandise.')
+      return
+    }
+    if (!merchForm.contact_person || !merchForm.medium) {
+      setFormError('Please fill in the contact person and medium.')
+      return
+    }
+    if (merchForm.medium === 'online') {
+      if (!merchForm.online_platform) {
+        setFormError('Please select the online platform.')
+        return
+      }
+      if (merchForm.online_platform === 'others' && !merchForm.venue_detail.trim()) {
+        setFormError('Please specify the online platform.')
+        return
+      }
+    } else if (!merchForm.venue_id) {
+      setFormError('Please select the venue.')
+      return
+    }
+    if (!merchForm.event_date) {
+      setFormError('Please fill in the release date.')
+      return
+    }
+    if (!merchForm.position || !merchForm.email) {
+      setFormError('Please fill in your position and email address.')
+      return
+    }
+    if (!merchForm.merchandise_duration) {
+      setFormError('Please select whether this is Permanent Merchandise or Exclusive this Academic Year.')
+      return
+    }
+    if (!merchForm.target_audience || !merchForm.target_participants) {
+      setFormError('Please fill in the target audience and target number of participants.')
+      return
+    }
+    if (!merchForm.projected_budget || !merchForm.budget_source) {
+      setFormError('Please fill in the projected budget and its source.')
+      return
+    }
+    if (!merchForm.learning_goal_1.trim()) {
+      setFormError('Please fill in at least one learning goal/objective.')
+      return
+    }
+    for (const doc of MERCH_DOCS) {
+      const err = validateAttachmentEntry(doc, merchFiles[doc])
+      if (err) {
+        setFormError(err)
+        return
+      }
+    }
+
+    const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+    const orgName = myMembership?.organizations?.name || myMembership?.organizations?.acronym || 'Org'
+
+    const isOnline = merchForm.medium === 'online'
+    const selectedVenue = isOnline ? null : venues.find((v) => v.id === merchForm.venue_id)
+    const venueName = selectedVenue?.name
+
+    setSaving(true)
+    const { data: sub, error: err } = await supabase.from('submissions').insert({
+      type: 'merchandise',
+      org_id: myOrgId,
+      title: `${orgName} Merchandise Proposal`,
+      contact_person: merchForm.contact_person,
+      contact_number: merchForm.contact_number || null,
+      venue_id: isOnline ? null : merchForm.venue_id,
+      venue_detail: isOnline
+        ? (merchForm.online_platform === 'others' ? merchForm.venue_detail.trim() : null)
+        : (merchForm.venue_detail.trim() || null),
+      venue_tag: isOnline ? null : venueTagFor(venueName),
+      online_platform: isOnline ? merchForm.online_platform : null,
+      event_date: merchForm.event_date,
+      start_time: null,
+      end_time: null,
+      medium: merchForm.medium,
+      description: merchForm.description || null,
+      position: merchForm.position,
+      email: merchForm.email,
+      activity_type: 'other',
+      activity_type_other: MERCH_ACTIVITY_TYPE_LABEL,
+      target_audience: merchForm.target_audience,
+      target_participants: Number(merchForm.target_participants),
+      projected_budget: Number(merchForm.projected_budget),
+      budget_source: merchForm.budget_source,
+      learning_goals: [merchForm.learning_goal_1, merchForm.learning_goal_2, merchForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
+      merchandise_types: merchTypes,
+      merchandise_duration: merchForm.merchandise_duration,
+      submitted_by: profile.id,
+    }).select().single()
+
+    if (err) {
+      setSaving(false)
+      setFormError(
+        err.code === '42501' || err.message?.toLowerCase().includes('row-level security')
+          ? "Your organization has an unresolved clearance report — submit that report first before applying for a new activity."
+          : 'Could not submit your proposal. Please try again.'
+      )
+      return
+    }
+
+    // Auto-generate the filled Merchandise Request Form PDF — same
+    // renderer as the ACP Form, minus the SDG section (see acpPdf.js).
+    try {
+      const venueLabel = isOnline
+        ? [ONLINE_PLATFORMS.find((p) => p.value === merchForm.online_platform)?.label, merchForm.online_platform === 'others' ? merchForm.venue_detail : null].filter(Boolean).join(' — ')
+        : [selectedVenue?.name, merchForm.venue_detail].filter(Boolean).join(' — ')
+      const merchandiseDurationLabel = MERCH_DURATIONS.find((d) => d.value === merchForm.merchandise_duration)?.label
+
+      const pdfBytes = await generateMerchRequestFormPdf({
+        applicationDate: toISODate(new Date()),
+        orgName,
+        contactPerson: merchForm.contact_person,
+        position: merchForm.position,
+        email: merchForm.email,
+        title: sub.title,
+        activityTypeLabel: MERCH_ACTIVITY_TYPE_LABEL,
+        venueAddress: venueLabel,
+        targetAudience: merchForm.target_audience,
+        targetParticipants: merchForm.target_participants,
+        eventDate: merchForm.event_date,
+        merchandiseDurationLabel,
+        projectedBudget: merchForm.projected_budget,
+        budgetSource: merchForm.budget_source,
+        merchandiseTypes: merchTypes,
+        learningGoals: [merchForm.learning_goal_1, merchForm.learning_goal_2, merchForm.learning_goal_3],
+        description: merchForm.description,
+      })
+      const formFile = new File([pdfBytes], `Merchandise-Request-Form-${sub.id}.pdf`, { type: 'application/pdf' })
+      await uploadAttachment(sub.id, 'Merchandise Request Form', formFile)
+    } catch (pdfErr) {
+      console.error('Failed to auto-generate Merchandise Request Form PDF', pdfErr)
+      setFormError('Proposal submitted, but the Merchandise Request Form PDF could not be generated — you can attach one manually from the list.')
+    }
+
+    const failedDocs = []
+    for (const doc of MERCH_DOCS) {
+      try {
+        await uploadAttachment(sub.id, doc, merchFiles[doc])
+      } catch (uploadErr) {
+        console.error(`Failed to upload ${doc}`, uploadErr)
+        failedDocs.push(doc)
+      }
+    }
+    await supabase.from('submission_status_history').insert({
+      submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
+    })
+    if (failedDocs.length) {
+      setFormError(`Proposal submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
+    }
+
+    setSaving(false)
+    if (!failedDocs.length) setShowMerchModal(false)
+    loadSubmissions()
+  }
+
   async function openDetail(sub) {
     setSelected(sub)
     setActionMode(null)
@@ -1228,15 +1450,15 @@ export default function SubmissionBin() {
     setExtraDocEntry(null)
     setResubmitting(false)
     setResubmitNote('')
-    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' } })
+    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
     setLinkError('')
     setApprovalLinks([])
     setDetailLoading(true)
-    if (sub.type === 'event_application') {
+    if (sub.type === 'event_application' || sub.type === 'merchandise') {
       const { data: links } = await fetchApprovalLinks(sub.id)
       setApprovalLinks(links)
       const sdgRepLink = links.find((l) => l.role === 'sdg_rep')
-      if (sdgRepLink?.status === 'approved' && !sub.sdg_marked_acp_generated) {
+      if (sub.type === 'event_application' && sdgRepLink?.status === 'approved' && !sub.sdg_marked_acp_generated) {
         // Awaited so the old ACP Form row/file is deleted and the new
         // one uploaded *before* we fetch attachments below — otherwise
         // that fetch can race the delete and the stale ACP briefly (or
@@ -1776,6 +1998,7 @@ export default function SubmissionBin() {
           <select className="sb-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
             <option value="all">All types</option>
             <option value="event_application">Event Applications</option>
+            <option value="merchandise">Merchandise Proposals</option>
             <option value="report">Reports</option>
           </select>
           <select className="sb-select" value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
@@ -1799,6 +2022,11 @@ export default function SubmissionBin() {
             >
               <Plus size={15} /> New Application
             </button>
+            {allowMerchandise && (
+              <button className="sb-btn sb-btn--outline" onClick={openMerchModal}>
+                <Plus size={15} /> New Merchandise Proposal
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1846,7 +2074,7 @@ export default function SubmissionBin() {
                 return (
                   <tr key={s.id} onClick={() => openDetail(s)}>
                     <td className="sb-table__title">{s.title}</td>
-                    <td>{s.type === 'event_application' ? 'Event Application' : 'Report'}</td>
+                    <td>{s.type === 'event_application' ? 'Event Application' : s.type === 'merchandise' ? 'Merchandise Proposal' : 'Report'}</td>
                     {admin && <td>{s.organizations?.acronym}</td>}
                     <td><span className={`sb-badge sb-badge--${meta.tone}`}>{meta.label}</span></td>
                     <td>{s.submitted_at?.slice(0, 10)}</td>
@@ -2474,6 +2702,229 @@ export default function SubmissionBin() {
         </div>
       )}
 
+      {/* ---------- New Merchandise Proposal ---------- */}
+      {showMerchModal && (
+        <div className="sb-modal-backdrop" onClick={() => setShowMerchModal(false)}>
+          <form className="sb-modal sb-modal--form" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmitMerch}>
+            <button type="button" className="sb-modal__close" onClick={() => setShowMerchModal(false)}><X size={18} /></button>
+            <h3 className="sb-modal__title">New Merchandise Proposal</h3>
+
+            {formError && <div className="sb-form-error"><AlertCircle size={14} /> {formError}</div>}
+
+            <p className="sb-empty-note">
+              Activity title will be automatically set to "[Your Org] Merchandise Proposal".
+            </p>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Contact Person
+                <input value={merchForm.contact_person} onChange={(e) => setMerchForm({ ...merchForm, contact_person: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Contact Number
+                <input value={merchForm.contact_number} onChange={(e) => setMerchForm({ ...merchForm, contact_number: e.target.value })} />
+              </label>
+            </div>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Position
+                <input value={merchForm.position} onChange={(e) => setMerchForm({ ...merchForm, position: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Email Address
+                <input type="email" value={merchForm.email} onChange={(e) => setMerchForm({ ...merchForm, email: e.target.value })} required />
+              </label>
+            </div>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Medium
+                <select
+                  value={merchForm.medium}
+                  onChange={(e) => setMerchForm({
+                    ...merchForm, medium: e.target.value,
+                    venue_id: '', venue_detail: '', online_platform: '',
+                  })}
+                  required
+                >
+                  <option value="f2f">Face-to-Face</option>
+                  <option value="online">Online</option>
+                  <option value="off_campus">Off-Campus</option>
+                </select>
+              </label>
+
+              {merchForm.medium === 'online' ? (
+                <label className="sb-field">
+                  Platform
+                  <select
+                    value={merchForm.online_platform}
+                    onChange={(e) => setMerchForm({ ...merchForm, online_platform: e.target.value, venue_detail: '' })}
+                    required
+                  >
+                    <option value="">Select platform</option>
+                    {ONLINE_PLATFORMS.map((p) => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className="sb-field">
+                  Venue
+                  <select
+                    value={merchForm.venue_id}
+                    onChange={(e) => setMerchForm({ ...merchForm, venue_id: e.target.value, venue_detail: '' })}
+                    required
+                  >
+                    <option value="">Select venue</option>
+                    {venues.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+
+            {merchForm.medium === 'online' && merchForm.online_platform === 'others' && (
+              <label className="sb-field">
+                Please specify
+                <input
+                  value={merchForm.venue_detail}
+                  onChange={(e) => setMerchForm({ ...merchForm, venue_detail: e.target.value })}
+                  placeholder="e.g. Google Meet"
+                  required
+                />
+              </label>
+            )}
+            {merchForm.medium !== 'online' && merchForm.venue_id && (
+              <label className="sb-field">
+                Venue detail <span className="sb-optional">(optional — e.g. specific room/booth)</span>
+                <input value={merchForm.venue_detail} onChange={(e) => setMerchForm({ ...merchForm, venue_detail: e.target.value })} />
+              </label>
+            )}
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Release Date
+                <input type="date" value={merchForm.event_date} onChange={(e) => setMerchForm({ ...merchForm, event_date: e.target.value })} required />
+              </label>
+            </div>
+
+            <div className="sb-field">
+              <span>Merchandise is:</span>
+              {MERCH_DURATIONS.map((d) => (
+                <label key={d.value} className="sb-radio-label">
+                  <input
+                    type="radio"
+                    name="merchandise_duration"
+                    checked={merchForm.merchandise_duration === d.value}
+                    onChange={() => setMerchForm({ ...merchForm, merchandise_duration: d.value })}
+                  />
+                  {d.label}
+                </label>
+              ))}
+            </div>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Target Audience
+                <input value={merchForm.target_audience} onChange={(e) => setMerchForm({ ...merchForm, target_audience: e.target.value })} placeholder="e.g. All BS IT students" required />
+              </label>
+              <label className="sb-field">
+                Target No. of Participants
+                <input type="number" min="1" value={merchForm.target_participants} onChange={(e) => setMerchForm({ ...merchForm, target_participants: e.target.value })} required />
+              </label>
+            </div>
+
+            <div className="sb-field-row">
+              <label className="sb-field">
+                Projected Budget (PHP)
+                <input type="number" min="0" step="0.01" value={merchForm.projected_budget} onChange={(e) => setMerchForm({ ...merchForm, projected_budget: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Source of Budget
+                <input value={merchForm.budget_source} onChange={(e) => setMerchForm({ ...merchForm, budget_source: e.target.value })} placeholder="e.g. Org funds" required />
+              </label>
+            </div>
+
+            <label className="sb-field">
+              Description
+              <textarea rows={2} value={merchForm.description} onChange={(e) => setMerchForm({ ...merchForm, description: e.target.value })} />
+            </label>
+
+            <div className="sb-field">
+              <span>Learning Goals/Objectives of the Activity</span>
+              <input
+                className="sb-sdg-goal"
+                value={merchForm.learning_goal_1}
+                onChange={(e) => setMerchForm({ ...merchForm, learning_goal_1: e.target.value })}
+                placeholder="1.)"
+                required
+              />
+              <input
+                className="sb-sdg-goal"
+                value={merchForm.learning_goal_2}
+                onChange={(e) => setMerchForm({ ...merchForm, learning_goal_2: e.target.value })}
+                placeholder="2.) (optional)"
+              />
+              <input
+                className="sb-sdg-goal"
+                value={merchForm.learning_goal_3}
+                onChange={(e) => setMerchForm({ ...merchForm, learning_goal_3: e.target.value })}
+                placeholder="3.) (optional)"
+              />
+            </div>
+
+            <div className="sb-attach-group">
+              <span className="sb-attach-group__label">Types of Merchandise</span>
+              {MERCHANDISE_TYPES.map((t) => {
+                const checked = merchTypes.includes(t)
+                return (
+                  <label key={t} className="sb-sdg-goal" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setMerchTypes((prev) => (
+                        e.target.checked ? [...prev, t] : prev.filter((v) => v !== t)
+                      ))}
+                    />
+                    {t}
+                  </label>
+                )
+              })}
+            </div>
+
+            <div className="sb-form-notice">
+              <FileText size={14} />
+              The Merchandise Request Form is generated automatically from the fields above and attached to this proposal — no need to upload it separately.
+            </div>
+
+            <div className="sb-attach-group">
+              <span className="sb-attach-group__label">Attachments</span>
+              {MERCH_DOCS.map((doc) => (
+                <AttachmentRow
+                  key={doc}
+                  label={doc === 'Design Concept' ? 'Design Concept (all designs compiled in one PDF)' : 'Quotation from Supplier (all quotations compiled in one PDF)'}
+                  entry={merchFiles[doc]}
+                  onChange={(v) => setMerchFiles({ ...merchFiles, [doc]: v })}
+                  accept={acceptAttrFor(doc)}
+                  formatHint={formatHintFor(doc)}
+                />
+              ))}
+            </div>
+
+            <button
+              type="submit"
+              className="sb-btn sb-btn--gold sb-btn--full"
+              disabled={saving || clearanceBlocked}
+              title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.' : undefined}
+            >
+              {saving ? <Loader2 size={15} className="spin" /> : 'Submit Proposal'}
+            </button>
+          </form>
+        </div>
+      )}
+
       {/* ---------- Detail / Review Workspace ---------- */}
       {selected && (() => {
         const isOwnerOrg = !admin && myOrgId === selected.org_id
@@ -2488,7 +2939,9 @@ export default function SubmissionBin() {
               <div className="sb-review">
                 {/* ---------- Left: review panel ---------- */}
                 <div className="sb-review__left">
-                  <span className="sb-type-tag">{selected.type === 'event_application' ? 'Event Application Review' : 'Activity Report Review'}</span>
+                  <span className="sb-type-tag">
+                    {selected.type === 'event_application' ? 'Event Application Review' : selected.type === 'merchandise' ? 'Merchandise Proposal Review' : 'Activity Report Review'}
+                  </span>
                   <h3 className="sb-modal__title">{selected.title}</h3>
                   {(admin || canReview) && (
                     <p className="sb-modal__org"><Building2 size={14} /> {selected.organizations?.acronym} — {selected.organizations?.name}</p>
@@ -2503,8 +2956,8 @@ export default function SubmissionBin() {
                     <div className="sb-stepper">
                       {(() => {
                         const steps = stepsFor(selected.type)
-                        const chainComplete = selected.type === 'event_application'
-                          ? externalApprovalState(approvalLinks, selected.organizations?.category).complete
+                        const chainComplete = (selected.type === 'event_application' || selected.type === 'merchandise')
+                          ? externalApprovalState(approvalLinks, selected.organizations?.category, selected.type).complete
                           : true
                         const current = stepIndexFor(selected.type, selected.stage, chainComplete)
                         return steps.map((step, i) => {
@@ -2560,6 +3013,32 @@ export default function SubmissionBin() {
                   {selected.type === 'report' && selected.events?.title && (
                     <div className="sb-detail-grid">
                       <div className="sb-detail-row"><ClipboardList size={13} /> Reporting on: {selected.events.title}</div>
+                    </div>
+                  )}
+
+                  {selected.type === 'merchandise' && (
+                    <div className="sb-detail-grid">
+                      <div className="sb-detail-row">
+                        <MapPin size={13} />
+                        {selected.online_platform
+                          ? (ONLINE_PLATFORMS.find((p) => p.value === selected.online_platform)?.label || selected.online_platform)
+                          : (selected.venues?.name || '—')}
+                        {selected.venue_detail && ` — ${selected.venue_detail}`}
+                      </div>
+                      <div className="sb-detail-row">
+                        <Clock size={13} /> Release Date: {selected.event_date || '—'}
+                      </div>
+                      <div className="sb-detail-row"><Video size={13} /> {MEDIUM_LABELS[selected.medium] || '—'}</div>
+                      <div className="sb-detail-row"><User size={13} /> {selected.contact_person || '—'}{selected.contact_number && ` · ${selected.contact_number}`}</div>
+                      <div className="sb-detail-row">
+                        <ClipboardList size={13} /> {MERCH_DURATIONS.find((d) => d.value === selected.merchandise_duration)?.label || '—'}
+                      </div>
+                      <div className="sb-detail-row sb-detail-row--wrap">
+                        <ClipboardList size={13} /> Types of Merchandise: {(selected.merchandise_types || []).join(', ') || '—'}
+                      </div>
+                      {selected.marketing_representative && (
+                        <div className="sb-detail-row"><Check size={13} /> Reviewed by Marketing: {selected.marketing_representative}</div>
+                      )}
                     </div>
                   )}
 
@@ -2698,11 +3177,11 @@ export default function SubmissionBin() {
                   </div>
 
                   {/* ---------- Adviser / Dean / SDG Rep external approvals ---------- */}
-                  {selected.type === 'event_application' && (selected.stage !== 'rejected' || approvalLinks.length > 0) && (() => {
+                  {(selected.type === 'event_application' || selected.type === 'merchandise') && (selected.stage !== 'rejected' || approvalLinks.length > 0) && (() => {
                     const category = selected.organizations?.category
-                    const state = externalApprovalState(approvalLinks, category)
+                    const state = externalApprovalState(approvalLinks, category, selected.type)
                     const { chain } = state
-                    const linkByRole = { adviser: state.adviser, dean: state.dean, sdg_rep: state.sdgRep }
+                    const linkByRole = state.byRole
                     const canManage = (isOwnerOrg || admin) && selected.stage === 'submitted'
 
                     function badgeFor(link) {
@@ -2717,7 +3196,7 @@ export default function SubmissionBin() {
 
                     return (
                       <div className="sb-detail-section">
-                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> External Sign-off (Adviser → {state.needsDean ? 'Dean → ' : ''}SDG Representative)</span>
+                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> External Sign-off (Adviser → {state.needsDean ? 'Dean → ' : ''}{ROLE_LABELS[chain[chain.length - 1]]})</span>
                         {linkError && <div className="sb-form-error"><AlertCircle size={14} /> {linkError}</div>}
                         {chain.map((role, idx) => {
                           const link = linkByRole[role]
@@ -2904,7 +3383,7 @@ export default function SubmissionBin() {
                       {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
                       <p className="sb-empty-note">
                         Address the reviewer's comments above, attach any additional documents needed, then resubmit
-                        this {selected.type === 'event_application' ? 'application' : 'report'} for review.
+                        this {selected.type === 'event_application' ? 'application' : selected.type === 'merchandise' ? 'proposal' : 'report'} for review.
                       </p>
                       <textarea
                         className="sb-comment-box"
@@ -2928,11 +3407,11 @@ export default function SubmissionBin() {
                       && (selected.stage === 'submitted' || selected.stage === 'assistant_review')
                     const blocked = assistantTurn && openTasks.length > 0
 
-                    const externalGate = assistantTurn && selected.type === 'event_application'
-                      ? externalApprovalState(approvalLinks, selected.organizations?.category)
+                    const externalGate = assistantTurn && (selected.type === 'event_application' || selected.type === 'merchandise')
+                      ? externalApprovalState(approvalLinks, selected.organizations?.category, selected.type)
                       : null
                     if (externalGate && !externalGate.complete) {
-                      const linkByRole = { adviser: externalGate.adviser, dean: externalGate.dean, sdg_rep: externalGate.sdgRep }
+                      const linkByRole = externalGate.byRole
                       const waitingOnRole = externalGate.chain.find((role) => linkByRole[role]?.status !== 'approved')
                       return (
                         <div className="sb-review-actions">

@@ -13,10 +13,15 @@ const VENUE_MANAGER_ROLES = [
   'sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervisor', 'academic_director', 'system_admin', 'fmo',
 ]
 
+// Only SDAO (assistant/supervisor) and System Admin can toggle
+// portal-wide feature flags such as Merchandise Proposal submission.
+const SDAO_ADMIN_ROLES = ['sdao_assistant', 'sdao_supervisor', 'system_admin']
+
 export default function Settings() {
   const { profile, completePasswordChange, refreshProfile } = useAuth()
   const admin = isAdminTier(profile?.role)
   const canManageVenues = VENUE_MANAGER_ROLES.includes(profile?.role)
+  const canManageFeatureFlags = SDAO_ADMIN_ROLES.includes(profile?.role)
 
   return (
     <div className="set-page">
@@ -26,9 +31,62 @@ export default function Settings() {
 
       <ProfileSection profile={profile} refreshProfile={refreshProfile} />
       <PasswordSection completePasswordChange={completePasswordChange} />
+      {canManageFeatureFlags && <FeatureFlagsSection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
     </div>
+  )
+}
+
+function FeatureFlagsSection() {
+  const [loading, setLoading] = useState(true)
+  const [allowMerch, setAllowMerch] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'allow_merchandise_submission').single()
+    setAllowMerch(!!data?.value)
+    setLoading(false)
+  }
+
+  async function toggle() {
+    const next = !allowMerch
+    setSaving(true)
+    setAllowMerch(next)
+    const { error } = await supabase.from('app_settings')
+      .update({ value: next, updated_at: new Date().toISOString() })
+      .eq('key', 'allow_merchandise_submission')
+    setSaving(false)
+    if (error) setAllowMerch(!next)
+  }
+
+  return (
+    <section className="set-section">
+      <div className="set-card">
+      <span className="set-card__label"><SettingsIcon size={13} /> Feature Toggles</span>
+      <div className="set-toggle-row">
+        <div>
+          <strong>Allow Merchandise Submission</strong>
+          <p className="set-toggle-row__hint">
+            When enabled, RSO officers can submit a Merchandise Proposal from Submission Bin. When disabled, the
+            button is hidden and not available for new submissions.
+          </p>
+        </div>
+        <button
+          type="button"
+          className={`set-switch ${allowMerch ? 'set-switch--on' : ''}`}
+          onClick={toggle}
+          disabled={loading || saving}
+          aria-pressed={allowMerch}
+        >
+          <span className="set-switch__knob" />
+        </button>
+      </div>
+      </div>
+    </section>
   )
 }
 

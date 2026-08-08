@@ -16,6 +16,7 @@ export default function CalendarOfActivities() {
   const admin = isAdminTier(profile?.role)
   const fmo = isFMO(profile?.role)
   const canManageVenues = admin || fmo // block dates + reschedule bookings
+  const myOrgId = profile?.org_memberships?.[0]?.org_id
 
   const today = new Date()
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() })
@@ -134,7 +135,20 @@ export default function CalendarOfActivities() {
       setError('Could not load activities. Please try again.')
       setEvents([])
     } else {
-      setEvents(data || [])
+      // Column-level visibility (RLS grants row access to everyone, so
+      // this is enforced app-side, per the note on events_select_all in
+      // schema.sql): SDAO admins/FMO and an org viewing its OWN events
+      // get every field. For any other org's event, strip the private
+      // fields — contact person, contact number, description — before
+      // they ever land in state, so a non-admin org can only ever see
+      // title, date, time, and venue for activities that aren't theirs.
+      const scrubbed = (data || []).map((ev) => {
+        const isOwnOrgEvent = !!myOrgId && ev.org_id === myOrgId
+        if (admin || fmo || isOwnOrgEvent) return ev
+        const { contact_person, contact_number, description, ...rest } = ev
+        return rest
+      })
+      setEvents(scrubbed)
     }
     setLoading(false)
   }
@@ -551,7 +565,14 @@ export default function CalendarOfActivities() {
               <Building2 size={14} /> {selectedEvent.organizations?.acronym || '—'} — {selectedEvent.organizations?.name}
             </p>
 
-            {(admin || fmo) ? (
+            {(() => {
+              // Full details: SDAO admins/FMO always, and an org for its
+              // OWN scheduled activities. For every other org's event, an
+              // RSO only ever sees title (already shown above) + date +
+              // time + venue — never contact info or the description.
+              const isOwnOrgEvent = !!myOrgId && selectedEvent.org_id === myOrgId
+              const canSeeFullDetails = admin || fmo || isOwnOrgEvent
+              return canSeeFullDetails ? (
               <div className="cal-modal__details">
                 <div className="cal-modal__row"><CalendarDays size={14} /> {selectedEvent.event_date}</div>
                 {(selectedEvent.start_time || selectedEvent.end_time) && (
@@ -761,11 +782,28 @@ export default function CalendarOfActivities() {
                   </>
                 )}
               </div>
-            ) : (
-              <p className="cal-modal__limited">
-                <CalendarDays size={14} /> {selectedEvent.event_date} — full details are visible to SDAO admins only.
-              </p>
-            )}
+              ) : (
+                <div className="cal-modal__details">
+                  <div className="cal-modal__row"><CalendarDays size={14} /> {selectedEvent.event_date}</div>
+                  {(selectedEvent.start_time || selectedEvent.end_time) && (
+                    <div className="cal-modal__row">
+                      <Clock size={14} />
+                      {formatTime(selectedEvent.start_time)}{selectedEvent.end_time && ` – ${formatTime(selectedEvent.end_time)}`}
+                    </div>
+                  )}
+                  {selectedEvent.venues?.name && (
+                    <div className="cal-modal__row">
+                      <MapPin size={14} />
+                      {selectedEvent.venues.name}
+                      {selectedEvent.venue_detail && ` — ${selectedEvent.venue_detail}`}
+                    </div>
+                  )}
+                  <p className="cal-modal__limited">
+                    Contact info and other details are only visible to SDAO admins and {selectedEvent.organizations?.acronym || 'the organizing'} org's own members.
+                  </p>
+                </div>
+              )
+            })()}
           </div>
         </div>
       )}

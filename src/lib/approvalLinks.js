@@ -10,12 +10,15 @@ export function orgNeedsDean(category) {
   return DEAN_REQUIRED_CATEGORIES.includes(category)
 }
 
-// Full external sign-off chain for an event application, in order.
-// The SDG Representative always comes last — after the Adviser (and
-// Dean, if the org's category requires one) — and is the one who
-// actually checks/marks the SDGs; the submitting student never does.
-export function externalApprovalChain(category) {
-  return orgNeedsDean(category) ? ['adviser', 'dean', 'sdg_rep'] : ['adviser', 'sdg_rep']
+// Full external sign-off chain, in order. The last role always comes
+// after the Adviser (and Dean, if the org's category requires one):
+// for event applications that's the SDG Representative (who marks the
+// SDGs); for merchandise proposals it's Marketing (who reviews the
+// design/quotation attachments) — everything else about the chain
+// (gating, link generation, approve/return) is identical.
+export function externalApprovalChain(category, type = 'event_application') {
+  const lastRole = type === 'merchandise' ? 'marketing_rep' : 'sdg_rep'
+  return orgNeedsDean(category) ? ['adviser', 'dean', lastRole] : ['adviser', lastRole]
 }
 
 export function approvalLinkUrl(token) {
@@ -40,6 +43,8 @@ export async function fetchApprovalLinks(submissionId) {
   const { data, error } = await supabase
     .from('approval_links')
     .select('id, role, token, person_name, person_email, status, comment, expires_at, decided_at, created_at, signature_data, sdg_selections')
+    // note: the same select shape covers marketing_rep links too —
+    // they just never populate sdg_selections
     .eq('submission_id', submissionId)
   return { data: data || [], error }
 }
@@ -49,8 +54,8 @@ export async function fetchApprovalLinks(submissionId) {
 // in migration 021. `complete` only becomes true once every required
 // link (including the SDG Rep, who must have actually marked SDGs) is
 // approved.
-export function externalApprovalState(links, category) {
-  const chain = externalApprovalChain(category)
+export function externalApprovalState(links, category, type = 'event_application') {
+  const chain = externalApprovalChain(category, type)
   const byRole = Object.fromEntries(chain.map((role) => [role, links.find((l) => l.role === role) || null]))
   let complete = true
   let unlockedUpTo = 0
@@ -65,9 +70,11 @@ export function externalApprovalState(links, category) {
   }
   return {
     chain,
+    byRole,
     adviser: byRole.adviser || null,
     dean: byRole.dean || null,
     sdgRep: byRole.sdg_rep || null,
+    marketingRep: byRole.marketing_rep || null,
     needsDean: chain.includes('dean'),
     complete,
     unlockedUpTo, // number of chain steps fully approved so far

@@ -16,7 +16,7 @@ const STATUS_META = {
   expired: { label: 'Link expired', tone: 'danger' },
 }
 
-const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative' }
+const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative', marketing_rep: 'Marketing' }
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -134,7 +134,8 @@ export default function ExternalApproval() {
   const effectiveStatus = doneDecision ? (doneDecision === 'approved' ? 'approved' : 'rejected') : link.status
   const meta = STATUS_META[effectiveStatus] || STATUS_META.pending
   const isDecided = effectiveStatus !== 'pending'
-  const roleBlocked = (link.role === 'dean' || link.role === 'sdg_rep') && !priorChainComplete && !isDecided
+  const roleBlocked = ['dean', 'sdg_rep', 'marketing_rep'].includes(link.role) && !priorChainComplete && !isDecided
+  const rejectLabel = link.role === 'marketing_rep' ? 'Return for Revisions' : 'Reject'
 
   return (
     <div className="xap">
@@ -196,7 +197,7 @@ export default function ExternalApproval() {
           </ul>
         </section>
 
-        {(link.role === 'dean' || link.role === 'sdg_rep') && (
+        {['dean', 'sdg_rep', 'marketing_rep'].includes(link.role) && (
           <div className={`xap-note ${priorChainComplete ? 'xap-note--ok' : 'xap-note--warn'}`}>
             {priorChainComplete
               ? 'Everyone ahead of you in the review chain has approved. You may proceed.'
@@ -308,11 +309,11 @@ export default function ExternalApproval() {
                     className="xap-btn xap-btn--danger"
                     disabled={submitting}
                     onClick={() => {
-                      if (!comment.trim()) { setActionError('Please provide a reason for rejecting.'); return }
+                      if (!comment.trim()) { setActionError(`Please provide a reason for ${link.role === 'marketing_rep' ? 'returning' : 'rejecting'}.`); return }
                       submitDecision('rejected')
                     }}
                   >
-                    <XCircle size={16} /> Reject
+                    <XCircle size={16} /> {rejectLabel}
                   </button>
                 </div>
               </>

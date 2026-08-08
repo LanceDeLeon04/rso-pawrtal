@@ -1,0 +1,13 @@
+-- ============================================================
+-- 039: Merchandise Proposal — "Permanent vs Exclusive this AY" +
+-- Type of Activity / Time / Date field automations
+-- ============================================================
+-- The Merchandise Proposal form no longer collects Type of Activity
+-- (always "Marketing Proposal") or Time (always N/A — merch has no
+-- start/end time, just a release date) from the submitter — those are
+-- set automatically in the app. What it does newly collect is whether
+-- the merchandise being proposed is a permanent catalog item or
+-- exclusive to the current academic year, which prints on the
+-- Merchandise Request Form in place of the Time field.
+alter table submissions add column if not exists merchandise_duration text;
+-- 'permanent' | 'exclusive_ay'

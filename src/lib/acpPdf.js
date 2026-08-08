@@ -7,6 +7,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import QRCode from 'qrcode'
 import { NU_HEADER_LOGO_PNG_BASE64 } from './acpHeaderLogo'
 import { verificationLinkUrl } from './eventVerification'
+import { MERCHANDISE_TYPES } from './merchandiseOptions'
 
 function base64ToBytes(base64) {
   if (typeof atob === 'function') {
@@ -34,6 +35,8 @@ const SDG_LABELS = [
   '13. Climate Action', '14. Life Below Water', '15. Life on Land',
   '16. Peace, Justice, and Strong Institutions', '17. Partnership for the Goals',
 ]
+
+const MERCH_TYPE_LABELS = MERCHANDISE_TYPES
 
 const ACTIVITY_TYPE_LABELS = {
   org_activity: 'Student Organization Activity',
@@ -66,9 +69,15 @@ function wrapText(text, font, size, maxWidth) {
  *   final regeneration of the ACP and stamps the "AQ Validation" block:
  *   a scannable QR code (linking to /verify/:token) plus the approver
  *   name/date, right above the auto-generated footer note.
+ * @param {object} [opts]
+ * @param {boolean} [opts.isMerch] - renders the "MERCHANDISE REQUEST FORM"
+ *   variant: same layout/fields, but the SDG section is replaced with a
+ *   Types of Merchandise checklist (data.merchandiseTypes) and there's no
+ *   SDG Representative line.
  * @returns {Promise<Uint8Array>}
  */
-export async function generateACPFormPdf(data) {
+export async function generateACPFormPdf(data, opts = {}) {
+  const isMerch = !!opts.isMerch
   const doc = await PDFDocument.create()
   const page = doc.addPage([612, 792]) // US Letter
   const font = await doc.embedFont(StandardFonts.Helvetica)
@@ -153,7 +162,7 @@ export async function generateACPFormPdf(data) {
   const dateColW = W * 0.21
   const titleColW = W - dateColW
   page.drawRectangle({ x: M, y: y - titleRowH, width: titleColW, height: titleRowH, color: NAVY })
-  page.drawText('ACTIVITY CONCEPT PAPER (ACP)', {
+  page.drawText(isMerch ? 'MERCHANDISE REQUEST FORM' : 'ACTIVITY CONCEPT PAPER (ACP)', {
     x: M + 8, y: y - titleRowH / 2 - 4, size: 12, font: bold, color: rgb(1, 1, 1),
   })
   page.drawRectangle({ x: M + titleColW, y: y - titleRowH, width: dateColW, height: titleRowH, borderColor: rgb(0, 0, 0), borderWidth: 1 })
@@ -174,32 +183,55 @@ export async function generateACPFormPdf(data) {
   row('Type of Activity', data.activityTypeLabel)
   row('Venue Address', data.venueAddress)
   twoUpRow('Target Audience', data.targetAudience, 'Target No. of Participants', data.targetParticipants)
-  twoUpRow('Date', data.eventDate, 'Time', data.timeRange)
+  twoUpRow(
+    isMerch ? 'Release Date' : 'Date', data.eventDate,
+    isMerch ? 'Merchandise Duration' : 'Time', isMerch ? data.merchandiseDurationLabel : data.timeRange,
+  )
   twoUpRow('Projected Budget', data.projectedBudget ? `PHP ${data.projectedBudget}` : 'PHP —', 'Source of Budget', data.budgetSource)
 
-  // ---------- SDGs ----------
+  // ---------- SDGs (event applications) / Types of Merchandise (merch) ----------
   y -= 4
-  bar('SUSTAINABLE DEVELOPMENT GOALS (Check all that applies)', 14, 8.5)
-  const sdgSet = new Set(data.sdgs || [])
-  const colW = W / 2
-  const rowH = 12.5
-  const rows = Math.ceil(SDG_LABELS.length / 2)
-  const sdgBoxH = rows * rowH + 6
-  page.drawRectangle({ x: M, y: y - sdgBoxH, width: W, height: sdgBoxH, borderColor: LINE, borderWidth: 0.75 })
-  for (let i = 0; i < SDG_LABELS.length; i++) {
-    const col = i < rows ? 0 : 1
-    const r = i < rows ? i : i - rows
-    const cx = M + 6 + col * colW
-    const cy = y - 12 - r * rowH
-    const checked = sdgSet.has(String(i + 1))
-    page.drawRectangle({ x: cx, y: cy - 1, width: 8, height: 8, borderColor: INK, borderWidth: 0.75, color: checked ? NAVY : rgb(1, 1, 1) })
-    page.drawText(SDG_LABELS[i], { x: cx + 12, y: cy, size: 7.5, font, color: INK })
+  if (isMerch) {
+    bar('TYPES OF MERCHANDISE (Check all that applies)', 14, 8.5)
+    const merchSet = new Set(data.merchandiseTypes || [])
+    const colW = W / 2
+    const rowH = 12.5
+    const rows = Math.ceil(MERCH_TYPE_LABELS.length / 2)
+    const boxH = rows * rowH + 6
+    page.drawRectangle({ x: M, y: y - boxH, width: W, height: boxH, borderColor: LINE, borderWidth: 0.75 })
+    for (let i = 0; i < MERCH_TYPE_LABELS.length; i++) {
+      const col = i < rows ? 0 : 1
+      const r = i < rows ? i : i - rows
+      const cx = M + 6 + col * colW
+      const cy = y - 12 - r * rowH
+      const checked = merchSet.has(MERCH_TYPE_LABELS[i])
+      page.drawRectangle({ x: cx, y: cy - 1, width: 8, height: 8, borderColor: INK, borderWidth: 0.75, color: checked ? NAVY : rgb(1, 1, 1) })
+      page.drawText(MERCH_TYPE_LABELS[i], { x: cx + 12, y: cy, size: 7.5, font, color: INK })
+    }
+    y -= boxH
+  } else {
+    bar('SUSTAINABLE DEVELOPMENT GOALS (Check all that applies)', 14, 8.5)
+    const sdgSet = new Set(data.sdgs || [])
+    const colW = W / 2
+    const rowH = 12.5
+    const rows = Math.ceil(SDG_LABELS.length / 2)
+    const sdgBoxH = rows * rowH + 6
+    page.drawRectangle({ x: M, y: y - sdgBoxH, width: W, height: sdgBoxH, borderColor: LINE, borderWidth: 0.75 })
+    for (let i = 0; i < SDG_LABELS.length; i++) {
+      const col = i < rows ? 0 : 1
+      const r = i < rows ? i : i - rows
+      const cx = M + 6 + col * colW
+      const cy = y - 12 - r * rowH
+      const checked = sdgSet.has(String(i + 1))
+      page.drawRectangle({ x: cx, y: cy - 1, width: 8, height: 8, borderColor: INK, borderWidth: 0.75, color: checked ? NAVY : rgb(1, 1, 1) })
+      page.drawText(SDG_LABELS[i], { x: cx + 12, y: cy, size: 7.5, font, color: INK })
+    }
+    y -= sdgBoxH
+    page.drawRectangle({ x: M, y: y - 14, width: W, height: 14, borderColor: LINE, borderWidth: 0.75 })
+    page.drawText('SDG Representative:', { x: M + 5, y: y - 10, size: 8, font: bold, color: INK })
+    page.drawText(data.sdgRepresentative || '—', { x: M + 100, y: y - 10, size: 8.5, font, color: INK })
+    y -= 14
   }
-  y -= sdgBoxH
-  page.drawRectangle({ x: M, y: y - 14, width: W, height: 14, borderColor: LINE, borderWidth: 0.75 })
-  page.drawText('SDG Representative:', { x: M + 5, y: y - 10, size: 8, font: bold, color: INK })
-  page.drawText(data.sdgRepresentative || '—', { x: M + 100, y: y - 10, size: 8.5, font, color: INK })
-  y -= 14
 
   // ---------- Learning Goals ----------
   y -= 4
@@ -279,10 +311,12 @@ export async function generateACPFormPdf(data) {
   // ---------- Footer note (signatories intentionally omitted) ----------
   y = 70
   page.drawLine({ start: { x: M, y: y + 14 }, end: { x: 612 - M, y: y + 14 }, thickness: 1.5, color: GOLD })
+  const formNoun = isMerch ? 'merchandise proposal' : 'event application'
+  const formAbbrev = isMerch ? 'Merchandise Request Form' : 'ACP'
   page.drawText(
     data.verification?.token
-      ? 'This ACP was generated automatically from the RSO PAWrtal event application and has passed AQ Validation.'
-      : 'This ACP was generated automatically from the RSO PAWrtal event application. Review, approval, and',
+      ? `This ${formAbbrev} was generated automatically from the RSO PAWrtal ${formNoun} and has passed AQ Validation.`
+      : `This ${formAbbrev} was generated automatically from the RSO PAWrtal ${formNoun}. Review, approval, and`,
     { x: M, y, size: 7.5, font: italic, color: MUTED }
   )
   page.drawText(
@@ -297,4 +331,13 @@ export async function generateACPFormPdf(data) {
   )
 
   return doc.save()
+}
+
+// Thin wrapper — the Merchandise Request Form is the ACP Form renderer
+// with `isMerch: true` (see generateACPFormPdf's `opts` param): same
+// sections/order/labels, no SDG section (Types of Merchandise checklist
+// in its place, sourced from `data.merchandiseTypes`), no SDG
+// Representative line.
+export async function generateMerchRequestFormPdf(data) {
+  return generateACPFormPdf(data, { isMerch: true })
 }
