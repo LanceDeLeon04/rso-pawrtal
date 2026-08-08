@@ -57,6 +57,11 @@ export default function CalendarOfActivities() {
   const canManageAcademic = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
   const [currentAcademicYear, setCurrentAcademicYear] = useState(null)
   const [pastAcademicYears, setPastAcademicYears] = useState([])
+  // Which academic year the calendar is currently displaying. Only
+  // admins may point this at a past year — orgs (and everyone else)
+  // always stay pinned to whatever academic year is current. `null`
+  // means "follow the current academic year".
+  const [viewingAcademicYearId, setViewingAcademicYearId] = useState(null)
   const [terms, setTerms] = useState([])
   const [showAcademicModal, setShowAcademicModal] = useState(false)
   const [ayForm, setAyForm] = useState({ start_date: '', end_date: '' })
@@ -70,6 +75,21 @@ export default function CalendarOfActivities() {
 
   const grid = useMemo(() => buildMonthGrid(cursor.year, cursor.month), [cursor])
   const monthLabel = `${MONTH_NAMES[cursor.month]} ${cursor.year}`
+
+  // Every academic year an admin is allowed to pick from — current
+  // one first, then past ones.
+  const allAcademicYears = useMemo(() => {
+    return currentAcademicYear ? [currentAcademicYear, ...pastAcademicYears] : pastAcademicYears
+  }, [currentAcademicYear, pastAcademicYears])
+
+  // The academic year actually driving the calendar's events + month
+  // bounds. Gated on `admin` here (not just on the state value) so a
+  // non-admin can never end up viewing anything but the current year,
+  // no matter what viewingAcademicYearId holds.
+  const viewingAcademicYear = admin && viewingAcademicYearId
+    ? (allAcademicYears.find((y) => y.id === viewingAcademicYearId) || currentAcademicYear)
+    : currentAcademicYear
+  const isViewingPastYear = admin && !!viewingAcademicYear && viewingAcademicYear.id !== currentAcademicYear?.id
 
   useEffect(() => {
     async function loadStatics() {
@@ -133,9 +153,9 @@ export default function CalendarOfActivities() {
   // one extra month of slack on either side — when a current academic
   // year is set, navigating further away from it is disabled.
   const academicMonthBounds = useMemo(() => {
-    if (!currentAcademicYear) return null
-    const start = new Date(`${currentAcademicYear.start_date}T00:00:00`)
-    const end = new Date(`${currentAcademicYear.end_date}T00:00:00`)
+    if (!viewingAcademicYear) return null
+    const start = new Date(`${viewingAcademicYear.start_date}T00:00:00`)
+    const end = new Date(`${viewingAcademicYear.end_date}T00:00:00`)
     const minMonth = { year: start.getFullYear(), month: start.getMonth() - 1 }
     const maxMonth = { year: end.getFullYear(), month: end.getMonth() + 1 }
     // Normalize month overflow/underflow (e.g. January - 1 -> prior December).
@@ -145,7 +165,7 @@ export default function CalendarOfActivities() {
       min: { year: min.getFullYear(), month: min.getMonth() },
       max: { year: max.getFullYear(), month: max.getMonth() },
     }
-  }, [currentAcademicYear])
+  }, [viewingAcademicYear])
 
   function isBeforeBound(cursorVal, bound) {
     return cursorVal.year < bound.year || (cursorVal.year === bound.year && cursorVal.month < bound.month)
@@ -175,7 +195,7 @@ export default function CalendarOfActivities() {
     loadBlocks()
     loadRestrictedPeriods()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursor, venueFilter, currentAcademicYear])
+  }, [cursor, venueFilter, viewingAcademicYear])
 
   async function loadRestrictedPeriods() {
     const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
@@ -228,11 +248,13 @@ export default function CalendarOfActivities() {
       .order('start_time', { ascending: true })
 
     if (venueFilter !== 'all') query = query.eq('venue_id', venueFilter)
-    // When a current academic year is set, the calendar only ever shows
-    // that academic year's own events — even a date inside the visible
+    // The calendar only ever shows the events tagged to whichever
+    // academic year is being viewed — even a date inside the visible
     // range that belongs to another academic year's tagged event stays
-    // hidden.
-    if (currentAcademicYear) query = query.eq('academic_year_id', currentAcademicYear.id)
+    // hidden. Orgs (and everyone but admins) always have this pinned
+    // to the current academic year; admins may switch it to a past one
+    // via the toolbar filter.
+    if (viewingAcademicYear) query = query.eq('academic_year_id', viewingAcademicYear.id)
 
     const { data, error: err } = await query
 
@@ -584,7 +606,31 @@ export default function CalendarOfActivities() {
             <button className="cal-today-btn" onClick={goToday}>Today</button>
           </div>
 
-          {currentAcademicYear ? (
+          {admin && allAcademicYears.length > 0 ? (
+            <div className="cal-ay-filter">
+              <select
+                className="cal-select cal-select--ay"
+                value={viewingAcademicYear?.id || ''}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setViewingAcademicYearId(val === currentAcademicYear?.id ? null : val)
+                }}
+                title="Academic year being viewed"
+              >
+                {currentAcademicYear && (
+                  <option value={currentAcademicYear.id}>{currentAcademicYear.label} (Current)</option>
+                )}
+                {pastAcademicYears.map((y) => (
+                  <option key={y.id} value={y.id}>{y.label}</option>
+                ))}
+              </select>
+              {isViewingPastYear && (
+                <span className="cal-ay-badge cal-ay-badge--past">
+                  <GraduationCap size={13} /> Viewing past year
+                </span>
+              )}
+            </div>
+          ) : currentAcademicYear ? (
             <span className="cal-ay-badge" title={`${currentAcademicYear.start_date} – ${currentAcademicYear.end_date}`}>
               <GraduationCap size={13} /> {currentAcademicYear.label}
             </span>
@@ -693,18 +739,20 @@ export default function CalendarOfActivities() {
         </div>
       </div>
 
-      <div className="cal-legend">
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--pencil" /> Pencil booked (tentative)</span>
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--reserved" /> Reserved / confirmed</span>
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (pencil booked, needs revision)</span>
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam period (booking discouraged)</span>
-        <span className="cal-legend__item"><i className="cal-dot cal-dot--term_break" /> Term break (booking not recommended)</span>
+      <div className="cal-legend-row">
+        <div className="cal-legend">
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--pencil" /> Pencil booked (tentative)</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--reserved" /> Reserved / confirmed</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (needs revision)</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam period</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--term_break" /> Term break</span>
+        </div>
+        <p className="cal-empty-note">
+          Activities are booked automatically from the Submission Bin — no direct booking from the calendar.
+        </p>
       </div>
-      <p className="cal-empty-note">
-        Activities are booked automatically from Event Applications in the Submission Bin — there's no direct booking from the calendar.
-      </p>
 
       {error && (
         <div className="cal-error"><AlertCircle size={15} /> {error}</div>
