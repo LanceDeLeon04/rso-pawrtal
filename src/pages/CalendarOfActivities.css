@@ -216,6 +216,7 @@
 .cal-dot--holiday { background: #f4c7ce; border: 1px solid #7a1f2b; }
 .cal-dot--exam_period { background: #c9d2f0; border: 1px solid var(--nu-blue-700); }
 .cal-dot--term_break { background: #ded4f7; border: 1px solid #5b3fa0; }
+.cal-dot--report_deadline { background: #fdf3d9; border: 1px solid var(--nu-gold-600); }
 
 .cal-error {
   display: flex;
@@ -412,6 +413,47 @@
 .cal-status-badge--holiday { background: #f4c7ce; color: #7a1f2b; display: flex; align-items: center; gap: 4px; }
 .cal-status-badge--exam_period { background: #c9d2f0; color: var(--nu-blue-700); display: flex; align-items: center; gap: 4px; }
 .cal-status-badge--term_break { background: #ded4f7; color: #5b3fa0; display: flex; align-items: center; gap: 4px; }
+
+/* Org report deadlines — mirrors the status colors used on Clearance */
+.cal-chip--report_deadline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-chip--report_deadline-pending {
+  background: #fdf3d9;
+  color: #8a6408;
+  border: 1px solid var(--nu-gold-600);
+}
+
+.cal-chip--report_deadline-extended {
+  background: #e4ecfb;
+  color: var(--nu-blue-700);
+  border: 1px solid var(--nu-blue-700);
+}
+
+.cal-chip--report_deadline-overdue {
+  background: #fdecec;
+  color: var(--danger);
+  border: 1px solid #e39a9a;
+}
+
+.cal-status-badge--pending { background: #fdf3d9; color: #8a6408; display: flex; align-items: center; gap: 4px; }
+.cal-status-badge--extended { background: #e4ecfb; color: var(--nu-blue-700); display: flex; align-items: center; gap: 4px; }
+.cal-status-badge--overdue { background: #fdecec; color: var(--danger); display: flex; align-items: center; gap: 4px; }
+
+.cal-extended-tag {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--nu-blue-700);
+  background: #e4ecfb;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
 
 .cal-move-form {
   display: flex;

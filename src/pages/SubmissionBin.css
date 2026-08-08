@@ -364,6 +364,13 @@
 }
 .sb-checkbox-label input { width: auto; }
 
+.sb-col-event-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px 12px;
+  margin-top: 6px;
+}
+
 .sb-continuing-options {
   margin-top: 8px;
   padding: 10px 12px;

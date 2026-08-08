@@ -25,6 +25,11 @@ const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervis
 const OTHER_CREATABLE_ROLES = ['fmo']
 const VIEWER_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
+// Council of Leaders (COL) is a distinct org type (organizations.category
+// === 'COL') that reuses every RSO feature but has its own account
+// roster and no Adviser/Dean in its approval chain (see migration 041).
+const COL_POSITIONS = ['President', 'Vice President', 'Secretary', 'Programs Head', 'Operations Head', 'Growth Head']
+const positionsForOrg = (org) => (org?.category === 'COL' ? COL_POSITIONS : POSITIONS)
 
 const EMPTY_ADMIN_FORM = {
   full_name: '', username: '', role: ADMIN_ROLES[0], viewer_scopes: [],
@@ -37,7 +42,7 @@ const ACCREDITATION_LABELS = {
   pending: 'Pending',
 }
 
-const CATEGORY_OPTIONS = ['School Council', 'Academic', 'Special Interest']
+const CATEGORY_OPTIONS = ['School Council', 'Academic', 'Special Interest', 'COL']
 
 const EMPTY_ORG_FORM = {
   name: '', acronym: '', category: '', adviser_name: '',
@@ -464,7 +469,7 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
                 required
               >
                 <option value="">Select position</option>
-                {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                {positionsForOrg(org).map((p) => <option key={p} value={p}>{p}</option>)}
                 <option value="__other__">Other (type in)…</option>
               </select>
             ) : (
@@ -988,7 +993,8 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
 
 function OrgDetailsModal({ org, bank, memberships, onClose }) {
   const holderFor = (position) => memberships.find((m) => m.position === position)?.profiles?.full_name
-  const extraPositions = memberships.filter((m) => !POSITIONS.includes(m.position))
+  const knownPositions = positionsForOrg(org)
+  const extraPositions = memberships.filter((m) => !knownPositions.includes(m.position))
 
   return (
     <div className="acc-modal-backdrop" onClick={onClose}>
@@ -1027,7 +1033,7 @@ function OrgDetailsModal({ org, bank, memberships, onClose }) {
         <section className="acc-modal__section">
           <h4><BadgeCheck size={13} /> Executives</h4>
           <div className="acc-modal__exec-list">
-            {POSITIONS.map((position) => (
+            {knownPositions.map((position) => (
               <div key={position} className="acc-modal__exec-row">
                 <span>{position}</span>
                 <strong>{holderFor(position) || <em>Vacant</em>}</strong>
@@ -1174,7 +1180,7 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
         </select>
         <select value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })}>
           <option value="">Position</option>
-          {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+          {positionsForOrg(orgs.find((o) => o.id === form.org_id)).map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
         <button className="acc-btn acc-btn--gold" type="submit" disabled={saving}>
           {saving ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}

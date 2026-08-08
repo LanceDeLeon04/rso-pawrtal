@@ -28,7 +28,7 @@ export function AuthProvider({ children }) {
       .from('profiles')
       .select(`
         id, full_name, email, role, photo_url, must_change_password, is_active,
-        org_memberships:org_memberships ( org_id, position, is_primary, organizations ( name, acronym ) ),
+        org_memberships:org_memberships ( org_id, position, is_primary, organizations ( name, acronym, category ) ),
         admin_viewer_scopes ( scope )
       `)
       .eq('id', userId)

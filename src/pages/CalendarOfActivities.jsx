@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   CalendarDays, ChevronLeft, ChevronRight, X, MapPin, Clock,
   User, Building2, Pencil, BadgeCheck, Loader2, AlertCircle, Video, Trash2,
-  Ban, Move, PartyPopper, GraduationCap,
+  Ban, Move, PartyPopper, GraduationCap, FileClock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isFMO } from '../context/AuthContext'
@@ -52,6 +53,13 @@ export default function CalendarOfActivities() {
   const [savingPeriod, setSavingPeriod] = useState(false)
   const [selectedPeriod, setSelectedPeriod] = useState(null)
   const [periodError, setPeriodError] = useState('')
+
+  // ---------- Org report deadlines (org-only, never admin/FMO) ----------
+  // Pulled from `clearances` — the same rows the org's Clearance page
+  // shows — so the calendar surfaces each still-outstanding report's
+  // due date without needing a separate table.
+  const [orgReportDeadlines, setOrgReportDeadlines] = useState([])
+  const [selectedReportDeadline, setSelectedReportDeadline] = useState(null)
 
   // ---------- Academic Year + Terms ----------
   const canManageAcademic = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
@@ -197,6 +205,11 @@ export default function CalendarOfActivities() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor, venueFilter, viewingAcademicYear])
 
+  useEffect(() => {
+    loadOrgReportDeadlines()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myOrgId, admin, fmo])
+
   async function loadRestrictedPeriods() {
     const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
     const rangeEnd = toISODate(new Date(cursor.year, cursor.month + 1, 0))
@@ -210,6 +223,26 @@ export default function CalendarOfActivities() {
       .gte('end_date', rangeStart)
       .order('start_date', { ascending: true })
     setRestrictedPeriods(data || [])
+  }
+
+  // Org-only: still-outstanding report deadlines for the caller's own
+  // org (never for admins or FMO — see the `admin || fmo` guard, which
+  // mirrors the same gate used everywhere else on this page for
+  // org-private data). Not month-scoped since an org typically only
+  // has a handful open at once; day-matching happens client-side via
+  // reportDeadlinesForDay, same as blocks/periods/term breaks.
+  async function loadOrgReportDeadlines() {
+    if (admin || fmo || !myOrgId) {
+      setOrgReportDeadlines([])
+      return
+    }
+    const { data } = await supabase
+      .from('clearances')
+      .select('id, reason, status, deadline, extended_deadline, events ( title )')
+      .eq('org_id', myOrgId)
+      .neq('status', 'cleared')
+      .order('deadline', { ascending: true })
+    setOrgReportDeadlines(data || [])
   }
 
   async function loadBlocks() {
@@ -335,6 +368,17 @@ export default function CalendarOfActivities() {
   function termBreaksForDay(date) {
     const iso = toISODate(date)
     return termBreaks.filter((b) => b.start_date <= iso && b.end_date >= iso)
+  }
+
+  // A report's real due date is whichever is later set: an extension
+  // always overrides the original deadline.
+  function effectiveDeadline(d) {
+    return d.extended_deadline || d.deadline
+  }
+
+  function reportDeadlinesForDay(date) {
+    const iso = toISODate(date)
+    return orgReportDeadlines.filter((d) => effectiveDeadline(d) === iso)
   }
 
   function academicYearLabelFor(startISO, endISO) {
@@ -748,6 +792,9 @@ export default function CalendarOfActivities() {
           <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam period</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--term_break" /> Term break</span>
+          {!admin && !fmo && myOrgId && (
+            <span className="cal-legend__item"><i className="cal-dot cal-dot--report_deadline" /> Report due (your org)</span>
+          )}
         </div>
         <p className="cal-empty-note">
           Activities are booked automatically from the Submission Bin — no direct booking from the calendar.
@@ -773,6 +820,7 @@ export default function CalendarOfActivities() {
             const dayBlocks = blocksForDay(date)
             const dayPeriods = periodsForDay(date)
             const dayTermBreaks = termBreaksForDay(date)
+            const dayReportDeadlines = reportDeadlinesForDay(date)
             const isToday = toISODate(date) === toISODate(today)
             const iso = toISODate(date)
             return (
@@ -802,6 +850,17 @@ export default function CalendarOfActivities() {
                       title={b.label}
                     >
                       <GraduationCap size={11} /> Term Break
+                    </button>
+                  ))}
+                  {dayReportDeadlines.map((d) => (
+                    <button
+                      key={d.id}
+                      className={`cal-chip cal-chip--report_deadline cal-chip--report_deadline-${d.status}`}
+                      onClick={() => setSelectedReportDeadline(d)}
+                      title={`Report due${d.events?.title ? `: ${d.events.title}` : ''}`}
+                    >
+                      <FileClock size={11} /> Report due
+                      {d.events?.title && <span className="cal-chip__org"> · {d.events.title}</span>}
                     </button>
                   ))}
                   {dayBlocks.map((b) => (
@@ -1117,6 +1176,38 @@ export default function CalendarOfActivities() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedReportDeadline && (
+        <div className="cal-modal-backdrop" onClick={() => setSelectedReportDeadline(null)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setSelectedReportDeadline(null)}>
+              <X size={18} />
+            </button>
+            <span className={`cal-status-badge cal-status-badge--${selectedReportDeadline.status}`}>
+              <FileClock size={12} /> {selectedReportDeadline.status.charAt(0).toUpperCase() + selectedReportDeadline.status.slice(1)}
+            </span>
+            <h3 className="cal-modal__title">
+              {selectedReportDeadline.events?.title || 'Report Requirement'}
+            </h3>
+            <div className="cal-modal__details">
+              <div className="cal-modal__row">
+                <CalendarDays size={14} /> Due {effectiveDeadline(selectedReportDeadline)}
+                {selectedReportDeadline.extended_deadline && (
+                  <span className="cal-extended-tag">extended</span>
+                )}
+              </div>
+              {selectedReportDeadline.reason && (
+                <p className="cal-modal__desc">{selectedReportDeadline.reason}</p>
+              )}
+              <div className="cal-modal__actions">
+                <Link className="cal-btn cal-btn--outline" to="/clearance">
+                  <FileClock size={14} /> View in Clearance
+                </Link>
+              </div>
             </div>
           </div>
         </div>

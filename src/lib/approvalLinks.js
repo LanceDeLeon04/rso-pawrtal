@@ -10,14 +10,22 @@ export function orgNeedsDean(category) {
   return DEAN_REQUIRED_CATEGORIES.includes(category)
 }
 
-// Full external sign-off chain, in order. The last role always comes
-// after the Adviser (and Dean, if the org's category requires one):
-// for event applications that's the SDG Representative (who marks the
-// SDGs); for merchandise proposals it's Marketing (who reviews the
-// design/quotation attachments) — everything else about the chain
-// (gating, link generation, approve/return) is identical.
+// Council of Leaders orgs (category = 'COL') have no Adviser and no
+// Dean — SDAO works with them directly, so their external chain is
+// just the last role (SDG Representative / Marketing).
+export function isCOL(category) {
+  return category === 'COL'
+}
+
+// Full external sign-off chain, in order. For RSO orgs, the last role
+// always comes after the Adviser (and Dean, if the org's category
+// requires one): for event applications that's the SDG Representative
+// (who marks the SDGs); for merchandise proposals it's Marketing (who
+// reviews the design/quotation attachments). For COL orgs, the last
+// role is the only link in the chain — no Adviser, no Dean.
 export function externalApprovalChain(category, type = 'event_application') {
   const lastRole = type === 'merchandise' ? 'marketing_rep' : 'sdg_rep'
+  if (isCOL(category)) return [lastRole]
   return orgNeedsDean(category) ? ['adviser', 'dean', lastRole] : ['adviser', lastRole]
 }
 

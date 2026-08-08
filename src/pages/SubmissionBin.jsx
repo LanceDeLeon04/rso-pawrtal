@@ -4,7 +4,7 @@ import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
-  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper,
+  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -16,6 +16,7 @@ import {
 import { ensureEventVerificationToken } from '../lib/eventVerification'
 import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import { SDG_OPTIONS } from '../lib/sdgOptions'
+import { COL_EVENT_OPTIONS, COL_EVENT_TAGGER_POSITIONS } from '../lib/colEventOptions'
 import { MERCHANDISE_TYPES } from '../lib/merchandiseOptions'
 import './SubmissionBin.css'
 
@@ -229,6 +230,7 @@ const EMPTY_APP_FORM = {
   restricted_period_ack: false, restricted_period_justification: '',
   wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
   night_before_ingress: false,
+  col_event_tags: [], col_event_other: '',
 }
 
 // Merchandise Proposal collects the same fields as an Event Application
@@ -252,6 +254,9 @@ export default function SubmissionBin() {
   const admin = isAdminTier(profile?.role)
   const canReview = REVIEWER_ROLES.includes(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
+  const myMembershipRoot = profile?.org_memberships?.[0]
+  const myOrgIsCOL = myMembershipRoot?.organizations?.category === 'COL'
+  const canTagCOLEvents = myOrgIsCOL && COL_EVENT_TAGGER_POSITIONS.includes(myMembershipRoot?.position)
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -440,7 +445,7 @@ export default function SubmissionBin() {
         is_continuing, continuing_type, term_label, report_submission_date,
         position, email, activity_type, activity_type_other, target_audience, target_participants,
         projected_budget, budget_source, learning_goals,
-        sdgs, sdg_representative, sdg_marked_acp_generated,
+        sdgs, sdg_representative, sdg_marked_acp_generated, col_event_tags,
         merchandise_types, merchandise_duration, marketing_representative,
         restricted_period_ack, restricted_period_justification,
         stage, submitted_by, submitted_at,
@@ -1107,6 +1112,12 @@ export default function SubmissionBin() {
       additional_egress_time: appForm.wants_additional_time && appForm.additional_egress_time ? appForm.additional_egress_time : null,
       night_before_ingress: nightBeforeEligible && !nightBeforeConflict && appForm.night_before_ingress,
       submitted_by: profile.id,
+      ...(canTagCOLEvents ? {
+        col_event_tags: [
+          ...appForm.col_event_tags,
+          ...(appForm.col_event_tags.includes('Others') && appForm.col_event_other.trim() ? [appForm.col_event_other.trim()] : []),
+        ].filter((t) => t !== 'Others'),
+      } : {}),
     }).select().single()
 
     if (err) {
@@ -2603,12 +2614,43 @@ export default function SubmissionBin() {
               <textarea rows={2} value={appForm.description} onChange={(e) => setAppForm({ ...appForm, description: e.target.value })} />
             </label>
 
+            {canTagCOLEvents && (
+              <div className="sb-field">
+                <span>Flagship Event Tag(s)</span>
+                <div className="sb-col-event-grid">
+                  {[...COL_EVENT_OPTIONS, 'Others'].map((opt) => (
+                    <label key={opt} className="sb-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={appForm.col_event_tags.includes(opt)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...appForm.col_event_tags, opt]
+                            : appForm.col_event_tags.filter((t) => t !== opt)
+                          setAppForm({ ...appForm, col_event_tags: next })
+                        }}
+                      />
+                      {opt}
+                    </label>
+                  ))}
+                </div>
+                {appForm.col_event_tags.includes('Others') && (
+                  <input
+                    value={appForm.col_event_other}
+                    onChange={(e) => setAppForm({ ...appForm, col_event_other: e.target.value })}
+                    placeholder="Specify the event"
+                  />
+                )}
+              </div>
+            )}
+
             <div className="sb-form-notice">
               <ShieldAlert size={14} />
               <span>
-                Sustainable Development Goals aren't marked here — after your Adviser
-                {' '}(and Dean, if applicable) approve, the SDG Representative reviews this
-                application and marks which SDGs it counts toward. You'll see it reflected
+                Sustainable Development Goals aren't marked here — {myOrgIsCOL
+                  ? 'the SDG Representative reviews this application directly and marks'
+                  : "after your Adviser (and Dean, if applicable) approve, the SDG Representative reviews this application and marks"}
+                {' '}which SDGs it counts toward. You'll see it reflected
                 on the ACP Form once they've signed off.
               </span>
             </div>
@@ -2961,6 +3003,11 @@ export default function SubmissionBin() {
                           {selected.restricted_period_justification && `: "${selected.restricted_period_justification}"`}
                         </div>
                       )}
+                      {selected.col_event_tags?.length > 0 && (
+                        <div className="sb-detail-row">
+                          <Tag size={13} /> Flagship Event: {selected.col_event_tags.join(', ')}
+                        </div>
+                      )}
                       <div className="sb-detail-row">
                         <Clock size={13} /> {selected.event_date}
                         {selected.start_time && ` · ${formatTime(selected.start_time)}`}
@@ -3149,7 +3196,7 @@ export default function SubmissionBin() {
 
                     return (
                       <div className="sb-detail-section">
-                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> External Sign-off (Adviser → {state.needsDean ? 'Dean → ' : ''}{ROLE_LABELS[chain[chain.length - 1]]})</span>
+                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> External Sign-off ({chain.map((role) => ROLE_LABELS[role]).join(' → ')})</span>
                         {linkError && <div className="sb-form-error"><AlertCircle size={14} /> {linkError}</div>}
                         {chain.map((role, idx) => {
                           const link = linkByRole[role]

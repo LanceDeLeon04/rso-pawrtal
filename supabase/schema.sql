@@ -40,7 +40,7 @@ create table organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   acronym text not null unique,
-  category text, -- e.g. Academic, Special Interest, Fraternal
+  category text, -- e.g. Academic, Special Interest, Fraternal, School Council, COL
   adviser_name text,
   logo_url text,
   accreditation_status accreditation_status not null default 'pending',
