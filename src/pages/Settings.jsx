@@ -344,6 +344,7 @@ function VenueRoomsAndLabsSection() {
             </div>
           </form>
 
+          <div className="table-scroll">
           <table className="set-table">
             <thead>
               <tr><th>Building</th><th>Floor</th><th>Room</th><th /></tr>
@@ -376,6 +377,7 @@ function VenueRoomsAndLabsSection() {
               {rooms.length === 0 && <tr><td colSpan={4}>No rooms yet.</td></tr>}
             </tbody>
           </table>
+          </div>
         </>
       ) : (
         <>
@@ -403,6 +405,7 @@ function VenueRoomsAndLabsSection() {
             </div>
           </form>
 
+          <div className="table-scroll">
           <table className="set-table">
             <thead>
               <tr><th>Laboratory</th><th>Care of</th><th>Location</th><th /></tr>
@@ -435,6 +438,7 @@ function VenueRoomsAndLabsSection() {
               {labs.length === 0 && <tr><td colSpan={4}>No laboratories yet.</td></tr>}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </div>
@@ -506,6 +510,7 @@ function UserManagementSection({ currentProfileId }) {
       {loading ? (
         <Loader2 size={18} className="spin" />
       ) : (
+        <div className="table-scroll">
         <table className="set-table">
           <thead>
             <tr><th>Name</th><th>Email</th><th>Role</th><th>Org</th><th>Status</th><th /></tr>
@@ -559,6 +564,7 @@ function UserManagementSection({ currentProfileId }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )

@@ -368,6 +368,7 @@ export default function Assignments() {
             <p>No assignments here yet.</p>
           </div>
         ) : (
+          <div className="table-scroll">
           <table className="asg-table">
             <thead>
               <tr>
@@ -437,6 +438,7 @@ export default function Assignments() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

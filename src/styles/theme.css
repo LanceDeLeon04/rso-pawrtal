@@ -102,3 +102,19 @@ button {
   0%, 100% { transform: rotate(0deg); }
   50% { transform: rotate(90deg); }
 }
+
+/* ---------- Shared table container ----------
+   Wraps every <table> across the app. The table itself always fills
+   100% of this wrapper (so it stretches to use the full width of its
+   card/page instead of being squeezed), and the wrapper scrolls
+   horizontally instead of the table breaking out and overflowing the
+   page layout when the viewport is too narrow for all the columns. */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table-scroll > table {
+  width: 100%;
+  min-width: max-content;
+}

@@ -1826,6 +1826,7 @@ export default function SubmissionBin() {
             <p>No submissions here yet.</p>
           </div>
         ) : (
+          <div className="table-scroll">
           <table className="sb-table">
             <thead>
               <tr>
@@ -1878,6 +1879,7 @@ export default function SubmissionBin() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

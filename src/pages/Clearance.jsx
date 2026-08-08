@@ -200,6 +200,7 @@ export default function Clearance() {
             <p>{clearances.length === 0 ? 'No clearance obligations on record.' : 'Nothing matches this filter.'}</p>
           </div>
         ) : (
+          <div className="table-scroll">
           <table className="clr-table">
             <thead>
               <tr>
@@ -274,6 +275,7 @@ export default function Clearance() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

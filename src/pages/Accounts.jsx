@@ -312,6 +312,7 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
       )}
       {error && <div className="acc-error"><AlertCircle size={14} /> {error}</div>}
 
+      <div className="table-scroll">
       <table className="acc-table">
         <thead><tr><th>Name</th><th>Username</th><th>Role</th><th /></tr></thead>
         <tbody>
@@ -368,6 +369,7 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
           )}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }
@@ -380,6 +382,7 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
 // admin from the table below without touching the login itself.
 function CreateRSOAccountSection({ orgs, onCreated }) {
   const [form, setForm] = useState(EMPTY_RSO_FORM)
+  const [customPosition, setCustomPosition] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
@@ -420,6 +423,7 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
 
     setResult(data)
     setForm(EMPTY_RSO_FORM)
+    setCustomPosition(false)
     onCreated()
   }
 
@@ -446,10 +450,41 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
           </label>
           <label className="acc-field">
             Position
-            <select value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} required>
-              <option value="">Select position</option>
-              {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            {!customPosition ? (
+              <select
+                value={form.position}
+                onChange={(e) => {
+                  if (e.target.value === '__other__') {
+                    setCustomPosition(true)
+                    setForm({ ...form, position: '' })
+                  } else {
+                    setForm({ ...form, position: e.target.value })
+                  }
+                }}
+                required
+              >
+                <option value="">Select position</option>
+                {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                <option value="__other__">Other (type in)…</option>
+              </select>
+            ) : (
+              <div className="acc-field-inline">
+                <input
+                  value={form.position}
+                  onChange={(e) => setForm({ ...form, position: e.target.value })}
+                  placeholder="e.g. Business Manager"
+                  required
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="acc-link-btn"
+                  onClick={() => { setCustomPosition(false); setForm({ ...form, position: '' }) }}
+                >
+                  Choose from list instead
+                </button>
+              </div>
+            )}
             <span className="acc-hint">Also doubles as the cross-org tag (e.g. "all Treasurers").</span>
           </label>
         </div>
@@ -752,6 +787,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
       {editError && <div className="acc-error"><AlertCircle size={14} /> {editError}</div>}
       {!showForm && error && <div className="acc-error"><AlertCircle size={14} /> {error}</div>}
 
+      <div className="table-scroll">
       <table className="acc-table">
         <thead>
           <tr>
@@ -936,6 +972,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
           })}
         </tbody>
       </table>
+      </div>
 
       {viewingOrg && (
         <OrgDetailsModal
@@ -1144,6 +1181,7 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
         </button>
       </form>
 
+      <div className="table-scroll">
       <table className="acc-table">
         <thead><tr><th>Current Holder</th><th>Org</th><th>Position / Tag</th><th /></tr></thead>
         <tbody>
@@ -1200,6 +1238,7 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
           )}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }
