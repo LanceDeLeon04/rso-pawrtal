@@ -570,17 +570,20 @@ export default function CalendarOfActivities() {
   return (
     <div className="cal-page">
       <div className="cal-toolbar">
-        <div className="cal-toolbar__nav">
-          <button className="cal-icon-btn" onClick={() => changeMonth(-1)} aria-label="Previous month" disabled={!canGoPrevMonth}>
-            <ChevronLeft size={17} />
-          </button>
-          <span className="cal-toolbar__month">
-            <CalendarDays size={16} /> {monthLabel}
-          </span>
-          <button className="cal-icon-btn" onClick={() => changeMonth(1)} aria-label="Next month" disabled={!canGoNextMonth}>
-            <ChevronRight size={17} />
-          </button>
-          <button className="cal-today-btn" onClick={goToday}>Today</button>
+        <div className="cal-toolbar__row cal-toolbar__row--nav">
+          <div className="cal-toolbar__nav">
+            <button className="cal-icon-btn" onClick={() => changeMonth(-1)} aria-label="Previous month" disabled={!canGoPrevMonth}>
+              <ChevronLeft size={17} />
+            </button>
+            <span className="cal-toolbar__month">
+              <CalendarDays size={16} /> {monthLabel}
+            </span>
+            <button className="cal-icon-btn" onClick={() => changeMonth(1)} aria-label="Next month" disabled={!canGoNextMonth}>
+              <ChevronRight size={17} />
+            </button>
+            <button className="cal-today-btn" onClick={goToday}>Today</button>
+          </div>
+
           {currentAcademicYear ? (
             <span className="cal-ay-badge" title={`${currentAcademicYear.start_date} – ${currentAcademicYear.end_date}`}>
               <GraduationCap size={13} /> {currentAcademicYear.label}
@@ -592,94 +595,100 @@ export default function CalendarOfActivities() {
           ) : null}
         </div>
 
-        <div className="cal-toolbar__actions">
-          {canManageAcademic && (
-            <button
-              className="cal-btn cal-btn--outline"
-              onClick={() => { setAyError(''); setAyForm({ start_date: '', end_date: '' }); setTermError(''); setShowAcademicModal(true) }}
-            >
-              <GraduationCap size={14} /> Academic Year & Terms
-            </button>
-          )}
-          <select
-            className="cal-select"
-            value={venueFilter}
-            onChange={(e) => {
-              setVenueFilter(e.target.value)
-              setLocationFilter({ room_building: '', room_floor: '', room_number: '', lab_id: '' })
-            }}
-          >
-            <option value="all">All venues</option>
-            {venues.map((v) => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
-          </select>
-
-          {filteredVenueName === 'Room' && (
-            <>
-              <select
-                className="cal-select"
-                value={locationFilter.room_building}
-                onChange={(e) => setLocationFilter({ room_building: e.target.value, room_floor: '', room_number: '', lab_id: '' })}
-              >
-                <option value="">All buildings</option>
-                {roomBuildingOptions.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
-              <select
-                className="cal-select"
-                value={locationFilter.room_floor}
-                onChange={(e) => setLocationFilter({ ...locationFilter, room_floor: e.target.value, room_number: '' })}
-                disabled={!locationFilter.room_building}
-              >
-                <option value="">All floors</option>
-                {roomFloorOptions.map((f) => (
-                  <option key={f} value={f}>{f}</option>
-                ))}
-              </select>
-              <select
-                className="cal-select"
-                value={locationFilter.room_number}
-                onChange={(e) => setLocationFilter({ ...locationFilter, room_number: e.target.value })}
-                disabled={!locationFilter.room_floor}
-              >
-                <option value="">All rooms</option>
-                {roomNumberOptions.map((r) => (
-                  <option key={r.id} value={r.room_number}>{r.room_number}</option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {filteredVenueName === 'Laboratory' && (
+        <div className="cal-toolbar__row cal-toolbar__row--filters">
+          <div className="cal-toolbar__filters">
             <select
               className="cal-select"
-              value={locationFilter.lab_id}
-              onChange={(e) => setLocationFilter({ ...locationFilter, lab_id: e.target.value })}
+              value={venueFilter}
+              onChange={(e) => {
+                setVenueFilter(e.target.value)
+                setLocationFilter({ room_building: '', room_floor: '', room_number: '', lab_id: '' })
+              }}
             >
-              <option value="">All laboratories</option>
-              {venueLabs.map((l) => (
-                <option key={l.id} value={l.id}>{l.name}</option>
+              <option value="all">All venues</option>
+              {venues.map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
               ))}
             </select>
-          )}
 
-          {canManageVenues && (
-            <button
-              className="cal-btn cal-btn--outline"
-              onClick={() => { setBlockForm({ venue_id: '', block_date: '', reason: '' }); setShowBlockModal(true) }}
-            >
-              <Ban size={14} /> Block Date
-            </button>
-          )}
-          {canManageVenues && (
-            <button
-              className="cal-btn cal-btn--outline"
-              onClick={() => { setPeriodError(''); setPeriodForm({ kind: 'holiday', label: '', start_date: '', end_date: '', note: '' }); setShowPeriodModal(true) }}
-            >
-              <PartyPopper size={14} /> Schedule Holiday / Exam Period
-            </button>
+            {filteredVenueName === 'Room' && (
+              <>
+                <select
+                  className="cal-select"
+                  value={locationFilter.room_building}
+                  onChange={(e) => setLocationFilter({ room_building: e.target.value, room_floor: '', room_number: '', lab_id: '' })}
+                >
+                  <option value="">All buildings</option>
+                  {roomBuildingOptions.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+                <select
+                  className="cal-select"
+                  value={locationFilter.room_floor}
+                  onChange={(e) => setLocationFilter({ ...locationFilter, room_floor: e.target.value, room_number: '' })}
+                  disabled={!locationFilter.room_building}
+                >
+                  <option value="">All floors</option>
+                  {roomFloorOptions.map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+                <select
+                  className="cal-select"
+                  value={locationFilter.room_number}
+                  onChange={(e) => setLocationFilter({ ...locationFilter, room_number: e.target.value })}
+                  disabled={!locationFilter.room_floor}
+                >
+                  <option value="">All rooms</option>
+                  {roomNumberOptions.map((r) => (
+                    <option key={r.id} value={r.room_number}>{r.room_number}</option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            {filteredVenueName === 'Laboratory' && (
+              <select
+                className="cal-select"
+                value={locationFilter.lab_id}
+                onChange={(e) => setLocationFilter({ ...locationFilter, lab_id: e.target.value })}
+              >
+                <option value="">All laboratories</option>
+                {venueLabs.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {(canManageAcademic || canManageVenues) && (
+            <div className="cal-toolbar__admin-actions">
+              {canManageAcademic && (
+                <button
+                  className="cal-btn cal-btn--outline cal-btn--toolbar"
+                  onClick={() => { setAyError(''); setAyForm({ start_date: '', end_date: '' }); setTermError(''); setShowAcademicModal(true) }}
+                >
+                  <GraduationCap size={14} /> Academic Year &amp; Terms
+                </button>
+              )}
+              {canManageVenues && (
+                <button
+                  className="cal-btn cal-btn--outline cal-btn--toolbar"
+                  onClick={() => { setBlockForm({ venue_id: '', block_date: '', reason: '' }); setShowBlockModal(true) }}
+                >
+                  <Ban size={14} /> Block Date
+                </button>
+              )}
+              {canManageVenues && (
+                <button
+                  className="cal-btn cal-btn--outline cal-btn--toolbar"
+                  onClick={() => { setPeriodError(''); setPeriodForm({ kind: 'holiday', label: '', start_date: '', end_date: '', note: '' }); setShowPeriodModal(true) }}
+                >
+                  <PartyPopper size={14} /> Holiday / Exam Period
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
