@@ -181,7 +181,7 @@ export async function generateACPFormPdf(data, opts = {}) {
   sectionLabel('2. ACTIVITY DETAILS')
   row('Title', data.title)
   row('Type of Activity', data.activityTypeLabel)
-  row('Venue Address', data.venueAddress)
+  if (!isMerch) row('Venue Address', data.venueAddress)
   twoUpRow('Target Audience', data.targetAudience, 'Target No. of Participants', data.targetParticipants)
   twoUpRow(
     isMerch ? 'Release Date' : 'Date', data.eventDate,

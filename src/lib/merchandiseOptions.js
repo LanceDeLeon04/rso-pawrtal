@@ -12,4 +12,5 @@ export const MERCHANDISE_TYPES = [
   'Tumbler',
   'Keychain',
   'Notebook / Planner',
+  'Others',
 ]

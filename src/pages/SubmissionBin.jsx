@@ -240,8 +240,7 @@ const EMPTY_APP_FORM = {
 // event-venue-booking concerns and intentionally don't apply here.
 const EMPTY_MERCH_FORM = {
   contact_person: '', contact_number: '',
-  venue_id: '', venue_detail: '', online_platform: '',
-  event_date: '', medium: 'f2f', description: '',
+  event_date: '', description: '',
   position: '', email: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
@@ -287,6 +286,7 @@ export default function SubmissionBin() {
   const [showMerchModal, setShowMerchModal] = useState(false)
   const [merchForm, setMerchForm] = useState(EMPTY_MERCH_FORM)
   const [merchTypes, setMerchTypes] = useState([])
+  const [merchOtherText, setMerchOtherText] = useState('')
   const [merchFiles, setMerchFiles] = useState({})
 
   const [saving, setSaving] = useState(false)
@@ -925,6 +925,7 @@ export default function SubmissionBin() {
     const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
     setMerchForm({ ...EMPTY_MERCH_FORM, position: myMembership?.position || '' })
     setMerchTypes([])
+    setMerchOtherText('')
     setMerchFiles({})
     setFormError('')
     setShowMerchModal(true)
@@ -1280,21 +1281,12 @@ export default function SubmissionBin() {
       setFormError('Please check at least one type of merchandise.')
       return
     }
-    if (!merchForm.contact_person || !merchForm.medium) {
-      setFormError('Please fill in the contact person and medium.')
+    if (merchTypes.includes('Others') && !merchOtherText.trim()) {
+      setFormError('Please specify the "Others" type of merchandise.')
       return
     }
-    if (merchForm.medium === 'online') {
-      if (!merchForm.online_platform) {
-        setFormError('Please select the online platform.')
-        return
-      }
-      if (merchForm.online_platform === 'others' && !merchForm.venue_detail.trim()) {
-        setFormError('Please specify the online platform.')
-        return
-      }
-    } else if (!merchForm.venue_id) {
-      setFormError('Please select the venue.')
+    if (!merchForm.contact_person) {
+      setFormError('Please fill in the contact person.')
       return
     }
     if (!merchForm.event_date) {
@@ -1332,9 +1324,12 @@ export default function SubmissionBin() {
     const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
     const orgName = myMembership?.organizations?.name || myMembership?.organizations?.acronym || 'Org'
 
-    const isOnline = merchForm.medium === 'online'
-    const selectedVenue = isOnline ? null : venues.find((v) => v.id === merchForm.venue_id)
-    const venueName = selectedVenue?.name
+    // "Others" prints/stores with its specify text in place of the bare
+    // checkbox label — e.g. "Others: Enamel pins" — so the detail is
+    // captured without needing a separate DB column.
+    const finalMerchTypes = merchTypes.map((t) => (
+      t === 'Others' && merchOtherText.trim() ? `Others: ${merchOtherText.trim()}` : t
+    ))
 
     setSaving(true)
     const { data: sub, error: err } = await supabase.from('submissions').insert({
@@ -1343,16 +1338,9 @@ export default function SubmissionBin() {
       title: `${orgName} Merchandise Proposal`,
       contact_person: merchForm.contact_person,
       contact_number: merchForm.contact_number || null,
-      venue_id: isOnline ? null : merchForm.venue_id,
-      venue_detail: isOnline
-        ? (merchForm.online_platform === 'others' ? merchForm.venue_detail.trim() : null)
-        : (merchForm.venue_detail.trim() || null),
-      venue_tag: isOnline ? null : venueTagFor(venueName),
-      online_platform: isOnline ? merchForm.online_platform : null,
       event_date: merchForm.event_date,
       start_time: null,
       end_time: null,
-      medium: merchForm.medium,
       description: merchForm.description || null,
       position: merchForm.position,
       email: merchForm.email,
@@ -1363,7 +1351,7 @@ export default function SubmissionBin() {
       projected_budget: Number(merchForm.projected_budget),
       budget_source: merchForm.budget_source,
       learning_goals: [merchForm.learning_goal_1, merchForm.learning_goal_2, merchForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
-      merchandise_types: merchTypes,
+      merchandise_types: finalMerchTypes,
       merchandise_duration: merchForm.merchandise_duration,
       submitted_by: profile.id,
     }).select().single()
@@ -1381,9 +1369,6 @@ export default function SubmissionBin() {
     // Auto-generate the filled Merchandise Request Form PDF — same
     // renderer as the ACP Form, minus the SDG section (see acpPdf.js).
     try {
-      const venueLabel = isOnline
-        ? [ONLINE_PLATFORMS.find((p) => p.value === merchForm.online_platform)?.label, merchForm.online_platform === 'others' ? merchForm.venue_detail : null].filter(Boolean).join(' — ')
-        : [selectedVenue?.name, merchForm.venue_detail].filter(Boolean).join(' — ')
       const merchandiseDurationLabel = MERCH_DURATIONS.find((d) => d.value === merchForm.merchandise_duration)?.label
 
       const pdfBytes = await generateMerchRequestFormPdf({
@@ -1394,14 +1379,13 @@ export default function SubmissionBin() {
         email: merchForm.email,
         title: sub.title,
         activityTypeLabel: MERCH_ACTIVITY_TYPE_LABEL,
-        venueAddress: venueLabel,
         targetAudience: merchForm.target_audience,
         targetParticipants: merchForm.target_participants,
         eventDate: merchForm.event_date,
         merchandiseDurationLabel,
         projectedBudget: merchForm.projected_budget,
         budgetSource: merchForm.budget_source,
-        merchandiseTypes: merchTypes,
+        merchandiseTypes: finalMerchTypes,
         learningGoals: [merchForm.learning_goal_1, merchForm.learning_goal_2, merchForm.learning_goal_3],
         description: merchForm.description,
       })
@@ -2739,72 +2723,6 @@ export default function SubmissionBin() {
 
             <div className="sb-field-row">
               <label className="sb-field">
-                Medium
-                <select
-                  value={merchForm.medium}
-                  onChange={(e) => setMerchForm({
-                    ...merchForm, medium: e.target.value,
-                    venue_id: '', venue_detail: '', online_platform: '',
-                  })}
-                  required
-                >
-                  <option value="f2f">Face-to-Face</option>
-                  <option value="online">Online</option>
-                  <option value="off_campus">Off-Campus</option>
-                </select>
-              </label>
-
-              {merchForm.medium === 'online' ? (
-                <label className="sb-field">
-                  Platform
-                  <select
-                    value={merchForm.online_platform}
-                    onChange={(e) => setMerchForm({ ...merchForm, online_platform: e.target.value, venue_detail: '' })}
-                    required
-                  >
-                    <option value="">Select platform</option>
-                    {ONLINE_PLATFORMS.map((p) => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <label className="sb-field">
-                  Venue
-                  <select
-                    value={merchForm.venue_id}
-                    onChange={(e) => setMerchForm({ ...merchForm, venue_id: e.target.value, venue_detail: '' })}
-                    required
-                  >
-                    <option value="">Select venue</option>
-                    {venues.map((v) => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-
-            {merchForm.medium === 'online' && merchForm.online_platform === 'others' && (
-              <label className="sb-field">
-                Please specify
-                <input
-                  value={merchForm.venue_detail}
-                  onChange={(e) => setMerchForm({ ...merchForm, venue_detail: e.target.value })}
-                  placeholder="e.g. Google Meet"
-                  required
-                />
-              </label>
-            )}
-            {merchForm.medium !== 'online' && merchForm.venue_id && (
-              <label className="sb-field">
-                Venue detail <span className="sb-optional">(optional — e.g. specific room/booth)</span>
-                <input value={merchForm.venue_detail} onChange={(e) => setMerchForm({ ...merchForm, venue_detail: e.target.value })} />
-              </label>
-            )}
-
-            <div className="sb-field-row">
-              <label className="sb-field">
                 Release Date
                 <input type="date" value={merchForm.event_date} onChange={(e) => setMerchForm({ ...merchForm, event_date: e.target.value })} required />
               </label>
@@ -2892,6 +2810,15 @@ export default function SubmissionBin() {
                   </label>
                 )
               })}
+              {merchTypes.includes('Others') && (
+                <input
+                  className="sb-sdg-goal"
+                  value={merchOtherText}
+                  onChange={(e) => setMerchOtherText(e.target.value)}
+                  placeholder="Please specify"
+                  required
+                />
+              )}
             </div>
 
             <div className="sb-form-notice">
@@ -3019,16 +2946,8 @@ export default function SubmissionBin() {
                   {selected.type === 'merchandise' && (
                     <div className="sb-detail-grid">
                       <div className="sb-detail-row">
-                        <MapPin size={13} />
-                        {selected.online_platform
-                          ? (ONLINE_PLATFORMS.find((p) => p.value === selected.online_platform)?.label || selected.online_platform)
-                          : (selected.venues?.name || '—')}
-                        {selected.venue_detail && ` — ${selected.venue_detail}`}
-                      </div>
-                      <div className="sb-detail-row">
                         <Clock size={13} /> Release Date: {selected.event_date || '—'}
                       </div>
-                      <div className="sb-detail-row"><Video size={13} /> {MEDIUM_LABELS[selected.medium] || '—'}</div>
                       <div className="sb-detail-row"><User size={13} /> {selected.contact_person || '—'}{selected.contact_number && ` · ${selected.contact_number}`}</div>
                       <div className="sb-detail-row">
                         <ClipboardList size={13} /> {MERCH_DURATIONS.find((d) => d.value === selected.merchandise_duration)?.label || '—'}
