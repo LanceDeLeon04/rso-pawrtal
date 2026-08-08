@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Users, Plus, Loader2, AlertCircle, CheckCircle2, Building2, Copy,
   Tag, Trash2, X, Camera, Mail, Phone, Pencil, Check, KeyRound,
+  Eye, Landmark, ShieldCheck, BadgeCheck,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -41,6 +42,7 @@ const CATEGORY_OPTIONS = ['School Council', 'Academic', 'Special Interest']
 const EMPTY_ORG_FORM = {
   name: '', acronym: '', category: '', adviser_name: '',
   accreditation_status: 'pending', contact_email: '', contact_number: '',
+  bank_name: '', account_name: '', account_number: '',
 }
 const EMPTY_MEMBERSHIP_FORM = { profile_id: '', org_id: '', position: '', is_primary: true }
 
@@ -49,24 +51,27 @@ export default function Accounts() {
   const [orgs, setOrgs] = useState([])
   const [profiles, setProfiles] = useState([])
   const [memberships, setMemberships] = useState([])
+  const [bankDetails, setBankDetails] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
     setLoading(true)
-    const [{ data: o }, { data: p }, { data: m }] = await Promise.all([
+    const [{ data: o }, { data: p }, { data: m }, { data: b }] = await Promise.all([
       supabase.from('organizations')
         .select('id, name, acronym, category, adviser_name, logo_url, accreditation_status, contact_email, contact_number, is_active')
         .order('acronym'),
       supabase.from('profiles').select('id, full_name, email, role, is_active').order('full_name'),
       supabase.from('org_memberships')
-        .select('id, profile_id, position, is_primary, profiles ( full_name ), organizations ( acronym )')
+        .select('id, profile_id, org_id, position, is_primary, profiles ( full_name ), organizations ( acronym )')
         .order('created_at', { ascending: false }),
+      supabase.from('organization_bank_details').select('org_id, bank_name, account_name, account_number'),
     ])
     setOrgs(o || [])
     setProfiles(p || [])
     setMemberships(m || [])
+    setBankDetails(b || [])
     setLoading(false)
   }
 
@@ -94,7 +99,7 @@ export default function Accounts() {
             currentProfileId={currentProfile?.id}
             onChanged={loadAll}
           />
-          <OrganizationsSection orgs={orgs} onChanged={loadAll} />
+          <OrganizationsSection orgs={orgs} memberships={memberships} bankDetails={bankDetails} onChanged={loadAll} />
           <MembershipsSection orgs={orgs} profiles={profiles} memberships={memberships} onChanged={loadAll} />
         </>
       )}
@@ -472,7 +477,7 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
   )
 }
 
-function OrganizationsSection({ orgs, onChanged }) {
+function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
   const [form, setForm] = useState(EMPTY_ORG_FORM)
   const [logoFile, setLogoFile] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -486,6 +491,25 @@ function OrganizationsSection({ orgs, onChanged }) {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+
+  const [viewingOrg, setViewingOrg] = useState(null)
+
+  function bankFor(orgId) {
+    return bankDetails.find((b) => b.org_id === orgId) || {}
+  }
+
+  async function upsertBankDetails(orgId, bank) {
+    if (!bank.bank_name.trim() && !bank.account_name.trim() && !bank.account_number.trim()) {
+      return null
+    }
+    const { error: err } = await supabase.from('organization_bank_details').upsert({
+      org_id: orgId,
+      bank_name: bank.bank_name.trim() || null,
+      account_name: bank.account_name.trim() || null,
+      account_number: bank.account_number.trim() || null,
+    })
+    return err
+  }
 
   async function handleDelete(orgId) {
     setError('')
@@ -503,6 +527,7 @@ function OrganizationsSection({ orgs, onChanged }) {
   function startEdit(org) {
     setEditingId(org.id)
     setEditError('')
+    const bank = bankFor(org.id)
     setEditForm({
       name: org.name || '',
       acronym: org.acronym || '',
@@ -511,6 +536,9 @@ function OrganizationsSection({ orgs, onChanged }) {
       accreditation_status: org.accreditation_status || 'pending',
       contact_email: org.contact_email || '',
       contact_number: org.contact_number || '',
+      bank_name: bank.bank_name || '',
+      account_name: bank.account_name || '',
+      account_number: bank.account_number || '',
     })
   }
 
@@ -535,6 +563,14 @@ function OrganizationsSection({ orgs, onChanged }) {
       contact_email: editForm.contact_email.trim() || null,
       contact_number: editForm.contact_number.trim() || null,
     }).eq('id', orgId)
+    if (!err) {
+      const bankErr = await upsertBankDetails(orgId, editForm)
+      if (bankErr) {
+        setEditSaving(false)
+        setEditError('Organization saved, but bank details failed to save. Please retry.')
+        return
+      }
+    }
     setEditSaving(false)
     if (err) {
       setEditError(err.message?.includes('duplicate') ? 'That acronym is already in use.' : 'Could not save changes.')
@@ -580,6 +616,17 @@ function OrganizationsSection({ orgs, onChanged }) {
         onChanged()
         return
       }
+    }
+
+    const bankErr = await upsertBankDetails(inserted.id, form)
+    if (bankErr) {
+      setSaving(false)
+      setError('Organization added, but bank details failed to save. You can retry it from the table.')
+      setForm(EMPTY_ORG_FORM)
+      setLogoFile(null)
+      setShowForm(false)
+      onChanged()
+      return
     }
 
     setSaving(false)
@@ -679,6 +726,23 @@ function OrganizationsSection({ orgs, onChanged }) {
               </label>
             </label>
           </div>
+          <div className="acc-field-divider"><Landmark size={12} /> Bank Details</div>
+          <div className="acc-field-row">
+            <label className="acc-field">
+              Bank Name
+              <input placeholder="e.g. BDO, BPI" value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} />
+            </label>
+            <label className="acc-field">
+              Account Name
+              <input placeholder="Account holder name" value={form.account_name} onChange={(e) => setForm({ ...form, account_name: e.target.value })} />
+            </label>
+          </div>
+          <div className="acc-field-row">
+            <label className="acc-field">
+              Account Number
+              <input placeholder="Account number" value={form.account_number} onChange={(e) => setForm({ ...form, account_number: e.target.value })} />
+            </label>
+          </div>
           <button className="acc-btn acc-btn--gold" type="submit" disabled={saving}>
             {saving ? <Loader2 size={14} className="spin" /> : 'Add Organization'}
           </button>
@@ -692,7 +756,7 @@ function OrganizationsSection({ orgs, onChanged }) {
         <thead>
           <tr>
             <th>Logo</th><th>Acronym</th><th>Name</th><th>Category</th><th>Adviser</th>
-            <th>Contact</th><th>Accreditation</th><th>Status</th><th />
+            <th>Contact</th><th>Bank Details</th><th>Accreditation</th><th>Status</th><th /><th />
           </tr>
         </thead>
         <tbody>
@@ -757,17 +821,49 @@ function OrganizationsSection({ orgs, onChanged }) {
                         onChange={(e) => setEditForm({ ...editForm, contact_number: e.target.value })}
                       />
                     </td>
+                    <td>
+                      <input
+                        className="acc-inline-input"
+                        placeholder="Bank name"
+                        value={editForm.bank_name}
+                        onChange={(e) => setEditForm({ ...editForm, bank_name: e.target.value })}
+                      />
+                      <input
+                        className="acc-inline-input"
+                        placeholder="Account name"
+                        value={editForm.account_name}
+                        onChange={(e) => setEditForm({ ...editForm, account_name: e.target.value })}
+                      />
+                      <input
+                        className="acc-inline-input"
+                        placeholder="Account number"
+                        value={editForm.account_number}
+                        onChange={(e) => setEditForm({ ...editForm, account_number: e.target.value })}
+                      />
+                    </td>
                   </>
                 ) : (
                   <>
-                    <td className="acc-table__strong">{o.acronym}</td>
-                    <td>{o.name}</td>
+                    <td className="acc-table__strong">
+                      <button type="button" className="acc-link-btn" onClick={() => setViewingOrg(o)}>{o.acronym}</button>
+                    </td>
+                    <td>
+                      <button type="button" className="acc-link-btn" onClick={() => setViewingOrg(o)}>{o.name}</button>
+                    </td>
                     <td>{o.category || '—'}</td>
                     <td>{o.adviser_name || '—'}</td>
                     <td>
                       {o.contact_email && <div className="acc-contact-line"><Mail size={11} /> {o.contact_email}</div>}
                       {o.contact_number && <div className="acc-contact-line"><Phone size={11} /> {o.contact_number}</div>}
                       {!o.contact_email && !o.contact_number && '—'}
+                    </td>
+                    <td>
+                      {(() => {
+                        const bank = bankFor(o.id)
+                        return bank.bank_name || bank.account_number ? (
+                          <div className="acc-contact-line"><Landmark size={11} /> {bank.bank_name || '—'}</div>
+                        ) : '—'
+                      })()}
                     </td>
                   </>
                 )}
@@ -792,6 +888,13 @@ function OrganizationsSection({ orgs, onChanged }) {
                   >
                     {o.is_active ? 'Active' : 'Inactive'}
                   </button>
+                </td>
+                <td>
+                  {!isEditing && confirmDeleteId !== o.id && (
+                    <button className="acc-icon-btn" onClick={() => setViewingOrg(o)} title="View full details">
+                      <Eye size={13} />
+                    </button>
+                  )}
                 </td>
                 <td>
                   {isEditing ? (
@@ -833,6 +936,75 @@ function OrganizationsSection({ orgs, onChanged }) {
           })}
         </tbody>
       </table>
+
+      {viewingOrg && (
+        <OrgDetailsModal
+          org={viewingOrg}
+          bank={bankFor(viewingOrg.id)}
+          memberships={memberships.filter((m) => m.org_id === viewingOrg.id)}
+          onClose={() => setViewingOrg(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function OrgDetailsModal({ org, bank, memberships, onClose }) {
+  const holderFor = (position) => memberships.find((m) => m.position === position)?.profiles?.full_name
+  const extraPositions = memberships.filter((m) => !POSITIONS.includes(m.position))
+
+  return (
+    <div className="acc-modal-backdrop" onClick={onClose}>
+      <div className="acc-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="acc-modal__close" onClick={onClose}><X size={16} /></button>
+
+        <div className="acc-modal__head">
+          {org.logo_url ? <img src={org.logo_url} alt="" className="acc-modal__logo" /> : <Building2 size={28} />}
+          <div>
+            <h3>{org.acronym}</h3>
+            <p>{org.name}</p>
+          </div>
+        </div>
+
+        <section className="acc-modal__section">
+          <h4><ShieldCheck size={13} /> Org Details</h4>
+          <div className="acc-modal__grid">
+            <div><span>Category</span><strong>{org.category || '—'}</strong></div>
+            <div><span>Adviser</span><strong>{org.adviser_name || '—'}</strong></div>
+            <div><span>Accreditation</span><strong>{ACCREDITATION_LABELS[org.accreditation_status] || '—'}</strong></div>
+            <div><span>Status</span><strong>{org.is_active ? 'Active' : 'Inactive'}</strong></div>
+            <div><span>Contact Email</span><strong>{org.contact_email || '—'}</strong></div>
+            <div><span>Contact Number</span><strong>{org.contact_number || '—'}</strong></div>
+          </div>
+        </section>
+
+        <section className="acc-modal__section">
+          <h4><Landmark size={13} /> Bank Details</h4>
+          <div className="acc-modal__grid">
+            <div><span>Bank Name</span><strong>{bank.bank_name || '—'}</strong></div>
+            <div><span>Account Name</span><strong>{bank.account_name || '—'}</strong></div>
+            <div><span>Account Number</span><strong>{bank.account_number || '—'}</strong></div>
+          </div>
+        </section>
+
+        <section className="acc-modal__section">
+          <h4><BadgeCheck size={13} /> Executives</h4>
+          <div className="acc-modal__exec-list">
+            {POSITIONS.map((position) => (
+              <div key={position} className="acc-modal__exec-row">
+                <span>{position}</span>
+                <strong>{holderFor(position) || <em>Vacant</em>}</strong>
+              </div>
+            ))}
+            {extraPositions.map((m) => (
+              <div key={m.id} className="acc-modal__exec-row">
+                <span>{m.position}</span>
+                <strong>{m.profiles?.full_name || '—'}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   )
 }

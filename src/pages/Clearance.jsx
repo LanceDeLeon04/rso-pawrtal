@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate } from '../lib/dateUtils'
+import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import './Clearance.css'
 
 const STATUS_META = {
@@ -50,6 +51,12 @@ export default function Clearance() {
     if (!profile) return
     setLoading(true)
     setError('')
+
+    // Materialize any overdue non-event task into a blocking clearance
+    // row for orgs the caller belongs to first — see
+    // src/lib/clearanceReconcile.js for why this can't wait for an
+    // admin to visit Assignments.
+    if (!admin) await reconcileOwnOverdueAssignments(profile)
 
     let q = supabase
       .from('clearances')

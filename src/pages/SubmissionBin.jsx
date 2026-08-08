@@ -14,6 +14,7 @@ import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
 import { ensureEventVerificationToken } from '../lib/eventVerification'
+import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import { SDG_OPTIONS } from '../lib/sdgOptions'
 import './SubmissionBin.css'
 
@@ -407,6 +408,11 @@ export default function SubmissionBin() {
 
   async function loadOpenClearances() {
     if (!myOrgId) return []
+    // Materialize any overdue non-event task into a blocking clearance
+    // row for this org first — previously this only happened when an
+    // admin opened the Assignments page, so an org's block could go
+    // unregistered indefinitely. See src/lib/clearanceReconcile.js.
+    await reconcileOwnOverdueAssignments(profile)
     const { data } = await supabase
       .from('clearances')
       .select('id, event_id, deadline, extended_deadline, status, events ( title, event_date )')

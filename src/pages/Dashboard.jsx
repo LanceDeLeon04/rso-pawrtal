@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime } from '../lib/dateUtils'
+import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import './Dashboard.css'
 
 const REVIEW_STAGE_BY_ROLE = {
@@ -43,6 +44,10 @@ export default function Dashboard() {
   async function loadDashboard() {
     if (!profile) return
     setLoading(true)
+
+    // Materialize any overdue non-event task into a blocking clearance
+    // row for this org before counting — see src/lib/clearanceReconcile.js.
+    if (!admin) await reconcileOwnOverdueAssignments(profile)
 
     const todayIso = toISODate(new Date())
     const in30 = toISODate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))
