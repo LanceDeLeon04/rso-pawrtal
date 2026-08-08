@@ -20,7 +20,14 @@ export default function CalendarOfActivities() {
   const today = new Date()
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() })
   const [venues, setVenues] = useState([])
+  const [venueRooms, setVenueRooms] = useState([])
+  const [venueLabs, setVenueLabs] = useState([])
   const [venueFilter, setVenueFilter] = useState('all')
+  // Sub-filter for Room / Laboratory venues, same cascading picker used
+  // on the Submission Bin's event application form — narrows the
+  // calendar down to one specific room or lab instead of every booking
+  // tagged under the general "Room"/"Laboratory" venue.
+  const [locationFilter, setLocationFilter] = useState({ room_building: '', room_floor: '', room_number: '', lab_id: '' })
   const [events, setEvents] = useState([])
   const [blocks, setBlocks] = useState([])
   const [loading, setLoading] = useState(true)
@@ -50,10 +57,14 @@ export default function CalendarOfActivities() {
 
   useEffect(() => {
     async function loadStatics() {
-      const [{ data: v }] = await Promise.all([
+      const [{ data: v }, { data: rooms }, { data: labs }] = await Promise.all([
         supabase.from('venues').select('id, name, location').eq('is_active', true).order('name'),
+        supabase.from('venue_rooms').select('id, building, floor, room_number').order('building').order('floor').order('sort_order'),
+        supabase.from('venue_labs').select('id, name, care_of, location').order('sort_order'),
       ])
       setVenues(v || [])
+      setVenueRooms(rooms || [])
+      setVenueLabs(labs || [])
     }
     loadStatics()
   }, [])
@@ -107,7 +118,7 @@ export default function CalendarOfActivities() {
       .from('events')
       .select(`
         id, title, org_id, contact_person, contact_number, description,
-        venue_id, event_date, start_time, end_time, booking_status, medium,
+        venue_id, venue_detail, event_date, start_time, end_time, booking_status, medium,
         organizations ( name, acronym ),
         venues ( name, location )
       `)
@@ -128,9 +139,46 @@ export default function CalendarOfActivities() {
     setLoading(false)
   }
 
+  // Mirrors how the Submission Bin's application form builds venue_detail
+  // for a picked Room or Laboratory, so the calendar can filter/compare
+  // against the same free-text value stored on events.venue_detail.
+  function roomDetailFor(building, floor, roomNumber) {
+    return `${building}, ${floor} Flr — ${roomNumber}`
+  }
+  function labDetailFor(lab) {
+    return `${lab.name} c/o ${lab.care_of}, ${lab.location}`
+  }
+
+  const filteredVenueName = venues.find((v) => v.id === venueFilter)?.name
+  const roomBuildingOptions = [...new Set(venueRooms.map((r) => r.building))]
+  const roomFloorOptions = [...new Set(venueRooms.filter((r) => r.building === locationFilter.room_building).map((r) => r.floor))]
+  const roomNumberOptions = venueRooms.filter((r) => r.building === locationFilter.room_building && r.floor === locationFilter.room_floor)
+
+  // Narrows `events` down to the specific room/lab picked in the
+  // sub-filter, on top of the venue-level filter already applied by the
+  // Supabase query in loadEvents().
+  const visibleEvents = useMemo(() => {
+    if (filteredVenueName === 'Room' && locationFilter.room_building) {
+      let prefix = locationFilter.room_building
+      if (locationFilter.room_floor) prefix = roomDetailFor(locationFilter.room_building, locationFilter.room_floor, '')
+      if (locationFilter.room_number) {
+        const full = roomDetailFor(locationFilter.room_building, locationFilter.room_floor, locationFilter.room_number)
+        return events.filter((e) => e.venue_detail === full)
+      }
+      return events.filter((e) => (e.venue_detail || '').startsWith(prefix))
+    }
+    if (filteredVenueName === 'Laboratory' && locationFilter.lab_id) {
+      const lab = venueLabs.find((l) => l.id === locationFilter.lab_id)
+      if (!lab) return events
+      return events.filter((e) => e.venue_detail === labDetailFor(lab))
+    }
+    return events
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, filteredVenueName, locationFilter, venueLabs])
+
   function eventsForDay(date) {
     const iso = toISODate(date)
-    return events.filter((e) => e.event_date === iso)
+    return visibleEvents.filter((e) => e.event_date === iso)
   }
 
   function blocksForDay(date) {
@@ -203,17 +251,44 @@ export default function CalendarOfActivities() {
   }
 
   function startMove(ev) {
+    const venueName = venues.find((v) => v.id === ev.venue_id)?.name
+    // Best-effort pre-fill of the room/lab sub-fields from the existing
+    // free-text venue_detail, so re-opening Move Schedule doesn't force
+    // re-picking a room/lab that's already correct.
+    let room_building = '', room_floor = '', room_number = '', lab_id = ''
+    if (venueName === 'Room' && ev.venue_detail) {
+      const match = ev.venue_detail.match(/^(.*), (.*) Flr — (.*)$/)
+      if (match) [, room_building, room_floor, room_number] = match
+    } else if (venueName === 'Laboratory' && ev.venue_detail) {
+      const match = ev.venue_detail.match(/^(.*) c\/o /)
+      const lab = match ? venueLabs.find((l) => l.name === match[1]) : null
+      if (lab) lab_id = lab.id
+    }
     setMoveForm({
       event_date: ev.event_date,
       start_time: ev.start_time || '',
       end_time: ev.end_time || '',
       venue_id: ev.venue_id || '',
+      venue_detail: ev.venue_detail || '',
+      room_building, room_floor, room_number, lab_id,
     })
     setMoving(true)
   }
 
   async function handleSaveMove(e) {
     e.preventDefault()
+
+    const moveVenueName = venues.find((v) => v.id === moveForm.venue_id)?.name
+    if (moveVenueName === 'Room' && !moveForm.venue_detail) {
+      setError('Please select the building, floor, and room.')
+      return
+    }
+    if (moveVenueName === 'Laboratory' && !moveForm.venue_detail) {
+      setError('Please select the laboratory.')
+      return
+    }
+    setError('')
+
     setSavingMove(true)
     const { error: err } = await supabase
       .from('events')
@@ -222,6 +297,9 @@ export default function CalendarOfActivities() {
         start_time: moveForm.start_time || null,
         end_time: moveForm.end_time || null,
         venue_id: moveForm.venue_id || null,
+        venue_detail: moveForm.venue_id
+          ? (moveVenueName === 'Room' || moveVenueName === 'Laboratory' ? moveForm.venue_detail : null)
+          : null,
       })
       .eq('id', selectedEvent.id)
     setSavingMove(false)
@@ -290,13 +368,67 @@ export default function CalendarOfActivities() {
           <select
             className="cal-select"
             value={venueFilter}
-            onChange={(e) => setVenueFilter(e.target.value)}
+            onChange={(e) => {
+              setVenueFilter(e.target.value)
+              setLocationFilter({ room_building: '', room_floor: '', room_number: '', lab_id: '' })
+            }}
           >
             <option value="all">All venues</option>
             {venues.map((v) => (
               <option key={v.id} value={v.id}>{v.name}</option>
             ))}
           </select>
+
+          {filteredVenueName === 'Room' && (
+            <>
+              <select
+                className="cal-select"
+                value={locationFilter.room_building}
+                onChange={(e) => setLocationFilter({ room_building: e.target.value, room_floor: '', room_number: '', lab_id: '' })}
+              >
+                <option value="">All buildings</option>
+                {roomBuildingOptions.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+              <select
+                className="cal-select"
+                value={locationFilter.room_floor}
+                onChange={(e) => setLocationFilter({ ...locationFilter, room_floor: e.target.value, room_number: '' })}
+                disabled={!locationFilter.room_building}
+              >
+                <option value="">All floors</option>
+                {roomFloorOptions.map((f) => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+              <select
+                className="cal-select"
+                value={locationFilter.room_number}
+                onChange={(e) => setLocationFilter({ ...locationFilter, room_number: e.target.value })}
+                disabled={!locationFilter.room_floor}
+              >
+                <option value="">All rooms</option>
+                {roomNumberOptions.map((r) => (
+                  <option key={r.id} value={r.room_number}>{r.room_number}</option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {filteredVenueName === 'Laboratory' && (
+            <select
+              className="cal-select"
+              value={locationFilter.lab_id}
+              onChange={(e) => setLocationFilter({ ...locationFilter, lab_id: e.target.value })}
+            >
+              <option value="">All laboratories</option>
+              {venueLabs.map((l) => (
+                <option key={l.id} value={l.id}>{l.name}</option>
+              ))}
+            </select>
+          )}
+
           {canManageVenues && (
             <button
               className="cal-btn cal-btn--outline"
@@ -429,7 +561,11 @@ export default function CalendarOfActivities() {
                   </div>
                 )}
                 {selectedEvent.venues?.name && (
-                  <div className="cal-modal__row"><MapPin size={14} /> {selectedEvent.venues.name}</div>
+                  <div className="cal-modal__row">
+                    <MapPin size={14} />
+                    {selectedEvent.venues.name}
+                    {selectedEvent.venue_detail && ` — ${selectedEvent.venue_detail}`}
+                  </div>
                 )}
                 {selectedEvent.medium && (
                   <div className="cal-modal__row"><Video size={14} /> {MEDIUM_LABELS[selectedEvent.medium]}</div>
@@ -471,11 +607,95 @@ export default function CalendarOfActivities() {
                     <label className="cal-move-form__field">
                       Venue
                       <select value={moveForm.venue_id}
-                        onChange={(e) => setMoveForm({ ...moveForm, venue_id: e.target.value })}>
+                        onChange={(e) => setMoveForm({
+                          ...moveForm, venue_id: e.target.value, venue_detail: '',
+                          room_building: '', room_floor: '', room_number: '', lab_id: '',
+                        })}>
                         <option value="">— No venue —</option>
                         {venues.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                       </select>
                     </label>
+
+                    {(() => {
+                      const moveVenueName = venues.find((v) => v.id === moveForm.venue_id)?.name
+                      const moveRoomFloorOptions = [...new Set(venueRooms.filter((r) => r.building === moveForm.room_building).map((r) => r.floor))]
+                      const moveRoomNumberOptions = venueRooms.filter((r) => r.building === moveForm.room_building && r.floor === moveForm.room_floor)
+                      const moveSelectedLab = venueLabs.find((l) => l.id === moveForm.lab_id)
+
+                      if (moveVenueName === 'Room') {
+                        return (
+                          <div className="cal-move-form__row">
+                            <label className="cal-move-form__field">
+                              Building
+                              <select
+                                value={moveForm.room_building}
+                                onChange={(e) => setMoveForm({ ...moveForm, room_building: e.target.value, room_floor: '', room_number: '', venue_detail: '' })}
+                              >
+                                <option value="">Select building</option>
+                                {roomBuildingOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                              </select>
+                            </label>
+                            <label className="cal-move-form__field">
+                              Floor
+                              <select
+                                value={moveForm.room_floor}
+                                onChange={(e) => setMoveForm({ ...moveForm, room_floor: e.target.value, room_number: '', venue_detail: '' })}
+                                disabled={!moveForm.room_building}
+                              >
+                                <option value="">Select floor</option>
+                                {moveRoomFloorOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+                              </select>
+                            </label>
+                            <label className="cal-move-form__field">
+                              Room
+                              <select
+                                value={moveForm.room_number}
+                                onChange={(e) => {
+                                  const room = moveRoomNumberOptions.find((r) => r.room_number === e.target.value)
+                                  setMoveForm({
+                                    ...moveForm,
+                                    room_number: e.target.value,
+                                    venue_detail: room ? roomDetailFor(room.building, room.floor, room.room_number) : '',
+                                  })
+                                }}
+                                disabled={!moveForm.room_floor}
+                              >
+                                <option value="">Select room</option>
+                                {moveRoomNumberOptions.map((r) => <option key={r.id} value={r.room_number}>{r.room_number}</option>)}
+                              </select>
+                            </label>
+                          </div>
+                        )
+                      }
+
+                      if (moveVenueName === 'Laboratory') {
+                        return (
+                          <label className="cal-move-form__field">
+                            Laboratory
+                            <select
+                              value={moveForm.lab_id}
+                              onChange={(e) => {
+                                const lab = venueLabs.find((l) => l.id === e.target.value)
+                                setMoveForm({
+                                  ...moveForm,
+                                  lab_id: e.target.value,
+                                  venue_detail: lab ? labDetailFor(lab) : '',
+                                })
+                              }}
+                            >
+                              <option value="">Select laboratory</option>
+                              {venueLabs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                            </select>
+                            {moveSelectedLab && (
+                              <span className="cal-move-form__hint">c/o {moveSelectedLab.care_of}, {moveSelectedLab.location}</span>
+                            )}
+                          </label>
+                        )
+                      }
+
+                      return null
+                    })()}
+
                     <div className="cal-modal__actions">
                       <button className="cal-btn cal-btn--gold" type="submit" disabled={savingMove}>
                         {savingMove ? <Loader2 size={14} className="spin" /> : 'Save Move'}
