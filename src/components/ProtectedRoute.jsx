@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { hasAcknowledgedPrivacy } from '../lib/privacyNotice'
 
 export default function ProtectedRoute({ children, allowedRoles, excludeRoles }) {
   const { session, profile, loading } = useAuth()
@@ -10,6 +11,12 @@ export default function ProtectedRoute({ children, allowedRoles, excludeRoles })
 
   if (profile?.must_change_password) {
     return <Navigate to="/change-password" replace />
+  }
+
+  // Data Privacy Notice must be re-acknowledged on every login before
+  // any other page is reachable — see src/pages/PrivacyNotice.jsx.
+  if (!hasAcknowledgedPrivacy(session.user.id)) {
+    return <Navigate to="/privacy-notice" replace />
   }
 
   if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {

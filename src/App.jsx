@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import ChangePassword from './pages/ChangePassword'
+import PrivacyNotice from './pages/PrivacyNotice'
 import Dashboard from './pages/Dashboard'
 import CalendarOfActivities from './pages/CalendarOfActivities'
 import SubmissionBin from './pages/SubmissionBin'
@@ -22,6 +23,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/change-password" element={<ChangePassword />} />
+          <Route path="/privacy-notice" element={<PrivacyNotice />} />
           {/* Public — no login. Advisers/Deans open this from a
               time-limited link sent by the submitting org; see
               src/lib/approvalLinks.js and migration 019. */}

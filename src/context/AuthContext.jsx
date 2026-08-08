@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { clearPrivacyAcknowledgement } from '../lib/privacyNotice'
 
 const AuthContext = createContext(null)
 
@@ -83,6 +84,12 @@ export function AuthProvider({ children }) {
       password,
     })
     if (error) return { error }
+
+    // Force the Data Privacy Notice to show again for this fresh login,
+    // even if this browser tab previously had it acknowledged (e.g. a
+    // different user logging in on a shared machine, or this user
+    // logging back in after signing out).
+    clearPrivacyAcknowledgement(data.user.id)
 
     const loadedProfile = await loadProfile(data.user.id)
     const stillActive = await enforceActive(loadedProfile)
