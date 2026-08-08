@@ -776,8 +776,26 @@ export default function SubmissionBin() {
     }
   }
 
-  const overdueClearances = openClearances.filter((c) => c.status === 'overdue')
-  const clearanceBlocked = overdueClearances.length > 0
+  // Block on ANY open clearance (pending or overdue) whose EVENT DATE has
+  // already passed — not just ones the deadline reconciliation has
+  // already flipped to 'overdue', and not on report-submission deadline
+  // at all. An org stays clear all the way through the day of the event
+  // itself; the block kicks in starting the day AFTER. Example: event on
+  // Aug 8 — clear through Aug 8, blocked from Aug 9 onward, even though
+  // the clearance may still show status 'pending' (its 7-day report
+  // deadline hasn't passed yet).
+  //
+  // Assignment-based clearance issues (event_id is null — an overdue
+  // non-event task) have no event date to compare against, so those
+  // keep blocking purely on status === 'overdue', as before.
+  const todayISO = toISODate(new Date())
+  const overdueClearances = openClearances.filter((c) => {
+    if (!c.event_id) return c.status === 'overdue'
+    const eventDate = c.events?.event_date
+    return !!eventDate && eventDate < todayISO
+  })
+  const blockingClearances = overdueClearances
+  const clearanceBlocked = blockingClearances.length > 0
 
   const activeRestrictedPeriod = !appForm.is_continuing ? restrictedPeriodFor(appForm.event_date) : null
   // Every activity auto-gets a 2-hour ingress buffer before its start and
