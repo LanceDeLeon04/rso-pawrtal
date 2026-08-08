@@ -7,7 +7,7 @@ import {
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isFMO } from '../context/AuthContext'
 import {
-  MONTH_NAMES, WEEKDAY_LABELS, toISODate, buildMonthGrid, formatTime, MEDIUM_LABELS,
+  MONTH_NAMES, WEEKDAY_LABELS, toISODate, buildMonthGrid, formatTime, MEDIUM_LABELS, addDaysISO,
 } from '../lib/dateUtils'
 import './CalendarOfActivities.css'
 
@@ -53,6 +53,21 @@ export default function CalendarOfActivities() {
   const [selectedPeriod, setSelectedPeriod] = useState(null)
   const [periodError, setPeriodError] = useState('')
 
+  // ---------- Academic Year + Terms ----------
+  const canManageAcademic = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
+  const [currentAcademicYear, setCurrentAcademicYear] = useState(null)
+  const [pastAcademicYears, setPastAcademicYears] = useState([])
+  const [terms, setTerms] = useState([])
+  const [showAcademicModal, setShowAcademicModal] = useState(false)
+  const [ayForm, setAyForm] = useState({ start_date: '', end_date: '' })
+  const [savingAy, setSavingAy] = useState(false)
+  const [ayError, setAyError] = useState('')
+  const [termForm, setTermForm] = useState({ label: '', start_date: '', end_date: '' })
+  const [savingTerm, setSavingTerm] = useState(false)
+  const [termError, setTermError] = useState('')
+  const [confirmDeleteTermId, setConfirmDeleteTermId] = useState(null)
+  const [selectedTermBreak, setSelectedTermBreak] = useState(null)
+
   const grid = useMemo(() => buildMonthGrid(cursor.year, cursor.month), [cursor])
   const monthLabel = `${MONTH_NAMES[cursor.month]} ${cursor.year}`
 
@@ -68,14 +83,99 @@ export default function CalendarOfActivities() {
       setVenueLabs(labs || [])
     }
     loadStatics()
+    loadAcademicYear()
   }, [])
+
+  async function loadAcademicYear() {
+    const [{ data: current }, { data: past }] = await Promise.all([
+      supabase.from('academic_years').select('id, label, start_date, end_date, is_current').eq('is_current', true).maybeSingle(),
+      supabase.from('academic_years').select('id, label, start_date, end_date, is_current').order('start_date', { ascending: false }),
+    ])
+    setCurrentAcademicYear(current || null)
+    setPastAcademicYears((past || []).filter((y) => !current || y.id !== current.id))
+
+    if (current) {
+      const { data: t } = await supabase
+        .from('academic_terms')
+        .select('id, label, start_date, end_date')
+        .eq('academic_year_id', current.id)
+        .order('start_date', { ascending: true })
+      setTerms(t || [])
+    } else {
+      setTerms([])
+    }
+  }
+
+  // Term breaks are computed, never stored: the gap between one term's
+  // end and the next term's start (plus, if terms don't fully bracket
+  // the academic year, the lead-in before the first term and the
+  // tail after the last term).
+  const termBreaks = useMemo(() => {
+    if (terms.length === 0) return []
+    const sorted = [...terms].sort((a, b) => a.start_date.localeCompare(b.start_date))
+    const breaks = []
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const gapStart = addDaysISO(sorted[i].end_date, 1)
+      const gapEnd = addDaysISO(sorted[i + 1].start_date, -1)
+      if (gapStart <= gapEnd) {
+        breaks.push({
+          id: `break-${sorted[i].id}-${sorted[i + 1].id}`,
+          label: `Term Break — between ${sorted[i].label} & ${sorted[i + 1].label}`,
+          start_date: gapStart,
+          end_date: gapEnd,
+        })
+      }
+    }
+    return breaks
+  }, [terms])
+
+  // Bounds the calendar to the current academic year's date range plus
+  // one extra month of slack on either side — when a current academic
+  // year is set, navigating further away from it is disabled.
+  const academicMonthBounds = useMemo(() => {
+    if (!currentAcademicYear) return null
+    const start = new Date(`${currentAcademicYear.start_date}T00:00:00`)
+    const end = new Date(`${currentAcademicYear.end_date}T00:00:00`)
+    const minMonth = { year: start.getFullYear(), month: start.getMonth() - 1 }
+    const maxMonth = { year: end.getFullYear(), month: end.getMonth() + 1 }
+    // Normalize month overflow/underflow (e.g. January - 1 -> prior December).
+    const min = new Date(minMonth.year, minMonth.month, 1)
+    const max = new Date(maxMonth.year, maxMonth.month, 1)
+    return {
+      min: { year: min.getFullYear(), month: min.getMonth() },
+      max: { year: max.getFullYear(), month: max.getMonth() },
+    }
+  }, [currentAcademicYear])
+
+  function isBeforeBound(cursorVal, bound) {
+    return cursorVal.year < bound.year || (cursorVal.year === bound.year && cursorVal.month < bound.month)
+  }
+  function isAfterBound(cursorVal, bound) {
+    return cursorVal.year > bound.year || (cursorVal.year === bound.year && cursorVal.month > bound.month)
+  }
+
+  // Once we know the academic year's bounds, snap an out-of-range
+  // cursor (e.g. today's month sitting outside a past/future academic
+  // year) back inside the allowed window.
+  useEffect(() => {
+    if (!academicMonthBounds) return
+    setCursor((c) => {
+      if (isBeforeBound(c, academicMonthBounds.min)) return academicMonthBounds.min
+      if (isAfterBound(c, academicMonthBounds.max)) return academicMonthBounds.max
+      return c
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [academicMonthBounds])
+
+  const canGoPrevMonth = !academicMonthBounds || !isBeforeBound({ year: cursor.year, month: cursor.month - 1 }, academicMonthBounds.min)
+  const canGoNextMonth = !academicMonthBounds || !isAfterBound({ year: cursor.year, month: cursor.month + 1 }, academicMonthBounds.max)
 
   useEffect(() => {
     loadEvents()
     loadBlocks()
     loadRestrictedPeriods()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursor, venueFilter])
+  }, [cursor, venueFilter, currentAcademicYear])
 
   async function loadRestrictedPeriods() {
     const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
@@ -128,6 +228,11 @@ export default function CalendarOfActivities() {
       .order('start_time', { ascending: true })
 
     if (venueFilter !== 'all') query = query.eq('venue_id', venueFilter)
+    // When a current academic year is set, the calendar only ever shows
+    // that academic year's own events — even a date inside the visible
+    // range that belongs to another academic year's tagged event stays
+    // hidden.
+    if (currentAcademicYear) query = query.eq('academic_year_id', currentAcademicYear.id)
 
     const { data, error: err } = await query
 
@@ -203,6 +308,96 @@ export default function CalendarOfActivities() {
   function periodsForDay(date) {
     const iso = toISODate(date)
     return restrictedPeriods.filter((p) => p.start_date <= iso && p.end_date >= iso)
+  }
+
+  function termBreaksForDay(date) {
+    const iso = toISODate(date)
+    return termBreaks.filter((b) => b.start_date <= iso && b.end_date >= iso)
+  }
+
+  function academicYearLabelFor(startISO, endISO) {
+    const startYear = new Date(`${startISO}T00:00:00`).getFullYear()
+    const endYear = new Date(`${endISO}T00:00:00`).getFullYear()
+    return `AY ${startYear}–${endYear}`
+  }
+
+  async function handleSetAcademicYear(e) {
+    e.preventDefault()
+    setAyError('')
+    if (!ayForm.start_date || !ayForm.end_date) return
+    if (ayForm.end_date <= ayForm.start_date) {
+      setAyError("End date must be after the start date.")
+      return
+    }
+    setSavingAy(true)
+    // Unset whatever's currently marked current first — the unique
+    // partial index only allows one is_current row at a time.
+    await supabase.from('academic_years').update({ is_current: false }).eq('is_current', true)
+    const { error: err } = await supabase.from('academic_years').insert({
+      label: academicYearLabelFor(ayForm.start_date, ayForm.end_date),
+      start_date: ayForm.start_date,
+      end_date: ayForm.end_date,
+      is_current: true,
+      created_by: profile?.id,
+    })
+    setSavingAy(false)
+    if (err) {
+      setAyError('Could not set this academic year. Please try again.')
+      // Re-fetch in case the unset-current above went through but the
+      // insert failed — don't leave the app with NO current year.
+      loadAcademicYear()
+      return
+    }
+    setAyForm({ start_date: '', end_date: '' })
+    loadAcademicYear()
+  }
+
+  async function handleReactivateAcademicYear(yearId) {
+    setSavingAy(true)
+    await supabase.from('academic_years').update({ is_current: false }).eq('is_current', true)
+    await supabase.from('academic_years').update({ is_current: true }).eq('id', yearId)
+    setSavingAy(false)
+    loadAcademicYear()
+  }
+
+  async function handleAddTerm(e) {
+    e.preventDefault()
+    setTermError('')
+    if (!currentAcademicYear) {
+      setTermError('Set a current academic year first.')
+      return
+    }
+    if (!termForm.label.trim() || !termForm.start_date || !termForm.end_date) return
+    if (termForm.end_date <= termForm.start_date) {
+      setTermError("End date must be after the start date.")
+      return
+    }
+    if (termForm.start_date < currentAcademicYear.start_date || termForm.end_date > currentAcademicYear.end_date) {
+      setTermError('Term dates must fall within the current academic year.')
+      return
+    }
+    setSavingTerm(true)
+    const { error: err } = await supabase.from('academic_terms').insert({
+      academic_year_id: currentAcademicYear.id,
+      label: termForm.label.trim(),
+      start_date: termForm.start_date,
+      end_date: termForm.end_date,
+      sort_order: terms.length,
+      created_by: profile?.id,
+    })
+    setSavingTerm(false)
+    if (err) {
+      setTermError('Could not add this term. Please try again.')
+      return
+    }
+    setTermForm({ label: '', start_date: '', end_date: '' })
+    loadAcademicYear()
+  }
+
+  async function handleDeleteTerm(termId) {
+    await supabase.from('academic_terms').delete().eq('id', termId)
+    setConfirmDeleteTermId(null)
+    loadAcademicYear()
   }
 
   async function handleSchedulePeriod(e) {
@@ -329,12 +524,22 @@ export default function CalendarOfActivities() {
   function changeMonth(delta) {
     setCursor((c) => {
       const d = new Date(c.year, c.month + delta, 1)
-      return { year: d.getFullYear(), month: d.getMonth() }
+      const next = { year: d.getFullYear(), month: d.getMonth() }
+      if (academicMonthBounds) {
+        if (isBeforeBound(next, academicMonthBounds.min)) return academicMonthBounds.min
+        if (isAfterBound(next, academicMonthBounds.max)) return academicMonthBounds.max
+      }
+      return next
     })
   }
 
   function goToday() {
-    setCursor({ year: today.getFullYear(), month: today.getMonth() })
+    let next = { year: today.getFullYear(), month: today.getMonth() }
+    if (academicMonthBounds) {
+      if (isBeforeBound(next, academicMonthBounds.min)) next = academicMonthBounds.min
+      if (isAfterBound(next, academicMonthBounds.max)) next = academicMonthBounds.max
+    }
+    setCursor(next)
   }
 
   async function updateBookingStatus(eventId, status) {
@@ -366,19 +571,36 @@ export default function CalendarOfActivities() {
     <div className="cal-page">
       <div className="cal-toolbar">
         <div className="cal-toolbar__nav">
-          <button className="cal-icon-btn" onClick={() => changeMonth(-1)} aria-label="Previous month">
+          <button className="cal-icon-btn" onClick={() => changeMonth(-1)} aria-label="Previous month" disabled={!canGoPrevMonth}>
             <ChevronLeft size={17} />
           </button>
           <span className="cal-toolbar__month">
             <CalendarDays size={16} /> {monthLabel}
           </span>
-          <button className="cal-icon-btn" onClick={() => changeMonth(1)} aria-label="Next month">
+          <button className="cal-icon-btn" onClick={() => changeMonth(1)} aria-label="Next month" disabled={!canGoNextMonth}>
             <ChevronRight size={17} />
           </button>
           <button className="cal-today-btn" onClick={goToday}>Today</button>
+          {currentAcademicYear ? (
+            <span className="cal-ay-badge" title={`${currentAcademicYear.start_date} – ${currentAcademicYear.end_date}`}>
+              <GraduationCap size={13} /> {currentAcademicYear.label}
+            </span>
+          ) : canManageAcademic ? (
+            <span className="cal-ay-badge cal-ay-badge--warn">
+              <AlertCircle size={13} /> No current academic year set
+            </span>
+          ) : null}
         </div>
 
         <div className="cal-toolbar__actions">
+          {canManageAcademic && (
+            <button
+              className="cal-btn cal-btn--outline"
+              onClick={() => { setAyError(''); setAyForm({ start_date: '', end_date: '' }); setTermError(''); setShowAcademicModal(true) }}
+            >
+              <GraduationCap size={14} /> Academic Year & Terms
+            </button>
+          )}
           <select
             className="cal-select"
             value={venueFilter}
@@ -469,6 +691,7 @@ export default function CalendarOfActivities() {
         <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
         <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam period (booking discouraged)</span>
+        <span className="cal-legend__item"><i className="cal-dot cal-dot--term_break" /> Term break (booking not recommended)</span>
       </div>
       <p className="cal-empty-note">
         Activities are booked automatically from Event Applications in the Submission Bin — there's no direct booking from the calendar.
@@ -492,12 +715,13 @@ export default function CalendarOfActivities() {
             const dayEvents = eventsForDay(date)
             const dayBlocks = blocksForDay(date)
             const dayPeriods = periodsForDay(date)
+            const dayTermBreaks = termBreaksForDay(date)
             const isToday = toISODate(date) === toISODate(today)
             const iso = toISODate(date)
             return (
               <div
                 key={date.toISOString()}
-                className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''} ${dayPeriods.length ? `cal-cell--${dayPeriods[0].kind}` : ''}`}
+                className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''} ${dayPeriods.length ? `cal-cell--${dayPeriods[0].kind}` : (dayTermBreaks.length ? 'cal-cell--term_break' : '')}`}
               >
                 <div className="cal-cell__head">
                   <span className="cal-cell__num">{date.getDate()}</span>
@@ -511,6 +735,16 @@ export default function CalendarOfActivities() {
                       title={p.label}
                     >
                       {p.kind === 'exam_period' ? <GraduationCap size={11} /> : <PartyPopper size={11} />} {p.label}
+                    </button>
+                  ))}
+                  {dayTermBreaks.filter((b) => b.start_date === iso).map((b) => (
+                    <button
+                      key={b.id}
+                      className="cal-chip cal-chip--term_break"
+                      onClick={() => setSelectedTermBreak(b)}
+                      title={b.label}
+                    >
+                      <GraduationCap size={11} /> Term Break
                     </button>
                   ))}
                   {dayBlocks.map((b) => (
@@ -957,6 +1191,180 @@ export default function CalendarOfActivities() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {selectedTermBreak && (
+        <div className="cal-modal-backdrop" onClick={() => setSelectedTermBreak(null)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setSelectedTermBreak(null)}>
+              <X size={18} />
+            </button>
+            <span className="cal-status-badge cal-status-badge--term_break">
+              <GraduationCap size={12} /> Term Break
+            </span>
+            <h3 className="cal-modal__title">{selectedTermBreak.label}</h3>
+            <div className="cal-modal__details">
+              <div className="cal-modal__row">
+                <CalendarDays size={14} /> {selectedTermBreak.start_date}
+                {selectedTermBreak.end_date !== selectedTermBreak.start_date && ` – ${selectedTermBreak.end_date}`}
+              </div>
+              <p className="cal-modal__desc">
+                <AlertCircle size={13} /> This falls between two terms. Booking activities during a term break
+                is not recommended.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAcademicModal && (
+        <div className="cal-modal-backdrop" onClick={() => setShowAcademicModal(false)}>
+          <div className="cal-modal cal-modal--wide" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setShowAcademicModal(false)}>
+              <X size={18} />
+            </button>
+            <h3 className="cal-modal__title"><GraduationCap size={16} /> Academic Year &amp; Terms</h3>
+
+            <div className="cal-ay-section">
+              <h4 className="cal-ay-section__title">Current Academic Year</h4>
+              {currentAcademicYear ? (
+                <div className="cal-ay-current">
+                  <span className="cal-ay-current__label">{currentAcademicYear.label}</span>
+                  <span className="cal-ay-current__range">{currentAcademicYear.start_date} – {currentAcademicYear.end_date}</span>
+                </div>
+              ) : (
+                <p className="cal-empty-note">No current academic year is set yet.</p>
+              )}
+
+              {ayError && <div className="cal-error"><AlertCircle size={14} /> {ayError}</div>}
+
+              <form className="cal-move-form" onSubmit={handleSetAcademicYear}>
+                <div className="cal-move-form__row">
+                  <label className="cal-move-form__field">
+                    Academic Year Start
+                    <input type="date" value={ayForm.start_date}
+                      onChange={(e) => setAyForm({ ...ayForm, start_date: e.target.value })} required />
+                  </label>
+                  <label className="cal-move-form__field">
+                    Academic Year End
+                    <input type="date" value={ayForm.end_date}
+                      onChange={(e) => setAyForm({ ...ayForm, end_date: e.target.value })} required />
+                  </label>
+                </div>
+                <p className="cal-empty-note">
+                  Setting a new academic year here replaces the current one. The calendar will then only show
+                  this academic year's activities, plus its date range with one extra month before and after.
+                  All new applications get tagged to whichever academic year is current at the time.
+                </p>
+                <div className="cal-modal__actions">
+                  <button className="cal-btn cal-btn--gold" type="submit" disabled={savingAy}>
+                    {savingAy ? <Loader2 size={14} className="spin" /> : 'Set as Current Academic Year'}
+                  </button>
+                </div>
+              </form>
+
+              {pastAcademicYears.length > 0 && (
+                <div className="cal-ay-past">
+                  <h4 className="cal-ay-section__title">Past Academic Years</h4>
+                  <ul className="cal-ay-past__list">
+                    {pastAcademicYears.map((y) => (
+                      <li key={y.id}>
+                        <span>{y.label} <span className="cal-ay-past__range">({y.start_date} – {y.end_date})</span></span>
+                        <button className="cal-btn cal-btn--outline cal-btn--sm" onClick={() => handleReactivateAcademicYear(y.id)} disabled={savingAy}>
+                          Make Current
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div className="cal-ay-section">
+              <h4 className="cal-ay-section__title">Terms</h4>
+              {!currentAcademicYear ? (
+                <p className="cal-empty-note">Set a current academic year first.</p>
+              ) : (
+                <>
+                  {terms.length === 0 ? (
+                    <p className="cal-empty-note">No terms defined yet for {currentAcademicYear.label}.</p>
+                  ) : (
+                    <ul className="cal-ay-term-list">
+                      {terms.map((t) => {
+                        const isConfirming = confirmDeleteTermId === t.id
+                        return (
+                          <li key={t.id}>
+                            <span className="cal-ay-term-list__label">{t.label}</span>
+                            <span className="cal-ay-term-list__range">{t.start_date} – {t.end_date}</span>
+                            {isConfirming ? (
+                              <span className="cal-row-actions">
+                                <button className="cal-icon-btn" onClick={() => handleDeleteTerm(t.id)} title="Confirm delete">
+                                  <Trash2 size={13} />
+                                </button>
+                                <button className="cal-icon-btn" onClick={() => setConfirmDeleteTermId(null)} title="Cancel">
+                                  <X size={13} />
+                                </button>
+                              </span>
+                            ) : (
+                              <button className="cal-icon-btn" onClick={() => setConfirmDeleteTermId(t.id)} title="Delete term">
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+
+                  {termBreaks.length > 0 && (
+                    <ul className="cal-ay-term-list cal-ay-term-list--breaks">
+                      {termBreaks.map((b) => (
+                        <li key={b.id}>
+                          <span className="cal-ay-term-list__label"><GraduationCap size={12} /> Term Break</span>
+                          <span className="cal-ay-term-list__range">{b.start_date} – {b.end_date}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {termError && <div className="cal-error"><AlertCircle size={14} /> {termError}</div>}
+
+                  <form className="cal-move-form" onSubmit={handleAddTerm}>
+                    <label className="cal-move-form__field">
+                      Term Label
+                      <input type="text" value={termForm.label}
+                        onChange={(e) => setTermForm({ ...termForm, label: e.target.value })}
+                        placeholder="e.g. 1st Term" required />
+                    </label>
+                    <div className="cal-move-form__row">
+                      <label className="cal-move-form__field">
+                        Term Start
+                        <input type="date" value={termForm.start_date}
+                          onChange={(e) => setTermForm({ ...termForm, start_date: e.target.value })}
+                          min={currentAcademicYear.start_date} max={currentAcademicYear.end_date} required />
+                      </label>
+                      <label className="cal-move-form__field">
+                        Term End
+                        <input type="date" value={termForm.end_date}
+                          onChange={(e) => setTermForm({ ...termForm, end_date: e.target.value })}
+                          min={currentAcademicYear.start_date} max={currentAcademicYear.end_date} required />
+                      </label>
+                    </div>
+                    <p className="cal-empty-note">
+                      Any gap between terms is automatically treated as a term break — booking activities
+                      then isn't recommended, but it's not blocked outright.
+                    </p>
+                    <div className="cal-modal__actions">
+                      <button className="cal-btn cal-btn--gold" type="submit" disabled={savingTerm}>
+                        {savingTerm ? <Loader2 size={14} className="spin" /> : 'Add Term'}
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

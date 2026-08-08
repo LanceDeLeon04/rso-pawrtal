@@ -14,6 +14,15 @@ export function toISODate(date) {
   return `${y}-${m}-${d}`
 }
 
+// Adds (or subtracts, with a negative n) whole days to an ISO date
+// string and returns a new ISO date string. Used for computing term
+// breaks (the day after one term ends, the day before the next begins).
+export function addDaysISO(isoDate, n) {
+  const d = new Date(`${isoDate}T00:00:00`)
+  d.setDate(d.getDate() + n)
+  return toISODate(d)
+}
+
 export function startOfMonth(year, month) {
   return new Date(year, month, 1)
 }
