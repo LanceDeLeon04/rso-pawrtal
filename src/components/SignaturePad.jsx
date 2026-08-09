@@ -1,14 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { Eraser } from 'lucide-react'
+import { Eraser, PenLine, Paperclip, X } from 'lucide-react'
 import './SignaturePad.css'
 
 // A simple mouse/touch signature pad. Exposes the drawn signature to
 // the parent as a PNG data URL via onChange (null while empty).
+//
+// Remote signers default to drawing a live signature (the pad is always
+// shown first). A small "Attach" button on the side lets them switch to
+// uploading an image of their signature instead — e.g. someone signing
+// from a phone with a shaky touchscreen, or who has a pre-scanned
+// signature image they'd rather use. Switching back to "Draw" clears
+// whatever was attached, so only one signature source is ever active.
 export default function SignaturePad({ onChange }) {
   const canvasRef = useRef(null)
+  const fileInputRef = useRef(null)
   const drawing = useRef(false)
   const lastPoint = useRef(null)
   const [isEmpty, setIsEmpty] = useState(true)
+  const [mode, setMode] = useState('draw') // 'draw' | 'upload' — draw is always the default
+  const [uploadPreview, setUploadPreview] = useState(null)
+  const [uploadError, setUploadError] = useState('')
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -84,23 +95,119 @@ export default function SignaturePad({ onChange }) {
     onChange?.(null)
   }
 
+  function switchToDraw() {
+    if (mode === 'draw') return
+    setMode('draw')
+    setUploadPreview(null)
+    setUploadError('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    // Drawing pad is empty until they draw again — clear whatever the
+    // upload had set.
+    onChange?.(null)
+  }
+
+  function switchToUpload() {
+    if (mode === 'upload') return
+    // Leaving draw mode wipes the canvas so the two sources never mix.
+    clear()
+    setMode('upload')
+  }
+
+  function handleFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setUploadError('Please attach an image file (PNG or JPG).')
+      return
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      setUploadError('Image is too large — please attach a file under 3MB.')
+      return
+    }
+    setUploadError('')
+    const reader = new FileReader()
+    reader.onload = () => {
+      setUploadPreview(reader.result)
+      onChange?.(reader.result)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function removeUpload() {
+    setUploadPreview(null)
+    setUploadError('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    onChange?.(null)
+  }
+
   return (
-    <div className="sig-pad">
-      <canvas
-        ref={canvasRef}
-        className="sig-pad__canvas"
-        onMouseDown={start}
-        onMouseMove={move}
-        onMouseUp={end}
-        onMouseLeave={end}
-        onTouchStart={start}
-        onTouchMove={move}
-        onTouchEnd={end}
-      />
-      {isEmpty && <span className="sig-pad__hint">Sign here</span>}
-      <button type="button" className="sig-pad__clear" onClick={clear}>
-        <Eraser size={14} /> Clear
-      </button>
+    <div className="sig-pad-wrap">
+      <div className="sig-pad">
+        {mode === 'draw' ? (
+          <>
+            <canvas
+              ref={canvasRef}
+              className="sig-pad__canvas"
+              onMouseDown={start}
+              onMouseMove={move}
+              onMouseUp={end}
+              onMouseLeave={end}
+              onTouchStart={start}
+              onTouchMove={move}
+              onTouchEnd={end}
+            />
+            {isEmpty && <span className="sig-pad__hint">Sign here</span>}
+            <button type="button" className="sig-pad__clear" onClick={clear}>
+              <Eraser size={14} /> Clear
+            </button>
+          </>
+        ) : (
+          <div className="sig-pad__upload">
+            {uploadPreview ? (
+              <>
+                <img src={uploadPreview} alt="Attached signature" className="sig-pad__upload-preview" />
+                <button type="button" className="sig-pad__clear" onClick={removeUpload}>
+                  <X size={14} /> Remove
+                </button>
+              </>
+            ) : (
+              <label className="sig-pad__upload-cta">
+                <Paperclip size={18} />
+                <span>Attach a signature image</span>
+                <span className="sig-pad__upload-hint">PNG or JPG, under 3MB</span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFile}
+                  hidden
+                />
+              </label>
+            )}
+            {uploadError && <p className="sig-pad__upload-error">{uploadError}</p>}
+          </div>
+        )}
+      </div>
+
+      {/* Side rail: live signature is always the first/default option. */}
+      <div className="sig-pad-rail">
+        <button
+          type="button"
+          className={`sig-pad-rail__btn${mode === 'draw' ? ' sig-pad-rail__btn--active' : ''}`}
+          onClick={switchToDraw}
+          title="Draw signature"
+        >
+          <PenLine size={16} />
+        </button>
+        <button
+          type="button"
+          className={`sig-pad-rail__btn${mode === 'upload' ? ' sig-pad-rail__btn--active' : ''}`}
+          onClick={switchToUpload}
+          title="Attach signature image"
+        >
+          <Paperclip size={16} />
+        </button>
+      </div>
     </div>
   )
 }

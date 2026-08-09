@@ -1,10 +1,95 @@
+.sig-pad-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
 .sig-pad {
   position: relative;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: 1.5px dashed #c7c9d9;
   border-radius: 10px;
   background: #fbfbfe;
   overflow: hidden;
+}
+
+/* Small side rail: draw is listed first and is the default active mode. */
+.sig-pad-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sig-pad-rail__btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid #d7d9e6;
+  background: #fff;
+  color: #7a7d99;
+  cursor: pointer;
+}
+
+.sig-pad-rail__btn:hover {
+  background: #f2f3fa;
+  color: #4b4d6a;
+}
+
+.sig-pad-rail__btn--active {
+  background: #2a266d;
+  border-color: #2a266d;
+  color: #fff;
+}
+
+.sig-pad__upload {
+  position: relative;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sig-pad__upload-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #7a7d99;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: center;
+  padding: 12px;
+}
+
+.sig-pad__upload-cta:hover {
+  color: #4b4d6a;
+}
+
+.sig-pad__upload-hint {
+  font-size: 0.72rem;
+  color: #b3b5c6;
+}
+
+.sig-pad__upload-preview {
+  max-width: 90%;
+  max-height: 140px;
+  object-fit: contain;
+}
+
+.sig-pad__upload-error {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 90px;
+  margin: 0;
+  font-size: 0.72rem;
+  color: #c0392b;
 }
 
 .sig-pad__canvas {

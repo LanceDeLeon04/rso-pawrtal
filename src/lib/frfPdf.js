@@ -56,29 +56,43 @@ function wrapText(text, font, size, maxWidth) {
  */
 export async function generateFacilityReservationFormPdf(data) {
   const doc = await PDFDocument.create()
-  const page = doc.addPage([612, 792]) // US Letter
+  // The official FMO form is an A4 page (595.32 x 841.92 pt), not US Letter.
+  // Measured directly from the original PDF (FMO_-_Facility_Reservation_Form).
+  const PAGE_W = 595.32
+  const PAGE_H = 841.92
+  const page = doc.addPage([PAGE_W, PAGE_H])
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const italic = await doc.embedFont(StandardFonts.HelveticaOblique)
   const boldItalic = await doc.embedFont(StandardFonts.HelveticaBoldOblique)
 
-  const M = 36
-  const W = 612 - M * 2
-  let y = 792 - M
+  // Margin measured from the original (navy bars start/end 25pt in from each edge).
+  const M = 25
+  const W = PAGE_W - M * 2
+  let y = PAGE_H - M
 
   // ---------- Header: logo lockup + QR ----------
+  // Logo/QR sizes and the top-of-page offset are measured from the original
+  // PDF render (logo spans ~385pt wide; QR is ~74pt square, right-aligned to
+  // the margin; both start ~35pt below the page's top edge).
   const logoBytes = base64ToBytes(FRF_HEADER_LOGO_PNG_BASE64)
   const logoImage = await doc.embedPng(logoBytes)
-  const logoW = 280
+  const logoW = 385
   const logoH = logoW * (logoImage.height / logoImage.width)
-  const qrSize = 64
-  const qrX = 612 - M - qrSize
-  const headerH = Math.max(logoH, qrSize + 18)
+  const qrSize = 74
+  const qrX = PAGE_W - M - qrSize
+  const headerTopGap = 8 // small gap from page top margin to top of logo/QR
+  const logoTopY = y - headerTopGap
 
-  page.drawImage(logoImage, { x: M, y: y - headerH / 2 - logoH / 2, width: logoW, height: logoH })
+  page.drawImage(logoImage, { x: M, y: logoTopY - logoH, width: logoW, height: logoH })
 
-  const qrTopY = y
+  const qrTopY = y - headerTopGap
   try {
+    // NOTE: the original form's QR encodes a live shortlink
+    // (https://q.me-qr.com/...) to the FMO Policies & Procedures doc. We
+    // don't have that real destination, so we encode the doc code instead —
+    // this keeps the form self-consistent but means the QR's module pattern
+    // won't pixel-match the source (it points to different underlying data).
     const qrDataUrl = await QRCode.toDataURL(data.docCode || 'LAG-ADM-FMO-D-PO-001', {
       margin: 0, width: 256, color: { dark: '#2a266d', light: '#ffffff' },
     })
@@ -95,10 +109,12 @@ export async function generateFacilityReservationFormPdf(data) {
     y: qrTopY - qrSize - 10, size: 6.5, font, color: rgb(0.3, 0.3, 0.3),
   })
 
-  y -= headerH + 14
+  const headerH = Math.max(logoH, qrSize + 18)
+  y = logoTopY - headerH - 6
 
   // ---------- Section bar ----------
-  function bar(text, height = 22, size = 12) {
+  // Bar height measured from the original: ~27.5pt (57px @ 150dpi).
+  function bar(text, height = 27.5, size = 12.5) {
     page.drawRectangle({ x: M, y: y - height, width: W, height, color: NAVY })
     page.drawText(text, { x: M + 8, y: y - height / 2 - size / 2 + 2, size, font: bold, color: WHITE })
     y -= height
@@ -106,7 +122,7 @@ export async function generateFacilityReservationFormPdf(data) {
 
   // ---------- Gray disclaimer box ----------
   function disclaimerBox() {
-    const h = 52
+    const h = 50
     page.drawRectangle({ x: M, y: y - h, width: W, height: h, color: GRAY_BOX })
     let ty = y - 14
     page.drawText('By signing this form, the requestor confirms they have read, understood, and agreed to the', {
@@ -133,22 +149,24 @@ export async function generateFacilityReservationFormPdf(data) {
   }
 
   // ---------- Field box: label band (filled) + value band (white) ----------
-  function fieldBox(x, w, label, value, h = 50, labelH = 26, subLabel = null) {
+  // Row height measured from the original: ~63-67pt total (label band ~34pt
+  // + value band ~29pt), noticeably taller than the previous 50pt.
+  function fieldBox(x, w, label, value, h = 64, labelH = 34, subLabel = null) {
     page.drawRectangle({ x, y: y - h, width: w, height: h, color: WHITE, borderColor: BORDER, borderWidth: 1.25 })
     page.drawRectangle({ x, y: y - labelH, width: w, height: labelH, color: LABEL_FILL, borderColor: BORDER, borderWidth: 1.25 })
     if (subLabel) {
-      page.drawText(label, { x: x + 8, y: y - 13, size: 10, font: bold, color: INK })
-      page.drawText(subLabel, { x: x + 8, y: y - labelH + 7, size: 7.5, font, color: rgb(0.25, 0.25, 0.25) })
+      page.drawText(label, { x: x + 8, y: y - 15, size: 10, font: bold, color: INK })
+      page.drawText(subLabel, { x: x + 8, y: y - labelH + 8, size: 7.5, font, color: rgb(0.25, 0.25, 0.25) })
     } else {
       page.drawText(label, { x: x + 8, y: y - labelH / 2 - 4, size: 10.5, font: bold, color: INK })
     }
     const lines = wrapText(value || '', font, 9.5, w - 16)
     lines.slice(0, 2).forEach((ln, i) => {
-      page.drawText(ln, { x: x + 8, y: y - labelH - 15 - i * 12, size: 9.5, font, color: INK })
+      page.drawText(ln, { x: x + 8, y: y - labelH - 17 - i * 12, size: 9.5, font, color: INK })
     })
   }
 
-  function fieldRow(cols, h = 50, labelH = 26, gap = 6) {
+  function fieldRow(cols, h = 64, labelH = 34, gap = 6) {
     const totalGap = gap * (cols.length - 1)
     const totalWeight = cols.reduce((s, c) => s + (c.weight ?? 1), 0)
     let x = M
@@ -192,7 +210,7 @@ export async function generateFacilityReservationFormPdf(data) {
 
   // ---------- Equipment Needed & Special Request ----------
   const eqH = 108
-  const eqLabelH = 26
+  const eqLabelH = 30
   page.drawRectangle({ x: M, y: y - eqH, width: W, height: eqH, color: WHITE, borderColor: BORDER, borderWidth: 1.25 })
   page.drawRectangle({ x: M, y: y - eqLabelH, width: W, height: eqLabelH, color: LABEL_FILL, borderColor: BORDER, borderWidth: 1.25 })
   page.drawText('Equipment Needed & Special Request (Please specify.)', { x: M + 8, y: y - eqLabelH / 2 - 4, size: 10.5, font: bold, color: INK })
@@ -231,8 +249,8 @@ export async function generateFacilityReservationFormPdf(data) {
   // ---------- 3. Approval Status ----------
   bar('APPROVAL STATUS')
   y -= 4
-  const approvalRowH = 46
-  const approvalLabelH = 30
+  const approvalRowH = 48
+  const approvalLabelH = 32
   fieldRow([
     { label: 'Initial Review (SDAO)', subLabel: '(Student Activity)', value: data.initialReviewName, weight: 1 },
     { label: 'Review & Endorsed by:', subLabel: '(Adviser/Program Chair)', value: data.adviserName, weight: 1 },
@@ -245,7 +263,7 @@ export async function generateFacilityReservationFormPdf(data) {
 
   // ---------- Footer form code ----------
   page.drawText('LAG-ADM-FMO-F-001', {
-    x: 612 - M - font.widthOfTextAtSize('LAG-ADM-FMO-F-001', 8), y: 24, size: 8, font: bold, color: rgb(0.3, 0.3, 0.3),
+    x: PAGE_W - M - font.widthOfTextAtSize('LAG-ADM-FMO-F-001', 8), y: 24, size: 8, font: bold, color: rgb(0.3, 0.3, 0.3),
   })
 
   return doc.save()

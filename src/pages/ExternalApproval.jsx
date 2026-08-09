@@ -292,7 +292,7 @@ export default function ExternalApproval() {
                 />
                 {decisionMode === 'approve' && (
                   <div className="xap-sig">
-                    <label>Draw your signature to approve</label>
+                    <label>Sign to approve <span className="xap-muted">(draw your signature, or attach an image)</span></label>
                     <SignaturePad onChange={setSignature} />
                   </div>
                 )}
