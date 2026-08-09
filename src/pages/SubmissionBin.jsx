@@ -2825,6 +2825,23 @@ export default function SubmissionBin() {
                       )}
                     </div>
 
+                    {(() => {
+                      const dayGateCappedIngress = !!entry.start_time && entry.start_time < '08:00'
+                      const dayGateCappedEgress = !!entry.end_time && entry.end_time > '19:00'
+                      if (!dayGateCappedIngress && !dayGateCappedEgress) return null
+                      return (
+                        <div className="sb-form-notice">
+                          <AlertCircle size={14} />
+                          {dayGateCappedIngress && dayGateCappedEgress
+                            ? 'This day starts before 8:00 AM and ends after 7:00 PM, so ingress is only available from 6:00 AM and egress only until 9:00 PM.'
+                            : dayGateCappedIngress
+                              ? 'This day starts before 8:00 AM, so ingress is only available from 6:00 AM.'
+                              : 'This day ends after 7:00 PM, so egress is only available until 9:00 PM.'}
+                          {' '}Need more than that? Use "Request additional ingress/egress time for this day" below.
+                        </div>
+                      )
+                    })()}
+
                     {appForm.medium !== 'online' && (
                       <div className="sb-multiday-venues">
                         <div className="sb-field sb-field--full">
@@ -3049,6 +3066,17 @@ export default function SubmissionBin() {
                         </label>
                       </div>
                     )}
+                    {(() => {
+                      const dayIngressNeedsLetter = entry.wants_additional_time && !!entry.additional_ingress_time && entry.additional_ingress_time < '06:00'
+                      const dayEgressNeedsLetter = entry.wants_additional_time && !!entry.additional_egress_time && entry.additional_egress_time > '21:00'
+                      if (!dayIngressNeedsLetter && !dayEgressNeedsLetter) return null
+                      return (
+                        <div className="sb-form-error">
+                          <AlertCircle size={14} />
+                          Your requested {dayIngressNeedsLetter && dayEgressNeedsLetter ? 'ingress and egress times fall' : dayIngressNeedsLetter ? 'ingress time falls' : 'egress time falls'} outside gate hours (before 6:00 AM or after 9:00 PM) for this day. A letter must be submitted to the Security Office for approval. Once approved by the Academic Director, this will be automatically assigned to the org President via the Assignment tab, due 3 days before the event.
+                        </div>
+                      )
+                    })()}
                   </div>
                 ))}
                 <p className="sb-hint">
@@ -3083,7 +3111,7 @@ export default function SubmissionBin() {
               </div>
             )}
 
-            {(gateCappedIngress || gateCappedEgress) && !appForm.is_continuing && (
+            {(gateCappedIngress || gateCappedEgress) && !appForm.is_continuing && !appForm.is_multi_day && (
               <div className="sb-form-notice">
                 <AlertCircle size={14} />
                 {gateCappedIngress && gateCappedEgress
@@ -3095,7 +3123,7 @@ export default function SubmissionBin() {
               </div>
             )}
 
-            {!appForm.is_continuing && (
+            {!appForm.is_continuing && !appForm.is_multi_day && (
               <div className="sb-field">
                 <button
                   type="button"
