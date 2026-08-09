@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
+import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
@@ -33,6 +34,13 @@ const ACTIVITY_TYPES = [
   { value: 'special_event', label: 'Special Event' },
   { value: 'other', label: 'Others' },
 ]
+
+// Fixed FMO Facility Reservation Form signatories — these two roles are
+// always the same two people regardless of which org/event is applying,
+// so they're printed directly rather than pulled from any submission
+// field.
+const FRF_SDAO_REVIEWER = 'RICHMOND M. DELA VIÑA'
+const FRF_ACADEMIC_DIRECTOR = 'NEILSON A. SILVA, Ed.D.'
 
 // Merchandise Proposals always have "Type of Activity" = Marketing
 // Proposal (set automatically, not user-selected) and have no start/end
@@ -319,6 +327,68 @@ function formatSingleDateShort(iso) {
   return `${MONTH_NAMES[m - 1]} ${d}`
 }
 
+// Groups an approved event application's venue selections into one entry
+// per distinct facility (venue + room/lab/"Others" detail) — "1 Venue =
+// 1 FRF" per the FMO's paper process. Handles both single-day
+// (venue_ids/venue_details on the row) and multi-day (per-day venue_ids/
+// venue_details inside event_dates) submissions, collecting every date
+// (and that date's time range) each facility is used for so the FRF's
+// "Event Date"/"Time Duration" fields can show the full picture even if
+// the same room is booked across several of the event's days.
+function buildFacilityReservationGroups(sub, venues) {
+  if (!sub || sub.medium === 'online') return []
+  const groups = new Map() // key: `${venueId}::${detail}` -> { venueId, detail, dates: Set, times: Map(date -> {start,end}) }
+
+  function addEntry(venueId, detail, dateIso, startTime, endTime) {
+    if (!venueId) return
+    const key = `${venueId}::${detail || ''}`
+    if (!groups.has(key)) groups.set(key, { venueId, detail: detail || '', dates: [], times: new Map() })
+    const g = groups.get(key)
+    if (dateIso && !g.dates.includes(dateIso)) g.dates.push(dateIso)
+    g.times.set(dateIso || '', { start: startTime, end: endTime })
+  }
+
+  if (sub.is_multi_day && sub.event_dates?.length) {
+    for (const d of sortedMultiDayDates(sub.event_dates)) {
+      const ids = dayVenueIds(d)
+      for (const id of ids) {
+        addEntry(
+          id, dayVenueDetail(d, id), d.event_date,
+          d.additional_ingress_time || d.start_time,
+          d.additional_egress_time || d.end_time,
+        )
+      }
+    }
+  } else {
+    const ids = sub.venue_ids?.length ? sub.venue_ids : (sub.venue_id ? [sub.venue_id] : [])
+    for (const id of ids) {
+      const detail = sub.venue_details?.[id] ?? (id === sub.venue_id ? sub.venue_detail : '')
+      addEntry(
+        id, detail, sub.event_date,
+        sub.additional_ingress_time || sub.start_time,
+        sub.additional_egress_time || sub.end_time,
+      )
+    }
+  }
+
+  return [...groups.values()].map((g) => {
+    const venueName = venueNameFor(g.venueId, venues, g.detail)
+    const sortedDates = [...g.dates].sort()
+    const starts = sortedDates.map((d) => g.times.get(d)?.start).filter(Boolean).sort()
+    const ends = sortedDates.map((d) => g.times.get(d)?.end).filter(Boolean).sort()
+    const timeRangeLabel = [
+      starts[0] && formatTime(starts[0]),
+      ends[ends.length - 1] && formatTime(ends[ends.length - 1]),
+    ].filter(Boolean).join(' – ')
+    return {
+      venueId: g.venueId,
+      venueName,
+      dateLabel: sortedDates.length ? formatEventDates(sortedDates) : '—',
+      timeRangeLabel: timeRangeLabel || '—',
+    }
+  })
+}
+
 const EMPTY_APP_FORM = {
   title: '', contact_person: '', contact_number: '',
   // venue_id/venue_detail are kept (mirroring venue_ids[0]) for backward
@@ -462,6 +532,8 @@ export default function SubmissionBin() {
   const [approvalLinks, setApprovalLinks] = useState([])
   const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
   const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
+  const [generatingFRF, setGeneratingFRF] = useState(false)
+  const [frfError, setFrfError] = useState('')
   const [linkError, setLinkError] = useState('')
   const [copiedRole, setCopiedRole] = useState(null)
 
@@ -1761,6 +1833,7 @@ export default function SubmissionBin() {
     setResubmitNote('')
     setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
     setLinkError('')
+    setFrfError('')
     setApprovalLinks([])
     setDetailLoading(true)
     if (sub.type === 'event_application' || sub.type === 'merchandise') {
@@ -2320,6 +2393,71 @@ export default function SubmissionBin() {
     )
 
     await performAction('advance', nextAction, 'conditionally approved (task deadline extended)')
+  }
+
+  // Generates and downloads one Facility Reservation Form PDF per
+  // distinct venue/facility the approved event application uses ("1
+  // Venue = 1 FRF"). Pulls the Adviser/Dean names from the external
+  // approval chain already collected for this submission, and stamps
+  // the two fixed FMO signatories (SDAO reviewer, Academic Director).
+  async function generateFacilityReservationForms(sub) {
+    setGeneratingFRF(true)
+    setFrfError('')
+    try {
+      const { data: fullSub } = await supabase
+        .from('submissions')
+        .select('*, organizations ( name, category ), venues ( name )')
+        .eq('id', sub.id)
+        .single()
+      if (!fullSub) throw new Error('Could not load the submission.')
+
+      const groups = buildFacilityReservationGroups(fullSub, venues)
+      if (groups.length === 0) {
+        setFrfError('This application has no on-campus venue to reserve (online events don\u2019t need an FRF).')
+        return
+      }
+
+      const adviserName = approvalLinks.find((l) => l.role === 'adviser')?.person_name || ''
+      const deanName = approvalLinks.find((l) => l.role === 'dean')?.person_name || ''
+
+      for (const group of groups) {
+        const pdfBytes = await generateFacilityReservationFormPdf({
+          requestorName: fullSub.contact_person,
+          orgName: fullSub.organizations?.name || '',
+          position: fullSub.position,
+          contactNumber: fullSub.contact_number,
+          email: fullSub.email,
+          venueName: group.venueName,
+          eventDateLabel: group.dateLabel,
+          timeRangeLabel: group.timeRangeLabel,
+          eventName: fullSub.title,
+          expectedAttendance: fullSub.target_participants,
+          initialReviewName: FRF_SDAO_REVIEWER,
+          adviserName,
+          deanName,
+          directorName: FRF_ACADEMIC_DIRECTOR,
+          fmoHeadName: '',
+        })
+        const safeVenue = (group.venueName || 'Venue').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `Facility-Reservation-Form-${safeVenue}-${sub.id}.pdf`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        URL.revokeObjectURL(url)
+        // Small stagger so browsers don't block multiple simultaneous downloads.
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      }
+    } catch (err) {
+      console.error('Failed to generate Facility Reservation Form(s)', err)
+      setFrfError('Something went wrong generating the Facility Reservation Form(s). Please try again.')
+    } finally {
+      setGeneratingFRF(false)
+    }
   }
 
   const visibleSubmissions = search.trim()
@@ -4105,6 +4243,24 @@ export default function SubmissionBin() {
                       </div>
                     )}
                   </div>
+
+                  {selected.type === 'event_application' && selected.stage === 'approved' && (
+                    <div className="sb-detail-section">
+                      <span className="sb-detail-section__label">Facility Reservation Form</span>
+                      <p className="sb-empty-note">
+                        Generates one FMO Facility Reservation Form per requested venue, ready to attach to the Security Office letter.
+                      </p>
+                      {frfError && <div className="sb-form-error"><AlertCircle size={13} /> {frfError}</div>}
+                      <button
+                        type="button"
+                        className="sb-btn sb-btn--outline sb-btn--sm sb-btn--full"
+                        disabled={generatingFRF}
+                        onClick={() => generateFacilityReservationForms(selected)}
+                      >
+                        {generatingFRF ? <Loader2 size={14} className="spin" /> : <><Download size={13} /> Generate Facility Request Form/s</>}
+                      </button>
+                    </div>
+                  )}
 
                   <div className="sb-detail-section">
                     <span className="sb-detail-section__label">History</span>
