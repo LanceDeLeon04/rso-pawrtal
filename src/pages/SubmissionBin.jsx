@@ -2592,10 +2592,26 @@ export default function SubmissionBin() {
                 <div className="sb-venue-booking">
                   <div className="sb-form-notice">
                     <AlertCircle size={14} />
-                    Ensure that you have pencil booked every venue above with INSPIRE or Facilities Office before submitting.
+                    Pencil book all facilities selected above with INSPIRE or Facilities Office first — the confirmation below covers every venue at once, not each one individually.
                   </div>
 
-                  {appForm.venue_ids.map((venueId) => {
+                  <label className="sb-field">
+                    Pencil Booked? <span className="sb-optional">(all venues above)</span>
+                    <select value={appForm.pencil_booked} onChange={(e) => setAppForm({ ...appForm, pencil_booked: e.target.value })} required>
+                      <option value="">Select</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </label>
+
+                  {appForm.pencil_booked === 'no' && (
+                    <div className="sb-form-notice sb-form-notice--warn">
+                      <AlertCircle size={14} />
+                      Pencil book every venue above first — the fields below unlock once you confirm "Yes".
+                    </div>
+                  )}
+
+                  {appForm.pencil_booked === 'yes' && appForm.venue_ids.map((venueId) => {
                     const selectedVenue = venues.find((v) => v.id === venueId)
                     const venueName = selectedVenue?.name
                     const detailPrompt = VENUE_DETAIL_PROMPTS[venueName]
@@ -2720,22 +2736,13 @@ export default function SubmissionBin() {
                     )
                   })}
 
-                  {tags.length > 0 && (
+                  {appForm.pencil_booked === 'yes' && tags.length > 0 && (
                     <div className="sb-venue-tag">
                       Tagged as {tags.map((t) => <strong key={t}>{t}</strong>).reduce((a, b) => [a, ', ', b])}
                     </div>
                   )}
 
-                  <label className="sb-field">
-                    Pencil Booked? <span className="sb-optional">(all venues above)</span>
-                    <select value={appForm.pencil_booked} onChange={(e) => setAppForm({ ...appForm, pencil_booked: e.target.value })} required>
-                      <option value="">Select</option>
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
-                    </select>
-                  </label>
-
-                  {anyLab && (
+                  {appForm.pencil_booked === 'yes' && anyLab && (
                     <label className="sb-field">
                       Endorsed by Laboratory Owner? <span className="sb-optional">(e.g. ComLab — ITSO)</span>
                       <select value={appForm.lab_endorsed} onChange={(e) => setAppForm({ ...appForm, lab_endorsed: e.target.value })} required>
@@ -2870,8 +2877,33 @@ export default function SubmissionBin() {
                           />
                         </div>
 
+                        {entry.venue_ids.length > 0 && (
+                          <label className="sb-field">
+                            Pencil-Booked? <span className="sb-optional">(all venues this day)</span>
+                            <select
+                              value={entry.pencil_booked}
+                              onChange={(e) => setAppForm((f) => {
+                                const event_dates = [...f.event_dates]
+                                event_dates[idx] = { ...event_dates[idx], pencil_booked: e.target.value }
+                                return { ...f, event_dates }
+                              })}
+                            >
+                              <option value="">Select</option>
+                              <option value="yes">Yes</option>
+                              <option value="no">No</option>
+                            </select>
+                          </label>
+                        )}
+
+                        {entry.venue_ids.length > 0 && entry.pencil_booked !== 'yes' && (
+                          <div className="sb-form-notice sb-form-notice--warn">
+                            <AlertCircle size={14} />
+                            Pencil book every venue for this day first — the fields below unlock once you confirm "Yes".
+                          </div>
+                        )}
+
                         <div className="sb-field-row">
-                        {entry.venue_ids.map((venueId) => {
+                        {entry.pencil_booked === 'yes' && entry.venue_ids.map((venueId) => {
                           const v = venues.find((x) => x.id === venueId)
                           const detailPrompt = VENUE_DETAIL_PROMPTS[v?.name]
                           if (!detailPrompt) return null
@@ -2998,23 +3030,6 @@ export default function SubmissionBin() {
                           )
                         })}
 
-                        {entry.venue_ids.length > 0 && (
-                          <label className="sb-field">
-                            Pencil-Booked? <span className="sb-optional">(all venues this day)</span>
-                            <select
-                              value={entry.pencil_booked}
-                              onChange={(e) => setAppForm((f) => {
-                                const event_dates = [...f.event_dates]
-                                event_dates[idx] = { ...event_dates[idx], pencil_booked: e.target.value }
-                                return { ...f, event_dates }
-                              })}
-                            >
-                              <option value="">Select</option>
-                              <option value="yes">Yes</option>
-                              <option value="no">No</option>
-                            </select>
-                          </label>
-                        )}
                         </div>
                       </div>
                     )}

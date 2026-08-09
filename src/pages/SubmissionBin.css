@@ -325,6 +325,12 @@
   margin: 2px 0;
 }
 
+.sb-form-notice--warn {
+  background: #fdeef0;
+  color: #7a1f2b;
+  border-color: #f0c4cb;
+}
+
 .sb-restricted-notice {
   display: flex;
   gap: 10px;
