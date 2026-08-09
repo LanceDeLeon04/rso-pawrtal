@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
-import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES } from '../lib/dateUtils'
+import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
@@ -217,6 +217,15 @@ async function generateAndSetLink(submissionId, role, name, email, setApprovalLi
   setApprovalLinks((prev) => [...prev.filter((l) => l.role !== role), data])
 }
 
+// Returns a multi-day event's date entries sorted chronologically, so the
+// earliest entry can be used wherever a single event_date/start_time/end_time
+// is still expected (sorting, calendar placement, clearance deadlines, etc).
+function sortedMultiDayDates(event_dates) {
+  return [...(event_dates || [])]
+    .filter((d) => d.event_date)
+    .sort((a, b) => a.event_date.localeCompare(b.event_date))
+}
+
 const EMPTY_APP_FORM = {
   title: '', contact_person: '', contact_number: '', venue_id: '',
   venue_detail: '', pencil_booked: '', lab_endorsed: '',
@@ -226,6 +235,8 @@ const EMPTY_APP_FORM = {
   position: '', email: '', activity_type: '', activity_type_other: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
+  is_multi_day: false,
+  event_dates: [{ event_date: '', start_time: '', end_time: '' }],
   is_continuing: false, continuing_type: 'year_round', term_label: '',
   restricted_period_ack: false, restricted_period_justification: '',
   wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
@@ -789,7 +800,9 @@ export default function SubmissionBin() {
         : ACTIVITY_TYPES.find((t) => t.value === fullSub.activity_type)?.label
       const acpDateLabel = fullSub.is_continuing
         ? (fullSub.continuing_type === 'term' ? `Term ${(fullSub.term_label || '').trim()}` : 'Year-Round')
-        : fullSub.event_date
+        : fullSub.is_multi_day && fullSub.event_dates?.length
+          ? formatEventDates(fullSub.event_dates.map((d) => d.event_date))
+          : fullSub.event_date
 
       const pdfBytes = await generateACPFormPdf({
         applicationDate: toISODate(new Date(fullSub.submitted_at)),
@@ -984,8 +997,12 @@ export default function SubmissionBin() {
       setFormError('Please select the venue.')
       return
     }
-    if (!appForm.is_continuing && !appForm.event_date) {
+    if (!appForm.is_continuing && !appForm.is_multi_day && !appForm.event_date) {
       setFormError('Please fill in the date.')
+      return
+    }
+    if (appForm.is_multi_day && appForm.event_dates.some((d) => !d.event_date)) {
+      setFormError('Please fill in all the dates, or remove the empty date picker.')
       return
     }
     if (!appForm.position || !appForm.email) {
@@ -1083,9 +1100,17 @@ export default function SubmissionBin() {
       online_platform: isOnline ? appForm.online_platform : null,
       pencil_booked: isOnline ? null : appForm.pencil_booked === 'yes',
       lab_endorsed: !isOnline && venueName === 'Laboratory' ? appForm.lab_endorsed === 'yes' : null,
-      event_date: appForm.is_continuing ? null : appForm.event_date,
-      start_time: appForm.is_continuing ? null : (appForm.start_time || null),
-      end_time: appForm.is_continuing ? null : (appForm.end_time || null),
+      event_date: appForm.is_continuing
+        ? null
+        : (appForm.is_multi_day ? sortedMultiDayDates(appForm.event_dates)[0]?.event_date : appForm.event_date),
+      start_time: appForm.is_continuing
+        ? null
+        : (appForm.is_multi_day ? (sortedMultiDayDates(appForm.event_dates)[0]?.start_time || null) : (appForm.start_time || null)),
+      end_time: appForm.is_continuing
+        ? null
+        : (appForm.is_multi_day ? (sortedMultiDayDates(appForm.event_dates)[0]?.end_time || null) : (appForm.end_time || null)),
+      is_multi_day: !appForm.is_continuing && appForm.is_multi_day,
+      event_dates: (!appForm.is_continuing && appForm.is_multi_day) ? sortedMultiDayDates(appForm.event_dates) : null,
       medium: appForm.medium,
       description: appForm.description || null,
       position: appForm.position,
@@ -1175,7 +1200,9 @@ export default function SubmissionBin() {
         : ACTIVITY_TYPES.find((t) => t.value === appForm.activity_type)?.label
       const acpDateLabel = appForm.is_continuing
         ? (appForm.continuing_type === 'term' ? `Term ${appForm.term_label.trim()}` : 'Year-Round')
-        : appForm.event_date
+        : appForm.is_multi_day
+          ? formatEventDates(appForm.event_dates.map((d) => d.event_date))
+          : appForm.event_date
 
       const pdfBytes = await generateACPFormPdf({
         applicationDate: toISODate(new Date()),
@@ -1878,7 +1905,9 @@ export default function SubmissionBin() {
                   : ACTIVITY_TYPES.find((t) => t.value === fullSub.activity_type)?.label
                 const acpDateLabel = fullSub.is_continuing
                   ? (fullSub.continuing_type === 'term' ? `Term ${(fullSub.term_label || '').trim()}` : 'Year-Round')
-                  : fullSub.event_date
+                  : fullSub.is_multi_day && fullSub.event_dates?.length
+                    ? formatEventDates(fullSub.event_dates.map((d) => d.event_date))
+                    : fullSub.event_date
 
                 const pdfBytes = await generateACPFormPdf({
                   applicationDate: toISODate(new Date(fullSub.submitted_at)),
@@ -2399,28 +2428,104 @@ export default function SubmissionBin() {
               )
             })()}
 
-            <div className="sb-field-row">
-              <label className="sb-field">
-                Date
-                <input
-                  type="date"
-                  value={appForm.is_continuing ? '' : appForm.event_date}
-                  onChange={(e) => setAppForm({ ...appForm, event_date: e.target.value })}
-                  disabled={appForm.is_continuing}
-                  required={!appForm.is_continuing}
-                />
-              </label>
-              <label className="sb-field">
-                Start Time
-                <input type="time" value={appForm.is_continuing ? '' : appForm.start_time} onChange={(e) => setAppForm({ ...appForm, start_time: e.target.value })} disabled={appForm.is_continuing} />
-                {displayIngressTime && <span className="sb-hint">Ingress from {displayIngressTime}</span>}
-              </label>
-              <label className="sb-field">
-                End Time
-                <input type="time" value={appForm.is_continuing ? '' : appForm.end_time} onChange={(e) => setAppForm({ ...appForm, end_time: e.target.value })} disabled={appForm.is_continuing} />
-                {displayEgressTime && <span className="sb-hint">Egress until {displayEgressTime}</span>}
-              </label>
-            </div>
+            {appForm.is_multi_day ? (
+              <div className="sb-field">
+                {appForm.event_dates.map((entry, idx) => (
+                  <div className="sb-field-row sb-multiday-row" key={idx}>
+                    <label className="sb-field">
+                      {idx === 0 ? 'Date' : `Date ${idx + 1}`}
+                      <input
+                        type="date"
+                        value={entry.event_date}
+                        onChange={(e) => setAppForm((f) => {
+                          const event_dates = [...f.event_dates]
+                          event_dates[idx] = { ...event_dates[idx], event_date: e.target.value }
+                          return { ...f, event_dates }
+                        })}
+                        required
+                      />
+                    </label>
+                    <label className="sb-field">
+                      Start Time
+                      <input
+                        type="time"
+                        value={entry.start_time}
+                        onChange={(e) => setAppForm((f) => {
+                          const event_dates = [...f.event_dates]
+                          event_dates[idx] = { ...event_dates[idx], start_time: e.target.value }
+                          return { ...f, event_dates }
+                        })}
+                      />
+                    </label>
+                    <label className="sb-field">
+                      End Time
+                      <input
+                        type="time"
+                        value={entry.end_time}
+                        onChange={(e) => setAppForm((f) => {
+                          const event_dates = [...f.event_dates]
+                          event_dates[idx] = { ...event_dates[idx], end_time: e.target.value }
+                          return { ...f, event_dates }
+                        })}
+                      />
+                    </label>
+
+                    {idx === appForm.event_dates.length - 1 ? (
+                      <button
+                        type="button"
+                        className="sb-btn sb-btn--icon sb-multiday-add"
+                        title="Add another date"
+                        onClick={() => setAppForm((f) => ({
+                          ...f,
+                          event_dates: [...f.event_dates, { event_date: '', start_time: '', end_time: '' }],
+                        }))}
+                      >
+                        <Plus size={16} />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="sb-btn sb-btn--icon sb-multiday-remove"
+                        title="Remove this date"
+                        onClick={() => setAppForm((f) => ({
+                          ...f,
+                          event_dates: f.event_dates.filter((_, i) => i !== idx),
+                        }))}
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <p className="sb-hint">
+                  On the generated ACP Form, these dates will print as{' '}
+                  {formatEventDates(appForm.event_dates.map((d) => d.event_date)) || 'the dates you enter above'}.
+                </p>
+              </div>
+            ) : (
+              <div className="sb-field-row">
+                <label className="sb-field">
+                  Date
+                  <input
+                    type="date"
+                    value={appForm.is_continuing ? '' : appForm.event_date}
+                    onChange={(e) => setAppForm({ ...appForm, event_date: e.target.value })}
+                    disabled={appForm.is_continuing}
+                    required={!appForm.is_continuing}
+                  />
+                </label>
+                <label className="sb-field">
+                  Start Time
+                  <input type="time" value={appForm.is_continuing ? '' : appForm.start_time} onChange={(e) => setAppForm({ ...appForm, start_time: e.target.value })} disabled={appForm.is_continuing} />
+                  {displayIngressTime && <span className="sb-hint">Ingress from {displayIngressTime}</span>}
+                </label>
+                <label className="sb-field">
+                  End Time
+                  <input type="time" value={appForm.is_continuing ? '' : appForm.end_time} onChange={(e) => setAppForm({ ...appForm, end_time: e.target.value })} disabled={appForm.is_continuing} />
+                  {displayEgressTime && <span className="sb-hint">Egress until {displayEgressTime}</span>}
+                </label>
+              </div>
+            )}
 
             {(gateCappedIngress || gateCappedEgress) && !appForm.is_continuing && (
               <div className="sb-form-notice">
@@ -2548,7 +2653,23 @@ export default function SubmissionBin() {
               <label className="sb-checkbox-label">
                 <input
                   type="checkbox"
+                  checked={appForm.is_multi_day}
+                  disabled={appForm.is_continuing}
+                  onChange={(e) => setAppForm({
+                    ...appForm,
+                    is_multi_day: e.target.checked,
+                    event_dates: e.target.checked
+                      ? [{ event_date: appForm.event_date, start_time: appForm.start_time, end_time: appForm.end_time }]
+                      : appForm.event_dates,
+                  })}
+                />
+                This is a Multi-Day Event
+              </label>
+              <label className="sb-checkbox-label">
+                <input
+                  type="checkbox"
                   checked={appForm.is_continuing}
+                  disabled={appForm.is_multi_day}
                   onChange={(e) => setAppForm({ ...appForm, is_continuing: e.target.checked, event_date: e.target.checked ? '' : appForm.event_date })}
                 />
                 This is a Continuing / Year-Round Activity (or Term-based, not a single date)

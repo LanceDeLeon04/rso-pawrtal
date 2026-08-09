@@ -61,6 +61,94 @@ export const MEDIUM_LABELS = {
   off_campus: 'Off-Campus',
 }
 
+// Formats an array of ISO date strings ('YYYY-MM-DD') for display on
+// generated forms (e.g. the ACP Form's Date field).
+//
+// Rules:
+//  - Single date                       -> "August 9, 2026"
+//  - Continuous run, same month        -> "August 9-12, 2026"
+//  - Continuous run, crosses month(s)  -> "August 31 - September 2, 2026"
+//    (crosses year too)                -> "December 30, 2026 - January 2, 2027"
+//  - Staggered (non-continuous), same month
+//                                       -> "August 9, 11, 15, 2026"
+//  - Staggered, crosses month(s)       -> "August 9, September 1, 2026"
+//    (crosses year too)                -> "December 30, 2026, January 2, 2027"
+export function formatEventDates(isoDates) {
+  const dates = [...new Set((isoDates || []).filter(Boolean))].sort()
+  if (dates.length === 0) return ''
+  if (dates.length === 1) return formatSingleDate(dates[0])
+
+  const parsed = dates.map(parseISO)
+  const isContinuous = parsed.every((d, i) => {
+    if (i === 0) return true
+    return isSameDay(addDays(parsed[i - 1], 1), d)
+  })
+
+  return isContinuous
+    ? formatContinuousRange(parsed)
+    : formatStaggeredList(parsed)
+}
+
+function parseISO(iso) {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function addDays(date, n) {
+  const d = new Date(date)
+  d.setDate(d.getDate() + n)
+  return d
+}
+
+function formatSingleDate(iso) {
+  const d = parseISO(iso)
+  return `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`
+}
+
+function formatContinuousRange(parsed) {
+  const first = parsed[0]
+  const last = parsed[parsed.length - 1]
+  const sameMonth = first.getMonth() === last.getMonth() && first.getFullYear() === last.getFullYear()
+
+  if (sameMonth) {
+    // August 9-12, 2026
+    return `${MONTH_NAMES[first.getMonth()]} ${first.getDate()}-${last.getDate()}, ${first.getFullYear()}`
+  }
+
+  const sameYear = first.getFullYear() === last.getFullYear()
+  const startLabel = `${MONTH_NAMES[first.getMonth()]} ${first.getDate()}`
+  const endLabel = sameYear
+    ? `${MONTH_NAMES[last.getMonth()]} ${last.getDate()}, ${last.getFullYear()}`
+    : `${MONTH_NAMES[last.getMonth()]} ${last.getDate()}, ${last.getFullYear()}`
+
+  // August 31 - September 2, 2026
+  // December 30, 2026 - January 2, 2027 (include year on the start when years differ)
+  return sameYear
+    ? `${startLabel} - ${endLabel}`
+    : `${startLabel}, ${first.getFullYear()} - ${endLabel}`
+}
+
+function formatStaggeredList(parsed) {
+  const allSameMonth = parsed.every(
+    (d) => d.getMonth() === parsed[0].getMonth() && d.getFullYear() === parsed[0].getFullYear()
+  )
+  const year = parsed[parsed.length - 1].getFullYear()
+
+  if (allSameMonth) {
+    // August 9, 11, 15, 2026
+    const days = parsed.map((d) => d.getDate()).join(', ')
+    return `${MONTH_NAMES[parsed[0].getMonth()]} ${days}, ${year}`
+  }
+
+  // August 9, September 1, 2026 (each date shows its month; year appended once,
+  // unless dates span multiple years, in which case each date carries its own year)
+  const spansYears = parsed[0].getFullYear() !== parsed[parsed.length - 1].getFullYear()
+  if (spansYears) {
+    return parsed.map((d) => `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`).join(', ')
+  }
+  return `${parsed.map((d) => `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}`).join(', ')}, ${year}`
+}
+
 export function formatTime(t) {
   if (!t) return ''
   const [h, m] = t.split(':')
