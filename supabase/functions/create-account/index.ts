@@ -13,7 +13,12 @@ const ADMIN_ROLES = [
   'sdao_assistant', 'crso_chairperson', 'qmo',
   'sdao_supervisor', 'academic_director', 'system_admin',
 ]
-const VALID_ROLES = ['rso_officer', 'fmo', ...ADMIN_ROLES]
+// Keep in sync with OTHER_CREATABLE_ROLES in src/pages/Accounts.jsx — that
+// dropdown offers 'executive_director' as a selectable role, but it was
+// missing here, so every attempt to create one was rejected with "Invalid
+// role." (surfaced client-side only as a generic error) and no account was
+// ever created.
+const VALID_ROLES = ['rso_officer', 'fmo', 'executive_director', ...ADMIN_ROLES]
 const VALID_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 
 const cors = {
