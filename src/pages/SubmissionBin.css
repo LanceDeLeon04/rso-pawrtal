@@ -348,6 +348,29 @@
   color: var(--nu-blue-700, #1d4ed8);
 }
 
+.sb-venue-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.sb-venue-detail-heading {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.sb-multiday-venues {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
 .sb-optional {
   font-weight: 400;
   color: var(--muted);

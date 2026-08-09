@@ -168,7 +168,17 @@ export default function ExternalApproval() {
             <div><span>Medium</span><strong>{submission.medium || '—'}</strong></div>
             <div>
               <span>Venue / Platform</span>
-              <strong>{submission.medium === 'online' ? (submission.online_platform || '—') : (submission.venue || submission.venue_detail || '—')}</strong>
+              {submission.medium === 'online' ? (
+                <strong>{submission.online_platform || '—'}</strong>
+              ) : submission.venue_names?.length > 1 ? (
+                <ul className="xap-venue-list">
+                  {submission.venue_names.map((name, i) => (
+                    <li key={i}>{name}{submission.venue_detail && i === 0 ? ` — ${submission.venue_detail}` : ''}</li>
+                  ))}
+                </ul>
+              ) : (
+                <strong>{submission.venue || submission.venue_detail || '—'}</strong>
+              )}
             </div>
             <div><span>Target Audience</span><strong>{submission.target_audience || '—'}</strong></div>
             <div><span>Target Participants</span><strong>{submission.target_participants ?? '—'}</strong></div>

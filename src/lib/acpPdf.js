@@ -107,6 +107,26 @@ export async function generateACPFormPdf(data, opts = {}) {
     y -= height
   }
 
+  // Like row(), but takes pre-split lines and renders each as its own
+  // bullet (with word-wrap applied per line) instead of wrapping one long
+  // string — used for Venue Address when multiple venues are selected
+  // (either several venues on the same day, or a per-day breakdown for a
+  // multi-day event), so each venue reads as its own bullet in the PDF.
+  function rowLines(label, lines, opts = {}) {
+    const labelW = opts.labelW ?? 150
+    const bulleted = (lines && lines.length > 1)
+      ? lines.flatMap((ln) => wrapText(`\u2022 ${ln}`, font, 9, W - labelW - 10))
+      : wrapText((lines && lines[0]) || '—', font, 9, W - labelW - 10)
+    const height = opts.height || Math.max(16, bulleted.length * 11 + 6)
+    page.drawRectangle({ x: M, y: y - height, width: W, height, borderColor: LINE, borderWidth: 0.75 })
+    page.drawLine({ start: { x: M + labelW, y }, end: { x: M + labelW, y: y - height }, thickness: 0.75, color: LINE })
+    page.drawText(label, { x: M + 5, y: y - height + (height - 8.5) - 3, size: 8.5, font: bold, color: INK })
+    bulleted.forEach((ln, i) => {
+      page.drawText(ln, { x: M + labelW + 5, y: y - height + (height - 9) - 3 - i * 11, size: 9, font, color: INK })
+    })
+    y -= height
+  }
+
   function twoUpRow(l1, v1, l2, v2, height = 16) {
     const half = W / 2
     const labelSize = 8.5
@@ -181,7 +201,7 @@ export async function generateACPFormPdf(data, opts = {}) {
   sectionLabel('2. ACTIVITY DETAILS')
   row('Title', data.title)
   row('Type of Activity', data.activityTypeLabel)
-  if (!isMerch) row('Venue Address', data.venueAddress)
+  if (!isMerch) rowLines('Venue Address', data.venueAddressLines || [data.venueAddress])
   twoUpRow('Target Audience', data.targetAudience, 'Target No. of Participants', data.targetParticipants)
   twoUpRow(
     isMerch ? 'Release Date' : 'Date', data.eventDate,

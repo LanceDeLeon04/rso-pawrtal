@@ -18,6 +18,7 @@ import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import { SDG_OPTIONS } from '../lib/sdgOptions'
 import { COL_EVENT_OPTIONS, COL_EVENT_TAGGER_POSITIONS } from '../lib/colEventOptions'
 import { MERCHANDISE_TYPES } from '../lib/merchandiseOptions'
+import VenueMultiSelect from '../components/VenueMultiSelect'
 import './SubmissionBin.css'
 
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
@@ -226,17 +227,120 @@ function sortedMultiDayDates(event_dates) {
     .sort((a, b) => a.event_date.localeCompare(b.event_date))
 }
 
+// Compiles a multi-day event's per-day times into the single "Time" range
+// printed on the ACP Form: the EARLIEST time-in across all days (using each
+// day's requested additional ingress time when set, else its start time)
+// through the LATEST time-out across all days (using each day's requested
+// additional egress time when set, else its end time).
+function compileMultiDayTimeRange(event_dates) {
+  const days = (event_dates || []).filter((d) => d.event_date)
+  const ins = days.map((d) => d.additional_ingress_time || d.start_time).filter(Boolean)
+  const outs = days.map((d) => d.additional_egress_time || d.end_time).filter(Boolean)
+  if (ins.length === 0 && outs.length === 0) return ''
+  const earliestIn = ins.length ? ins.sort()[0] : null
+  const latestOut = outs.length ? outs.sort()[outs.length - 1] : null
+  return [earliestIn && formatTime(earliestIn), latestOut && formatTime(latestOut)].filter(Boolean).join(' – ')
+}
+
+// A day entry may carry either the legacy single `venue_id`/`venue_detail`
+// pair, or the newer `venue_ids` (array) + `venue_details` (map) pair for
+// multi-venue days. This always normalizes to an array of venue ids.
+function dayVenueIds(d) {
+  if (d.venue_ids && d.venue_ids.length) return d.venue_ids
+  return d.venue_id ? [d.venue_id] : []
+}
+function dayVenueDetail(d, venueId) {
+  if (d.venue_details && d.venue_details[venueId] != null) return d.venue_details[venueId]
+  return d.venue_id === venueId ? (d.venue_detail || '') : ''
+}
+
+// Builds the "Venue — Detail" label for a single venue id on a given day.
+function venueNameFor(venueId, venues, detail) {
+  const v = venues.find((x) => x.id === venueId)
+  if (!v) return detail || '—'
+  return v.name === 'Others' ? (detail || v.name) : [v.name, detail].filter(Boolean).join(' — ')
+}
+
+// Builds the venue label for a single day, joining multiple venues
+// selected for that same day with " + ".
+function dayVenueLabel(d, venues) {
+  const ids = dayVenueIds(d)
+  if (!ids.length) return '—'
+  return ids.map((id) => venueNameFor(id, venues, dayVenueDetail(d, id))).join(' + ')
+}
+
+// Returns one "Month Day: Venue A + Venue B" line per day — used to render
+// the venue breakdown as a bullet list whenever a multi-day event uses
+// different venues (or multiple venues) on different days.
+function multiDayVenueLines(event_dates, venues) {
+  const days = sortedMultiDayDates(event_dates)
+  return days.map((d) => `${formatSingleDateShort(d.event_date)}: ${dayVenueLabel(d, venues)}`)
+}
+
+// Builds the venue label for a multi-day event: a single venue name if
+// every day uses the same venue(s), otherwise a per-day breakdown so the
+// ACP Form clearly shows where each date is held. Plain-text (single
+// string) version for the generated PDF, which can't render bullets.
+function multiDayVenueLabel(event_dates, venues) {
+  const days = sortedMultiDayDates(event_dates)
+  const uniqueLabels = [...new Set(days.map((d) => dayVenueLabel(d, venues)))]
+  if (uniqueLabels.length <= 1) return uniqueLabels[0] || '—'
+  return multiDayVenueLines(event_dates, venues).join('; ')
+}
+
+// Plain-text venue label for a single-day submission/application that may
+// have one or several venues checked (venue_ids / venue_details), falling
+// back to the legacy single venue_id/venue_detail/venues.name shape for
+// older rows. Used anywhere the venue needs to be a single string (PDF
+// export). Pass either a loaded submission row (with `venues` embedded) or
+// the in-progress appForm + its currently selectedVenue.
+function singleDayVenueLabel({ venueIds, venueDetails, legacyVenueId, legacyVenueDetail, legacyVenueName }, venues) {
+  const ids = venueIds && venueIds.length ? venueIds : (legacyVenueId ? [legacyVenueId] : [])
+  if (!ids.length) return legacyVenueName === 'Others' ? (legacyVenueDetail || '—') : [legacyVenueName, legacyVenueDetail].filter(Boolean).join(' — ') || '—'
+  return ids.map((id) => {
+    const detail = venueDetails?.[id] ?? (id === legacyVenueId ? legacyVenueDetail : '')
+    return venueNameFor(id, venues, detail)
+  }).join(' + ')
+}
+
+// Same inputs as singleDayVenueLabel, but returns one string per venue
+// instead of a single " + "-joined line — used to render each venue as
+// its own bullet on the generated ACP Form PDF.
+function singleDayVenueLines(args, venues) {
+  const { venueIds, legacyVenueId } = args
+  const ids = venueIds && venueIds.length ? venueIds : (legacyVenueId ? [legacyVenueId] : [])
+  if (!ids.length) return [singleDayVenueLabel(args, venues)]
+  return ids.map((id) => venueNameFor(id, venues, args.venueDetails?.[id] ?? (id === legacyVenueId ? args.legacyVenueDetail : '')))
+}
+
+function formatSingleDateShort(iso) {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-').map(Number)
+  return `${MONTH_NAMES[m - 1]} ${d}`
+}
+
 const EMPTY_APP_FORM = {
-  title: '', contact_person: '', contact_number: '', venue_id: '',
-  venue_detail: '', pencil_booked: '', lab_endorsed: '',
-  room_building: '', room_floor: '', room_number: '', lab_id: '',
+  title: '', contact_person: '', contact_number: '',
+  // venue_id/venue_detail are kept (mirroring venue_ids[0]) for backward
+  // compatibility with code that still reads a single venue. venue_ids
+  // (checked venues) and venue_details (per-venue room/lab/"Others" text)
+  // are the source of truth now that venue selection is multi-select.
+  venue_id: '', venue_ids: [], venue_detail: '', venue_details: {},
+  pencil_booked: '', lab_endorsed: '',
+  room_selections: {}, lab_selections: {},
   online_platform: '',
   event_date: '', start_time: '', end_time: '', medium: 'f2f', description: '',
   position: '', email: '', activity_type: '', activity_type_other: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
   is_multi_day: false,
-  event_dates: [{ event_date: '', start_time: '', end_time: '' }],
+  event_dates: [{
+    event_date: '', start_time: '', end_time: '',
+    venue_id: '', venue_ids: [], venue_detail: '', venue_details: {},
+    room_selections: {}, lab_selections: {},
+    pencil_booked: '',
+    wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
+  }],
   is_continuing: false, continuing_type: 'year_round', term_label: '',
   restricted_period_ack: false, restricted_period_justification: '',
   wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
@@ -293,6 +397,12 @@ export default function SubmissionBin() {
   const [venueConflict, setVenueConflict] = useState(null)
   const [venueAdvisory, setVenueAdvisory] = useState(null)
   const [checkingVenue, setCheckingVenue] = useState(false)
+  // Per-venue availability status for the (possibly multiple) venues
+  // checked on the single-day form: { [venueId]: { status, message } }.
+  const [venueAvailability, setVenueAvailability] = useState({})
+  // Same idea for multi-day rows, one map per day index:
+  // { [dayIndex]: { [venueId]: { status, message } } }.
+  const [dayVenueAvailability, setDayVenueAvailability] = useState({})
   const [nightBeforeConflict, setNightBeforeConflict] = useState(null)
   const [checkingNightBefore, setCheckingNightBefore] = useState(false)
   const [restrictedPeriods, setRestrictedPeriods] = useState([])
@@ -382,41 +492,115 @@ export default function SubmissionBin() {
   }, [myOrgId])
 
   useEffect(() => {
-    // Live venue-availability check as the applicant picks a venue +
-    // date in the New Application form — re-runs whenever either
+    // Live venue-availability check as the applicant checks venue(s) +
+    // picks a date in the New Application form — re-runs whenever either
     // changes so stale conflicts (or stale "all clear") don't linger.
-    if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !appForm.venue_id || !appForm.event_date) {
+    // Every checked venue is checked independently so the applicant can
+    // see exactly which one(s) are the problem, rather than one combined
+    // pass/fail for the whole selection.
+    const ids = appForm.venue_ids || []
+    if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !ids.length || !appForm.event_date) {
       setVenueConflict(null)
       setVenueAdvisory(null)
+      setVenueAvailability({})
       return
     }
     let cancelled = false
     setCheckingVenue(true)
-    checkVenueAvailability(
-      appForm.venue_id, appForm.event_date, appForm.start_time, appForm.end_time,
-      appForm.wants_additional_time ? appForm.additional_ingress_time : '',
-      appForm.wants_additional_time ? appForm.additional_egress_time : '',
-    ).then((result) => {
-      if (!cancelled) {
-        setVenueConflict(result?.blocking ? result.message : null)
-        setVenueAdvisory(result && !result.blocking ? result.message : null)
-        setCheckingVenue(false)
-      }
+    setVenueAvailability((prev) => {
+      const next = {}
+      ids.forEach((id) => { next[id] = { status: 'checking' } })
+      return next
+    })
+    Promise.all(ids.map((id) =>
+      checkVenueAvailability(
+        id, appForm.event_date, appForm.start_time, appForm.end_time,
+        appForm.wants_additional_time ? appForm.additional_ingress_time : '',
+        appForm.wants_additional_time ? appForm.additional_egress_time : '',
+      ).then((result) => [id, result]),
+    )).then((results) => {
+      if (cancelled) return
+      const next = {}
+      let blocking = null
+      let advisory = null
+      results.forEach(([id, result]) => {
+        if (result?.blocking) {
+          next[id] = { status: 'unavailable', message: result.message }
+          blocking = blocking || result.message
+        } else if (result) {
+          next[id] = { status: 'advisory', message: result.message }
+          advisory = advisory || result.message
+        } else {
+          next[id] = { status: 'available' }
+        }
+      })
+      setVenueAvailability(next)
+      // Kept for the existing submit-button disable / inline error UI,
+      // which still reads a single combined conflict/advisory message.
+      setVenueConflict(blocking)
+      setVenueAdvisory(!blocking ? advisory : null)
+      setCheckingVenue(false)
     })
     return () => { cancelled = true }
-  }, [showAppModal, appForm.venue_id, appForm.event_date, appForm.medium, appForm.is_continuing, appForm.start_time, appForm.end_time, appForm.wants_additional_time, appForm.additional_ingress_time, appForm.additional_egress_time])
+  }, [showAppModal, appForm.venue_ids, appForm.event_date, appForm.medium, appForm.is_continuing, appForm.start_time, appForm.end_time, appForm.wants_additional_time, appForm.additional_ingress_time, appForm.additional_egress_time])
+
+  // Same per-venue availability check, but for every day of a multi-day
+  // event — each day can have its own set of checked venues.
+  useEffect(() => {
+    if (!showAppModal || !appForm.is_multi_day || appForm.medium === 'online') {
+      setDayVenueAvailability({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const next = {}
+      await Promise.all(appForm.event_dates.map(async (entry, idx) => {
+        if (!entry.event_date || !entry.venue_ids?.length) return
+        const results = await Promise.all(entry.venue_ids.map((id) =>
+          checkVenueAvailability(
+            id, entry.event_date, entry.start_time, entry.end_time,
+            entry.wants_additional_time ? entry.additional_ingress_time : '',
+            entry.wants_additional_time ? entry.additional_egress_time : '',
+          ).then((result) => [id, result]),
+        ))
+        const dayMap = {}
+        results.forEach(([id, result]) => {
+          dayMap[id] = result?.blocking
+            ? { status: 'unavailable', message: result.message }
+            : result
+              ? { status: 'advisory', message: result.message }
+              : { status: 'available' }
+        })
+        next[idx] = dayMap
+      }))
+      if (!cancelled) setDayVenueAvailability(next)
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAppModal, appForm.is_multi_day, appForm.medium, JSON.stringify(appForm.event_dates.map((d) => [d.event_date, d.venue_ids, d.start_time, d.end_time, d.wants_additional_time, d.additional_ingress_time, d.additional_egress_time]))])
+
+  // True if any checked venue, on any day (single-day or multi-day), came
+  // back unavailable — used to hard-block submission per the "ask to
+  // change, don't allow submit" requirement.
+  const anyVenueUnavailable = appForm.is_multi_day
+    ? Object.values(dayVenueAvailability).some((dayMap) => Object.values(dayMap).some((s) => s.status === 'unavailable'))
+    : Object.values(venueAvailability).some((s) => s.status === 'unavailable')
 
   useEffect(() => {
     // Live check for the night-before-ingress option — only relevant
     // for the handful of venues large enough to need setup that early.
-    const venueName = venues.find((v) => v.id === appForm.venue_id)?.name
-    if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !appForm.venue_id || !appForm.event_date || !NIGHT_BEFORE_INGRESS_VENUES.includes(venueName)) {
+    // With multiple venues checked, this looks at the first selected
+    // venue that's actually night-before-eligible.
+    const eligibleVenueId = (appForm.venue_ids || []).find(
+      (id) => NIGHT_BEFORE_INGRESS_VENUES.includes(venues.find((v) => v.id === id)?.name),
+    )
+    if (!showAppModal || appForm.medium === 'online' || appForm.is_continuing || !eligibleVenueId || !appForm.event_date) {
       setNightBeforeConflict(null)
       return
     }
     let cancelled = false
     setCheckingNightBefore(true)
-    checkNightBeforeAvailability(appForm.venue_id, appForm.event_date).then((message) => {
+    checkNightBeforeAvailability(eligibleVenueId, appForm.event_date).then((message) => {
       if (!cancelled) {
         setNightBeforeConflict(message)
         setCheckingNightBefore(false)
@@ -424,7 +608,7 @@ export default function SubmissionBin() {
       }
     })
     return () => { cancelled = true }
-  }, [showAppModal, appForm.venue_id, appForm.event_date, appForm.medium, appForm.is_continuing, venues])
+  }, [showAppModal, appForm.venue_ids, appForm.event_date, appForm.medium, appForm.is_continuing, venues])
 
   useEffect(() => {
     async function loadStatics() {
@@ -454,6 +638,7 @@ export default function SubmissionBin() {
         venue_id, venue_detail, venue_tag, online_platform, pencil_booked, lab_endorsed,
         event_date, start_time, end_time, additional_ingress_time, additional_egress_time, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
+        is_multi_day, event_dates,
         position, email, activity_type, activity_type_other, target_audience, target_participants,
         projected_budget, budget_source, learning_goals,
         sdgs, sdg_representative, sdg_marked_acp_generated, col_event_tags,
@@ -793,8 +978,23 @@ export default function SubmissionBin() {
 
       const venueLabel = fullSub.medium === 'online'
         ? [ONLINE_PLATFORMS.find((p) => p.value === fullSub.online_platform)?.label, fullSub.online_platform === 'others' ? fullSub.venue_detail : null].filter(Boolean).join(' — ')
-        : fullSub.venues?.name === 'Others' ? fullSub.venue_detail : [fullSub.venues?.name, fullSub.venue_detail].filter(Boolean).join(' — ')
-      const timeRange = [fullSub.start_time && formatTime(fullSub.start_time), fullSub.end_time && formatTime(fullSub.end_time)].filter(Boolean).join(' – ')
+        : fullSub.is_multi_day && fullSub.event_dates?.length
+          ? multiDayVenueLabel(fullSub.event_dates, venues)
+          : singleDayVenueLabel({
+              venueIds: fullSub.venue_ids, venueDetails: fullSub.venue_details,
+              legacyVenueId: fullSub.venue_id, legacyVenueDetail: fullSub.venue_detail, legacyVenueName: fullSub.venues?.name,
+            }, venues)
+      const venueLabelLines = fullSub.medium === 'online'
+        ? [venueLabel]
+        : fullSub.is_multi_day && fullSub.event_dates?.length
+          ? multiDayVenueLines(fullSub.event_dates, venues)
+          : singleDayVenueLines({
+              venueIds: fullSub.venue_ids, venueDetails: fullSub.venue_details,
+              legacyVenueId: fullSub.venue_id, legacyVenueDetail: fullSub.venue_detail, legacyVenueName: fullSub.venues?.name,
+            }, venues)
+      const timeRange = fullSub.is_multi_day && fullSub.event_dates?.length
+        ? compileMultiDayTimeRange(fullSub.event_dates)
+        : [fullSub.start_time && formatTime(fullSub.start_time), fullSub.end_time && formatTime(fullSub.end_time)].filter(Boolean).join(' – ')
       const activityTypeLabel = fullSub.activity_type === 'other'
         ? fullSub.activity_type_other
         : ACTIVITY_TYPES.find((t) => t.value === fullSub.activity_type)?.label
@@ -813,6 +1013,7 @@ export default function SubmissionBin() {
         title: fullSub.title,
         activityTypeLabel,
         venueAddress: venueLabel,
+        venueAddressLines: venueLabelLines,
         targetAudience: fullSub.target_audience,
         targetParticipants: fullSub.target_participants,
         eventDate: acpDateLabel,
@@ -908,12 +1109,15 @@ export default function SubmissionBin() {
   const displayIngressTime = displayedBuffer ? formatTime(minutesToClock(displayedBuffer[0])) : ''
   const displayEgressTime = displayedBuffer ? formatTime(minutesToClock(displayedBuffer[1])) : ''
 
+  // Legacy single-venue name — still used as a fallback wherever a lone
+  // venue name is needed and venue_ids hasn't been populated yet.
   const selectedVenueName = venues.find((v) => v.id === appForm.venue_id)?.name
-  const roomBuildingOptions = [...new Set(venueRooms.map((r) => r.building))]
-  const roomFloorOptions = [...new Set(venueRooms.filter((r) => r.building === appForm.room_building).map((r) => r.floor))]
-  const roomNumberOptions = venueRooms.filter((r) => r.building === appForm.room_building && r.floor === appForm.room_floor)
-  const selectedLab = venueLabs.find((l) => l.id === appForm.lab_id)
-  const nightBeforeEligible = appForm.medium !== 'online' && !appForm.is_continuing && NIGHT_BEFORE_INGRESS_VENUES.includes(selectedVenueName)
+  const selectedVenueNames = (appForm.venue_ids || []).map((id) => venues.find((v) => v.id === id)?.name).filter(Boolean)
+  const roomBuildingOptionsFor = () => [...new Set(venueRooms.map((r) => r.building))]
+  const roomFloorOptionsFor = (building) => [...new Set(venueRooms.filter((r) => r.building === building).map((r) => r.floor))]
+  const roomNumberOptionsFor = (building, floor) => venueRooms.filter((r) => r.building === building && r.floor === floor)
+  const nightBeforeEligible = appForm.medium !== 'online' && !appForm.is_continuing
+    && selectedVenueNames.some((n) => NIGHT_BEFORE_INGRESS_VENUES.includes(n))
   const nightBeforeDateISO = appForm.event_date ? dayBefore(appForm.event_date) : ''
   const nightBeforeDateLabel = nightBeforeDateISO
     ? (() => {
@@ -993,8 +1197,11 @@ export default function SubmissionBin() {
         setFormError('Please specify the online platform.')
         return
       }
-    } else if (!appForm.venue_id) {
-      setFormError('Please select the venue.')
+    } else if (!appForm.is_multi_day && !appForm.venue_ids.length) {
+      setFormError('Please select at least one venue.')
+      return
+    } else if (!appForm.is_multi_day && appForm.venue_ids.some((id) => venues.find((v) => v.id === id)?.name === 'Others' && !(appForm.venue_details[id] || '').trim())) {
+      setFormError('Please specify the venue for every "Others" selection.')
       return
     }
     if (!appForm.is_continuing && !appForm.is_multi_day && !appForm.event_date) {
@@ -1003,6 +1210,20 @@ export default function SubmissionBin() {
     }
     if (appForm.is_multi_day && appForm.event_dates.some((d) => !d.event_date)) {
       setFormError('Please fill in all the dates, or remove the empty date picker.')
+      return
+    }
+    if (appForm.is_multi_day && appForm.medium !== 'online' && appForm.event_dates.some((d) => !d.venue_ids?.length)) {
+      setFormError('Please select at least one venue for every day.')
+      return
+    }
+    if (appForm.is_multi_day && appForm.medium !== 'online' && appForm.event_dates.some((d) =>
+      (d.venue_ids || []).some((id) => venues.find((v) => v.id === id)?.name === 'Others' && !(d.venue_details?.[id] || '').trim()),
+    )) {
+      setFormError('Please specify the venue for every day\'s "Others" selection.')
+      return
+    }
+    if (!appForm.is_continuing && anyVenueUnavailable) {
+      setFormError('One or more selected venues are unavailable on the chosen date — please change them before submitting.')
       return
     }
     if (!appForm.position || !appForm.email) {
@@ -1042,36 +1263,46 @@ export default function SubmissionBin() {
 
     // Re-check venue availability right before submitting — guards
     // against another org grabbing the slot (or FMO blocking it)
-    // between the live check above and now.
-    if (!appForm.is_continuing && appForm.medium !== 'online' && appForm.venue_id && appForm.event_date) {
-      const result = await checkVenueAvailability(
-        appForm.venue_id, appForm.event_date, appForm.start_time, appForm.end_time,
-        appForm.wants_additional_time ? appForm.additional_ingress_time : '',
-        appForm.wants_additional_time ? appForm.additional_egress_time : '',
-      )
-      if (result?.blocking) {
-        setVenueConflict(result.message)
-        setFormError(result.message)
-        return
+    // between the live check above and now. Every checked venue, on
+    // every day, is re-checked — a late conflict on any one of them
+    // blocks submission.
+    if (!appForm.is_continuing && appForm.medium !== 'online') {
+      const daysToCheck = appForm.is_multi_day
+        ? appForm.event_dates
+        : [{ event_date: appForm.event_date, start_time: appForm.start_time, end_time: appForm.end_time, venue_ids: appForm.venue_ids, wants_additional_time: appForm.wants_additional_time, additional_ingress_time: appForm.additional_ingress_time, additional_egress_time: appForm.additional_egress_time }]
+      for (const day of daysToCheck) {
+        if (!day.event_date) continue
+        for (const venueId of day.venue_ids || []) {
+          const result = await checkVenueAvailability(
+            venueId, day.event_date, day.start_time, day.end_time,
+            day.wants_additional_time ? day.additional_ingress_time : '',
+            day.wants_additional_time ? day.additional_egress_time : '',
+          )
+          if (result?.blocking) {
+            setFormError(`${venues.find((v) => v.id === venueId)?.name || 'A selected venue'}: ${result.message}`)
+            if (!appForm.is_multi_day) setVenueConflict(result.message)
+            return
+          }
+        }
       }
-      setVenueConflict(null)
-      setVenueAdvisory(result && !result.blocking ? result.message : null)
+      if (!appForm.is_multi_day) setVenueConflict(null)
     }
 
     const isOnline = appForm.medium === 'online'
     const selectedVenue = isOnline ? null : venues.find((v) => v.id === appForm.venue_id)
     const venueName = selectedVenue?.name
     const detailPrompt = VENUE_DETAIL_PROMPTS[venueName]
-    if (!isOnline) {
-      if (detailPrompt && !appForm.venue_detail.trim()) {
-        setFormError(`Please ${detailPrompt.toLowerCase()}.`)
+    if (!isOnline && !appForm.is_multi_day) {
+      const missingDetail = appForm.venue_ids.some((id) => VENUE_DETAIL_PROMPTS[venues.find((v) => v.id === id)?.name] && !(appForm.venue_details[id] || '').trim())
+      if (missingDetail) {
+        setFormError('Please fill in the room/lab/venue detail for every selected venue that needs it.')
         return
       }
       if (!appForm.pencil_booked) {
         setFormError('Please confirm whether this has been pencil booked with INSPIRE or Facilities Office.')
         return
       }
-      if (venueName === 'Laboratory' && !appForm.lab_endorsed) {
+      if (appForm.venue_ids.some((id) => venues.find((v) => v.id === id)?.name === 'Laboratory') && !appForm.lab_endorsed) {
         setFormError('Please confirm whether the laboratory owner has endorsed this booking.')
         return
       }
@@ -1092,14 +1323,35 @@ export default function SubmissionBin() {
       title: appForm.title,
       contact_person: appForm.contact_person,
       contact_number: appForm.contact_number || null,
-      venue_id: isOnline ? null : appForm.venue_id,
+      // venue_id/venue_detail keep pointing at the FIRST selected venue
+      // of the first day, for backward compatibility with joins/reports
+      // that still read a single venue. venue_ids/venue_details carry
+      // the complete multi-venue selection for that same first day (the
+      // full per-day breakdown for multi-day events lives in event_dates).
+      venue_id: isOnline
+        ? null
+        : (appForm.is_multi_day ? (dayVenueIds(sortedMultiDayDates(appForm.event_dates)[0] || {})[0] || null) : (appForm.venue_ids[0] || null)),
+      venue_ids: isOnline
+        ? []
+        : (appForm.is_multi_day ? dayVenueIds(sortedMultiDayDates(appForm.event_dates)[0] || {}) : appForm.venue_ids),
       venue_detail: isOnline
         ? (appForm.online_platform === 'others' ? appForm.venue_detail.trim() : null)
-        : (detailPrompt ? appForm.venue_detail.trim() : null),
-      venue_tag: isOnline ? null : venueTagFor(venueName),
+        : (appForm.is_multi_day
+          ? dayVenueDetail(sortedMultiDayDates(appForm.event_dates)[0] || {}, dayVenueIds(sortedMultiDayDates(appForm.event_dates)[0] || {})[0])
+          : (detailPrompt ? (appForm.venue_details[appForm.venue_ids[0]] || '').trim() : null)),
+      venue_details: isOnline
+        ? {}
+        : (appForm.is_multi_day ? (sortedMultiDayDates(appForm.event_dates)[0]?.venue_details || {}) : appForm.venue_details),
+      venue_tag: isOnline
+        ? null
+        : (appForm.is_multi_day
+          ? venueTagFor(venues.find((v) => v.id === dayVenueIds(sortedMultiDayDates(appForm.event_dates)[0] || {})[0])?.name)
+          : venueTagFor(venueName)),
       online_platform: isOnline ? appForm.online_platform : null,
-      pencil_booked: isOnline ? null : appForm.pencil_booked === 'yes',
-      lab_endorsed: !isOnline && venueName === 'Laboratory' ? appForm.lab_endorsed === 'yes' : null,
+      pencil_booked: isOnline
+        ? null
+        : (appForm.is_multi_day ? (sortedMultiDayDates(appForm.event_dates)[0]?.pencil_booked === 'yes') : appForm.pencil_booked === 'yes'),
+      lab_endorsed: !isOnline && !appForm.is_multi_day && venueName === 'Laboratory' ? appForm.lab_endorsed === 'yes' : null,
       event_date: appForm.is_continuing
         ? null
         : (appForm.is_multi_day ? sortedMultiDayDates(appForm.event_dates)[0]?.event_date : appForm.event_date),
@@ -1169,7 +1421,9 @@ export default function SubmissionBin() {
         contact_number: sub.contact_number,
         description: sub.description,
         venue_id: sub.venue_id,
+        venue_ids: sub.venue_ids,
         venue_detail: sub.venue_detail,
+        venue_details: sub.venue_details,
         event_date: sub.event_date || toISODate(new Date()),
         start_time: sub.start_time,
         end_time: sub.end_time,
@@ -1193,8 +1447,23 @@ export default function SubmissionBin() {
       const orgName = myMembership?.organizations?.name || ''
       const venueLabel = isOnline
         ? [ONLINE_PLATFORMS.find((p) => p.value === appForm.online_platform)?.label, appForm.online_platform === 'others' ? appForm.venue_detail : null].filter(Boolean).join(' — ')
-        : selectedVenue?.name === 'Others' ? appForm.venue_detail : [selectedVenue?.name, appForm.venue_detail].filter(Boolean).join(' — ')
-      const timeRange = [appForm.start_time && formatTime(appForm.start_time), appForm.end_time && formatTime(appForm.end_time)].filter(Boolean).join(' – ')
+        : appForm.is_multi_day
+          ? multiDayVenueLabel(appForm.event_dates, venues)
+          : singleDayVenueLabel({
+              venueIds: appForm.venue_ids, venueDetails: appForm.venue_details,
+              legacyVenueId: appForm.venue_id, legacyVenueDetail: appForm.venue_detail, legacyVenueName: selectedVenue?.name,
+            }, venues)
+      const venueLabelLines = isOnline
+        ? [venueLabel]
+        : appForm.is_multi_day
+          ? multiDayVenueLines(appForm.event_dates, venues)
+          : singleDayVenueLines({
+              venueIds: appForm.venue_ids, venueDetails: appForm.venue_details,
+              legacyVenueId: appForm.venue_id, legacyVenueDetail: appForm.venue_detail, legacyVenueName: selectedVenue?.name,
+            }, venues)
+      const timeRange = appForm.is_multi_day
+        ? compileMultiDayTimeRange(appForm.event_dates)
+        : [appForm.start_time && formatTime(appForm.start_time), appForm.end_time && formatTime(appForm.end_time)].filter(Boolean).join(' – ')
       const activityTypeLabel = appForm.activity_type === 'other'
         ? appForm.activity_type_other
         : ACTIVITY_TYPES.find((t) => t.value === appForm.activity_type)?.label
@@ -1213,6 +1482,7 @@ export default function SubmissionBin() {
         title: appForm.title,
         activityTypeLabel,
         venueAddress: venueLabel,
+        venueAddressLines: venueLabelLines,
         targetAudience: appForm.target_audience,
         targetParticipants: appForm.target_participants,
         eventDate: acpDateLabel,
@@ -1898,8 +2168,23 @@ export default function SubmissionBin() {
               if (fullSub) {
                 const venueLabel = fullSub.medium === 'online'
                   ? [ONLINE_PLATFORMS.find((p) => p.value === fullSub.online_platform)?.label, fullSub.online_platform === 'others' ? fullSub.venue_detail : null].filter(Boolean).join(' — ')
-                  : fullSub.venues?.name === 'Others' ? fullSub.venue_detail : [fullSub.venues?.name, fullSub.venue_detail].filter(Boolean).join(' — ')
-                const timeRange = [fullSub.start_time && formatTime(fullSub.start_time), fullSub.end_time && formatTime(fullSub.end_time)].filter(Boolean).join(' – ')
+                  : fullSub.is_multi_day && fullSub.event_dates?.length
+                    ? multiDayVenueLabel(fullSub.event_dates, venues)
+                    : singleDayVenueLabel({
+                        venueIds: fullSub.venue_ids, venueDetails: fullSub.venue_details,
+                        legacyVenueId: fullSub.venue_id, legacyVenueDetail: fullSub.venue_detail, legacyVenueName: fullSub.venues?.name,
+                      }, venues)
+                const venueLabelLines = fullSub.medium === 'online'
+                  ? [venueLabel]
+                  : fullSub.is_multi_day && fullSub.event_dates?.length
+                    ? multiDayVenueLines(fullSub.event_dates, venues)
+                    : singleDayVenueLines({
+                        venueIds: fullSub.venue_ids, venueDetails: fullSub.venue_details,
+                        legacyVenueId: fullSub.venue_id, legacyVenueDetail: fullSub.venue_detail, legacyVenueName: fullSub.venues?.name,
+                      }, venues)
+                const timeRange = fullSub.is_multi_day && fullSub.event_dates?.length
+                  ? compileMultiDayTimeRange(fullSub.event_dates)
+                  : [fullSub.start_time && formatTime(fullSub.start_time), fullSub.end_time && formatTime(fullSub.end_time)].filter(Boolean).join(' – ')
                 const activityTypeLabel = fullSub.activity_type === 'other'
                   ? fullSub.activity_type_other
                   : ACTIVITY_TYPES.find((t) => t.value === fullSub.activity_type)?.label
@@ -1918,6 +2203,7 @@ export default function SubmissionBin() {
                   title: fullSub.title,
                   activityTypeLabel,
                   venueAddress: venueLabel,
+        venueAddressLines: venueLabelLines,
                   targetAudience: fullSub.target_audience,
                   targetParticipants: fullSub.target_participants,
                   eventDate: acpDateLabel,
@@ -2229,8 +2515,9 @@ export default function SubmissionBin() {
                     medium: e.target.value,
                     // Switching medium clears whichever venue/platform
                     // fields don't apply to the new selection.
-                    venue_id: '', venue_detail: '', pencil_booked: '', lab_endorsed: '',
-                    room_building: '', room_floor: '', room_number: '', lab_id: '',
+                    venue_id: '', venue_ids: [], venue_detail: '', venue_details: {},
+                    pencil_booked: '', lab_endorsed: '',
+                    room_selections: {}, lab_selections: {},
                     online_platform: '',
                   })}
                   required
@@ -2255,25 +2542,34 @@ export default function SubmissionBin() {
                     ))}
                   </select>
                 </label>
+              ) : appForm.is_multi_day ? (
+                <div className="sb-field">
+                  <span className="sb-hint">Venue is selected per day below, since this is a multi-day event.</span>
+                </div>
               ) : (
-                <label className="sb-field">
-                  Venue
-                  <select
-                    value={appForm.venue_id}
-                    onChange={(e) => setAppForm({ ...appForm, venue_id: e.target.value, venue_detail: '', pencil_booked: '', lab_endorsed: '', room_building: '', room_floor: '', room_number: '', lab_id: '' })}
-                    required
-                  >
-                    <option value="">Select venue</option>
-                    {venues.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name === 'Room' ? 'Room (identify room number)'
-                          : v.name === 'Laboratory' ? 'Laboratory (identify which lab)'
-                          : v.name === 'Others' ? 'Others (specify)'
-                          : v.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="sb-field">
+                  Venue(s)
+                  <VenueMultiSelect
+                    venues={venues}
+                    selectedIds={appForm.venue_ids}
+                    availability={venueAvailability}
+                    onChange={(ids) => setAppForm({
+                      ...appForm,
+                      venue_ids: ids,
+                      venue_id: ids[0] || '',
+                      // Drop detail/room/lab state for venues that got
+                      // unchecked, keep it for ones still checked.
+                      venue_details: Object.fromEntries(Object.entries(appForm.venue_details).filter(([id]) => ids.includes(id))),
+                      room_selections: Object.fromEntries(Object.entries(appForm.room_selections).filter(([id]) => ids.includes(id))),
+                      lab_selections: Object.fromEntries(Object.entries(appForm.lab_selections).filter(([id]) => ids.includes(id))),
+                    })}
+                    labelFor={(v) => (v.name === 'Room' ? 'Room (identify room number)'
+                      : v.name === 'Laboratory' ? 'Laboratory (identify which lab)'
+                      : v.name === 'Others' ? 'Others (specify)'
+                      : v.name)}
+                  />
+                  <span className="sb-hint">Check every venue this event will use on this date.</span>
+                </div>
               )}
             </div>
 
@@ -2289,124 +2585,149 @@ export default function SubmissionBin() {
               </label>
             )}
 
-            {appForm.medium !== 'online' && appForm.venue_id && (() => {
-              const selectedVenue = venues.find((v) => v.id === appForm.venue_id)
-              const venueName = selectedVenue?.name
-              const detailPrompt = VENUE_DETAIL_PROMPTS[venueName]
-              const tag = venueTagFor(venueName)
+            {appForm.medium !== 'online' && appForm.venue_ids.length > 0 && (() => {
+              const tags = [...new Set(appForm.venue_ids.map((id) => venueTagFor(venues.find((v) => v.id === id)?.name)).filter(Boolean))]
+              const anyLab = appForm.venue_ids.some((id) => venues.find((v) => v.id === id)?.name === 'Laboratory')
               return (
                 <div className="sb-venue-booking">
                   <div className="sb-form-notice">
                     <AlertCircle size={14} />
-                    Ensure that you have pencil booked this with INSPIRE or Facilities Office before submitting.
+                    Ensure that you have pencil booked every venue above with INSPIRE or Facilities Office before submitting.
                   </div>
 
-                  {venueName === 'Room' && (
-                    <div className="sb-field-row">
-                      <label className="sb-field">
-                        Building
-                        <select
-                          value={appForm.room_building}
-                          onChange={(e) => setAppForm({ ...appForm, room_building: e.target.value, room_floor: '', room_number: '', venue_detail: '' })}
-                          required
-                        >
-                          <option value="">Select building</option>
-                          {roomBuildingOptions.map((b) => (
-                            <option key={b} value={b}>{b}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="sb-field">
-                        Floor
-                        <select
-                          value={appForm.room_floor}
-                          onChange={(e) => setAppForm({ ...appForm, room_floor: e.target.value, room_number: '', venue_detail: '' })}
-                          disabled={!appForm.room_building}
-                          required
-                        >
-                          <option value="">Select floor</option>
-                          {roomFloorOptions.map((f) => (
-                            <option key={f} value={f}>{f}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="sb-field">
-                        Room
-                        <select
-                          value={appForm.room_number}
-                          onChange={(e) => {
-                            const room = roomNumberOptions.find((r) => r.room_number === e.target.value)
-                            setAppForm({
-                              ...appForm,
-                              room_number: e.target.value,
-                              venue_detail: room ? `${room.building}, ${room.floor} Flr — ${room.room_number}` : '',
-                            })
-                          }}
-                          disabled={!appForm.room_floor}
-                          required
-                        >
-                          <option value="">Select room</option>
-                          {roomNumberOptions.map((r) => (
-                            <option key={r.id} value={r.room_number}>{r.room_number}</option>
-                          ))}
-                        </select>
-                      </label>
+                  {appForm.venue_ids.map((venueId) => {
+                    const selectedVenue = venues.find((v) => v.id === venueId)
+                    const venueName = selectedVenue?.name
+                    const detailPrompt = VENUE_DETAIL_PROMPTS[venueName]
+                    if (!detailPrompt) return null
+                    const roomSel = appForm.room_selections[venueId] || { building: '', floor: '', number: '' }
+                    const labId = appForm.lab_selections[venueId] || ''
+                    const selectedLab = venueLabs.find((l) => l.id === labId)
+                    return (
+                      <div className="sb-venue-detail-block" key={venueId}>
+                        <div className="sb-venue-detail-heading">{venueName}</div>
+
+                        {venueName === 'Room' && (
+                          <div className="sb-field-row">
+                            <label className="sb-field">
+                              Building
+                              <select
+                                value={roomSel.building}
+                                onChange={(e) => setAppForm({
+                                  ...appForm,
+                                  room_selections: { ...appForm.room_selections, [venueId]: { building: e.target.value, floor: '', number: '' } },
+                                  venue_details: { ...appForm.venue_details, [venueId]: '' },
+                                })}
+                                required
+                              >
+                                <option value="">Select building</option>
+                                {roomBuildingOptionsFor().map((b) => (
+                                  <option key={b} value={b}>{b}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="sb-field">
+                              Floor
+                              <select
+                                value={roomSel.floor}
+                                onChange={(e) => setAppForm({
+                                  ...appForm,
+                                  room_selections: { ...appForm.room_selections, [venueId]: { ...roomSel, floor: e.target.value, number: '' } },
+                                  venue_details: { ...appForm.venue_details, [venueId]: '' },
+                                })}
+                                disabled={!roomSel.building}
+                                required
+                              >
+                                <option value="">Select floor</option>
+                                {roomFloorOptionsFor(roomSel.building).map((f) => (
+                                  <option key={f} value={f}>{f}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="sb-field">
+                              Room
+                              <select
+                                value={roomSel.number}
+                                onChange={(e) => {
+                                  const room = roomNumberOptionsFor(roomSel.building, roomSel.floor).find((r) => r.room_number === e.target.value)
+                                  setAppForm({
+                                    ...appForm,
+                                    room_selections: { ...appForm.room_selections, [venueId]: { ...roomSel, number: e.target.value } },
+                                    venue_details: { ...appForm.venue_details, [venueId]: room ? `${room.building}, ${room.floor} Flr — ${room.room_number}` : '' },
+                                  })
+                                }}
+                                disabled={!roomSel.floor}
+                                required
+                              >
+                                <option value="">Select room</option>
+                                {roomNumberOptionsFor(roomSel.building, roomSel.floor).map((r) => (
+                                  <option key={r.id} value={r.room_number}>{r.room_number}</option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        )}
+
+                        {venueName === 'Laboratory' && (
+                          <>
+                            <label className="sb-field">
+                              Laboratory
+                              <select
+                                value={labId}
+                                onChange={(e) => {
+                                  const lab = venueLabs.find((l) => l.id === e.target.value)
+                                  setAppForm({
+                                    ...appForm,
+                                    lab_selections: { ...appForm.lab_selections, [venueId]: e.target.value },
+                                    venue_details: { ...appForm.venue_details, [venueId]: lab ? `${lab.name} c/o ${lab.care_of}, ${lab.location}` : '' },
+                                  })
+                                }}
+                                required
+                              >
+                                <option value="">Select laboratory</option>
+                                {venueLabs.map((l) => (
+                                  <option key={l.id} value={l.id}>{l.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            {selectedLab && (
+                              <div className="sb-field-row">
+                                <label className="sb-field">
+                                  Care of
+                                  <input value={selectedLab.care_of} disabled />
+                                </label>
+                                <label className="sb-field">
+                                  Location
+                                  <input value={selectedLab.location} disabled />
+                                </label>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {venueName !== 'Room' && venueName !== 'Laboratory' && (
+                          <label className="sb-field">
+                            {detailPrompt}
+                            <input
+                              value={appForm.venue_details[venueId] || ''}
+                              onChange={(e) => setAppForm({ ...appForm, venue_details: { ...appForm.venue_details, [venueId]: e.target.value } })}
+                              placeholder="e.g. Covered Court"
+                              required
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  {tags.length > 0 && (
+                    <div className="sb-venue-tag">
+                      Tagged as {tags.map((t) => <strong key={t}>{t}</strong>).reduce((a, b) => [a, ', ', b])}
                     </div>
                   )}
 
-                  {venueName === 'Laboratory' && (
-                    <>
-                      <label className="sb-field">
-                        Laboratory
-                        <select
-                          value={appForm.lab_id}
-                          onChange={(e) => {
-                            const lab = venueLabs.find((l) => l.id === e.target.value)
-                            setAppForm({
-                              ...appForm,
-                              lab_id: e.target.value,
-                              venue_detail: lab ? `${lab.name} c/o ${lab.care_of}, ${lab.location}` : '',
-                            })
-                          }}
-                          required
-                        >
-                          <option value="">Select laboratory</option>
-                          {venueLabs.map((l) => (
-                            <option key={l.id} value={l.id}>{l.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                      {selectedLab && (
-                        <div className="sb-field-row">
-                          <label className="sb-field">
-                            Care of
-                            <input value={selectedLab.care_of} disabled />
-                          </label>
-                          <label className="sb-field">
-                            Location
-                            <input value={selectedLab.location} disabled />
-                          </label>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {detailPrompt && venueName !== 'Room' && venueName !== 'Laboratory' && (
-                    <label className="sb-field">
-                      {detailPrompt}
-                      <input
-                        value={appForm.venue_detail}
-                        onChange={(e) => setAppForm({ ...appForm, venue_detail: e.target.value })}
-                        placeholder="e.g. Covered Court"
-                        required
-                      />
-                    </label>
-                  )}
-
-                  {tag && <div className="sb-venue-tag">Tagged as <strong>{tag}</strong></div>}
-
                   <label className="sb-field">
-                    Pencil Booked?
+                    Pencil Booked? <span className="sb-optional">(all venues above)</span>
                     <select value={appForm.pencil_booked} onChange={(e) => setAppForm({ ...appForm, pencil_booked: e.target.value })} required>
                       <option value="">Select</option>
                       <option value="yes">Yes</option>
@@ -2414,7 +2735,7 @@ export default function SubmissionBin() {
                     </select>
                   </label>
 
-                  {venueName === 'Laboratory' && (
+                  {anyLab && (
                     <label className="sb-field">
                       Endorsed by Laboratory Owner? <span className="sb-optional">(e.g. ComLab — ITSO)</span>
                       <select value={appForm.lab_endorsed} onChange={(e) => setAppForm({ ...appForm, lab_endorsed: e.target.value })} required>
@@ -2431,75 +2752,308 @@ export default function SubmissionBin() {
             {appForm.is_multi_day ? (
               <div className="sb-field">
                 {appForm.event_dates.map((entry, idx) => (
-                  <div className="sb-field-row sb-multiday-row" key={idx}>
-                    <label className="sb-field">
-                      {idx === 0 ? 'Date' : `Date ${idx + 1}`}
-                      <input
-                        type="date"
-                        value={entry.event_date}
-                        onChange={(e) => setAppForm((f) => {
-                          const event_dates = [...f.event_dates]
-                          event_dates[idx] = { ...event_dates[idx], event_date: e.target.value }
-                          return { ...f, event_dates }
-                        })}
-                        required
-                      />
-                    </label>
-                    <label className="sb-field">
-                      Start Time
-                      <input
-                        type="time"
-                        value={entry.start_time}
-                        onChange={(e) => setAppForm((f) => {
-                          const event_dates = [...f.event_dates]
-                          event_dates[idx] = { ...event_dates[idx], start_time: e.target.value }
-                          return { ...f, event_dates }
-                        })}
-                      />
-                    </label>
-                    <label className="sb-field">
-                      End Time
-                      <input
-                        type="time"
-                        value={entry.end_time}
-                        onChange={(e) => setAppForm((f) => {
-                          const event_dates = [...f.event_dates]
-                          event_dates[idx] = { ...event_dates[idx], end_time: e.target.value }
-                          return { ...f, event_dates }
-                        })}
-                      />
-                    </label>
+                  <div className="sb-multiday-card" key={idx}>
+                    <div className="sb-field-row sb-multiday-row">
+                      <label className="sb-field">
+                        {idx === 0 ? 'Date' : `Date ${idx + 1}`}
+                        <input
+                          type="date"
+                          value={entry.event_date}
+                          onChange={(e) => setAppForm((f) => {
+                            const event_dates = [...f.event_dates]
+                            event_dates[idx] = { ...event_dates[idx], event_date: e.target.value }
+                            return { ...f, event_dates }
+                          })}
+                          required
+                        />
+                      </label>
+                      <label className="sb-field">
+                        Start Time
+                        <input
+                          type="time"
+                          value={entry.start_time}
+                          onChange={(e) => setAppForm((f) => {
+                            const event_dates = [...f.event_dates]
+                            event_dates[idx] = { ...event_dates[idx], start_time: e.target.value }
+                            return { ...f, event_dates }
+                          })}
+                        />
+                      </label>
+                      <label className="sb-field">
+                        End Time
+                        <input
+                          type="time"
+                          value={entry.end_time}
+                          onChange={(e) => setAppForm((f) => {
+                            const event_dates = [...f.event_dates]
+                            event_dates[idx] = { ...event_dates[idx], end_time: e.target.value }
+                            return { ...f, event_dates }
+                          })}
+                        />
+                      </label>
 
-                    {idx === appForm.event_dates.length - 1 ? (
-                      <button
-                        type="button"
-                        className="sb-btn sb-btn--icon sb-multiday-add"
-                        title="Add another date"
-                        onClick={() => setAppForm((f) => ({
-                          ...f,
-                          event_dates: [...f.event_dates, { event_date: '', start_time: '', end_time: '' }],
-                        }))}
-                      >
-                        <Plus size={16} />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="sb-btn sb-btn--icon sb-multiday-remove"
-                        title="Remove this date"
-                        onClick={() => setAppForm((f) => ({
-                          ...f,
-                          event_dates: f.event_dates.filter((_, i) => i !== idx),
-                        }))}
-                      >
-                        <X size={16} />
-                      </button>
+                      {idx === appForm.event_dates.length - 1 ? (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn--icon sb-multiday-add"
+                          title="Add another date"
+                          onClick={() => setAppForm((f) => ({
+                            ...f,
+                            event_dates: [...f.event_dates, {
+                              event_date: '', start_time: '', end_time: '',
+                              venue_id: '', venue_ids: [], venue_detail: '', venue_details: {},
+                              room_selections: {}, lab_selections: {},
+                              pencil_booked: '',
+                              wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
+                            }],
+                          }))}
+                        >
+                          <Plus size={16} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn--icon sb-multiday-remove"
+                          title="Remove this date"
+                          onClick={() => setAppForm((f) => ({
+                            ...f,
+                            event_dates: f.event_dates.filter((_, i) => i !== idx),
+                          }))}
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+
+                    {appForm.medium !== 'online' && (
+                      <div className="sb-field-row sb-multiday-venues">
+                        <div className="sb-field">
+                          Venue(s) for this day
+                          <VenueMultiSelect
+                            venues={venues}
+                            selectedIds={entry.venue_ids}
+                            availability={dayVenueAvailability[idx] || {}}
+                            labelFor={(v) => (v.name === 'Room' ? 'Room (identify room number)'
+                              : v.name === 'Laboratory' ? 'Laboratory (identify which lab)'
+                              : v.name === 'Others' ? 'Others (specify)'
+                              : v.name)}
+                            onChange={(ids) => setAppForm((f) => {
+                              const event_dates = [...f.event_dates]
+                              const prev = event_dates[idx]
+                              event_dates[idx] = {
+                                ...prev,
+                                venue_ids: ids,
+                                venue_id: ids[0] || '',
+                                venue_details: Object.fromEntries(Object.entries(prev.venue_details || {}).filter(([id]) => ids.includes(id))),
+                                room_selections: Object.fromEntries(Object.entries(prev.room_selections || {}).filter(([id]) => ids.includes(id))),
+                                lab_selections: Object.fromEntries(Object.entries(prev.lab_selections || {}).filter(([id]) => ids.includes(id))),
+                              }
+                              return { ...f, event_dates }
+                            })}
+                          />
+                        </div>
+
+                        {entry.venue_ids.map((venueId) => {
+                          const v = venues.find((x) => x.id === venueId)
+                          const detailPrompt = VENUE_DETAIL_PROMPTS[v?.name]
+                          if (!detailPrompt) return null
+                          if (v?.name === 'Room') {
+                            const roomSel = entry.room_selections?.[venueId] || { building: '', floor: '', number: '' }
+                            return (
+                              <div className="sb-field-row" key={venueId}>
+                                <label className="sb-field">
+                                  {v.name} — Building
+                                  <select
+                                    value={roomSel.building}
+                                    onChange={(e) => setAppForm((f) => {
+                                      const event_dates = [...f.event_dates]
+                                      const prev = event_dates[idx]
+                                      event_dates[idx] = {
+                                        ...prev,
+                                        room_selections: { ...prev.room_selections, [venueId]: { building: e.target.value, floor: '', number: '' } },
+                                        venue_details: { ...prev.venue_details, [venueId]: '' },
+                                      }
+                                      return { ...f, event_dates }
+                                    })}
+                                    required
+                                  >
+                                    <option value="">Select building</option>
+                                    {roomBuildingOptionsFor().map((b) => (
+                                      <option key={b} value={b}>{b}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="sb-field">
+                                  Floor
+                                  <select
+                                    value={roomSel.floor}
+                                    onChange={(e) => setAppForm((f) => {
+                                      const event_dates = [...f.event_dates]
+                                      const prev = event_dates[idx]
+                                      event_dates[idx] = {
+                                        ...prev,
+                                        room_selections: { ...prev.room_selections, [venueId]: { ...roomSel, floor: e.target.value, number: '' } },
+                                        venue_details: { ...prev.venue_details, [venueId]: '' },
+                                      }
+                                      return { ...f, event_dates }
+                                    })}
+                                    disabled={!roomSel.building}
+                                    required
+                                  >
+                                    <option value="">Select floor</option>
+                                    {roomFloorOptionsFor(roomSel.building).map((fl) => (
+                                      <option key={fl} value={fl}>{fl}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="sb-field">
+                                  Room
+                                  <select
+                                    value={roomSel.number}
+                                    onChange={(e) => setAppForm((f) => {
+                                      const room = roomNumberOptionsFor(roomSel.building, roomSel.floor).find((r) => r.room_number === e.target.value)
+                                      const event_dates = [...f.event_dates]
+                                      const prev = event_dates[idx]
+                                      event_dates[idx] = {
+                                        ...prev,
+                                        room_selections: { ...prev.room_selections, [venueId]: { ...roomSel, number: e.target.value } },
+                                        venue_details: { ...prev.venue_details, [venueId]: room ? `${room.building}, ${room.floor} Flr — ${room.room_number}` : '' },
+                                      }
+                                      return { ...f, event_dates }
+                                    })}
+                                    disabled={!roomSel.floor}
+                                    required
+                                  >
+                                    <option value="">Select room</option>
+                                    {roomNumberOptionsFor(roomSel.building, roomSel.floor).map((r) => (
+                                      <option key={r.id} value={r.room_number}>{r.room_number}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                            )
+                          }
+                          if (v?.name === 'Laboratory') {
+                            const labId = entry.lab_selections?.[venueId] || ''
+                            return (
+                              <label className="sb-field" key={venueId}>
+                                Laboratory
+                                <select
+                                  value={labId}
+                                  onChange={(e) => {
+                                    const lab = venueLabs.find((l) => l.id === e.target.value)
+                                    setAppForm((f) => {
+                                      const event_dates = [...f.event_dates]
+                                      const prev = event_dates[idx]
+                                      event_dates[idx] = {
+                                        ...prev,
+                                        lab_selections: { ...prev.lab_selections, [venueId]: e.target.value },
+                                        venue_details: { ...prev.venue_details, [venueId]: lab ? `${lab.name} c/o ${lab.care_of}, ${lab.location}` : '' },
+                                      }
+                                      return { ...f, event_dates }
+                                    })
+                                  }}
+                                  required
+                                >
+                                  <option value="">Select laboratory</option>
+                                  {venueLabs.map((l) => (
+                                    <option key={l.id} value={l.id}>{l.name}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            )
+                          }
+                          return (
+                            <label className="sb-field" key={venueId}>
+                              {v.name} — Specify
+                              <input
+                                value={entry.venue_details?.[venueId] || ''}
+                                onChange={(e) => setAppForm((f) => {
+                                  const event_dates = [...f.event_dates]
+                                  const prev = event_dates[idx]
+                                  event_dates[idx] = { ...prev, venue_details: { ...prev.venue_details, [venueId]: e.target.value } }
+                                  return { ...f, event_dates }
+                                })}
+                                required
+                              />
+                            </label>
+                          )
+                        })}
+
+                        {entry.venue_ids.length > 0 && (
+                          <label className="sb-field">
+                            Pencil-Booked? <span className="sb-optional">(all venues this day)</span>
+                            <select
+                              value={entry.pencil_booked}
+                              onChange={(e) => setAppForm((f) => {
+                                const event_dates = [...f.event_dates]
+                                event_dates[idx] = { ...event_dates[idx], pencil_booked: e.target.value }
+                                return { ...f, event_dates }
+                              })}
+                            >
+                              <option value="">Select</option>
+                              <option value="yes">Yes</option>
+                              <option value="no">No</option>
+                            </select>
+                          </label>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      className="sb-btn sb-btn--outline sb-btn--sm"
+                      onClick={() => setAppForm((f) => {
+                        const event_dates = [...f.event_dates]
+                        const wants = !event_dates[idx].wants_additional_time
+                        event_dates[idx] = {
+                          ...event_dates[idx],
+                          wants_additional_time: wants,
+                          additional_ingress_time: wants ? event_dates[idx].additional_ingress_time : '',
+                          additional_egress_time: wants ? event_dates[idx].additional_egress_time : '',
+                        }
+                        return { ...f, event_dates }
+                      })}
+                    >
+                      {entry.wants_additional_time ? 'Cancel additional time request for this day' : 'Request additional ingress / egress time for this day'}
+                    </button>
+                    {entry.wants_additional_time && (
+                      <div className="sb-field-row">
+                        <label className="sb-field">
+                          Requested Ingress Time
+                          <input
+                            type="time"
+                            value={entry.additional_ingress_time}
+                            onChange={(e) => setAppForm((f) => {
+                              const event_dates = [...f.event_dates]
+                              event_dates[idx] = { ...event_dates[idx], additional_ingress_time: e.target.value }
+                              return { ...f, event_dates }
+                            })}
+                            placeholder="Earlier than the default buffer"
+                          />
+                        </label>
+                        <label className="sb-field">
+                          Requested Egress Time
+                          <input
+                            type="time"
+                            value={entry.additional_egress_time}
+                            onChange={(e) => setAppForm((f) => {
+                              const event_dates = [...f.event_dates]
+                              event_dates[idx] = { ...event_dates[idx], additional_egress_time: e.target.value }
+                              return { ...f, event_dates }
+                            })}
+                            placeholder="Later than the default buffer"
+                          />
+                        </label>
+                      </div>
                     )}
                   </div>
                 ))}
                 <p className="sb-hint">
                   On the generated ACP Form, these dates will print as{' '}
-                  {formatEventDates(appForm.event_dates.map((d) => d.event_date)) || 'the dates you enter above'}.
+                  {formatEventDates(appForm.event_dates.map((d) => d.event_date)) || 'the dates you enter above'},
+                  {' '}and the Time field will print the earliest time-in through the latest time-out across all days
+                  {compileMultiDayTimeRange(appForm.event_dates) ? ` (currently ${compileMultiDayTimeRange(appForm.event_dates)})` : ''}.
                 </p>
               </div>
             ) : (
@@ -2659,7 +3213,16 @@ export default function SubmissionBin() {
                     ...appForm,
                     is_multi_day: e.target.checked,
                     event_dates: e.target.checked
-                      ? [{ event_date: appForm.event_date, start_time: appForm.start_time, end_time: appForm.end_time }]
+                      ? [{
+                          event_date: appForm.event_date, start_time: appForm.start_time, end_time: appForm.end_time,
+                          venue_id: appForm.venue_id, venue_ids: appForm.venue_ids,
+                          venue_detail: appForm.venue_detail, venue_details: appForm.venue_details,
+                          room_selections: appForm.room_selections, lab_selections: appForm.lab_selections,
+                          pencil_booked: appForm.pencil_booked,
+                          wants_additional_time: appForm.wants_additional_time,
+                          additional_ingress_time: appForm.additional_ingress_time,
+                          additional_egress_time: appForm.additional_egress_time,
+                        }]
                       : appForm.event_dates,
                   })}
                 />
@@ -2823,7 +3386,7 @@ export default function SubmissionBin() {
               type="submit"
               className="sb-btn sb-btn--gold sb-btn--full"
               disabled={
-                saving || !!venueConflict || checkingVenue || clearanceBlocked ||
+                saving || !!venueConflict || checkingVenue || clearanceBlocked || anyVenueUnavailable ||
                 (!!activeRestrictedPeriod && (!appForm.restricted_period_ack || !appForm.restricted_period_justification.trim()))
               }
               title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.' : undefined}

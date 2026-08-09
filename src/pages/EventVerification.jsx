@@ -106,7 +106,15 @@ export default function EventVerification() {
             )}
             <div className="evp-field">
               <span><MapPin size={13} /> Venue</span>
-              <strong>{event.medium === 'online' ? 'Online' : (event.venue || '—')}</strong>
+              {event.medium === 'online' ? (
+                <strong>Online</strong>
+              ) : event.venue_names?.length > 1 ? (
+                <ul className="evp-venue-list">
+                  {event.venue_names.map((name, i) => <li key={i}>{name}</li>)}
+                </ul>
+              ) : (
+                <strong>{event.venue || '—'}</strong>
+              )}
             </div>
             {event.medium && (
               <div className="evp-field">

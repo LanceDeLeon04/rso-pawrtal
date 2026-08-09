@@ -694,6 +694,19 @@
   color: var(--ink);
 }
 
+.cal-modal__row--venues {
+  align-items: flex-start;
+}
+
+.cal-modal__venue-list {
+  margin: 0;
+  padding: 0 0 0 16px;
+}
+
+.cal-modal__venue-list li {
+  list-style: disc;
+}
+
 .cal-modal__desc {
   font-size: 12.5px;
   color: var(--muted);

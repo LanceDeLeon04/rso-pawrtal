@@ -12,6 +12,21 @@ import {
 } from '../lib/dateUtils'
 import './CalendarOfActivities.css'
 
+// An event may have several venues checked (venue_ids/venue_details),
+// falling back to the legacy single venue_id/venue_detail pair for older
+// rows. Returns an array of "Venue — Detail" strings, one per venue, so
+// callers can render either a joined line or a bullet list.
+function eventVenueLines(ev, venues) {
+  const ids = ev.venue_ids && ev.venue_ids.length ? ev.venue_ids : (ev.venue_id ? [ev.venue_id] : [])
+  if (!ids.length) return []
+  return ids.map((id) => {
+    const v = venues.find((x) => x.id === id) || (id === ev.venue_id ? ev.venues : null)
+    const detail = ev.venue_details?.[id] ?? (id === ev.venue_id ? ev.venue_detail : '')
+    if (!v) return detail || '—'
+    return v.name === 'Others' ? (detail || v.name) : [v.name, detail].filter(Boolean).join(' — ')
+  })
+}
+
 export default function CalendarOfActivities() {
   const { profile } = useAuth()
   const admin = isAdminTier(profile?.role)
@@ -272,7 +287,7 @@ export default function CalendarOfActivities() {
       .from('events')
       .select(`
         id, title, org_id, contact_person, contact_number, description,
-        venue_id, venue_detail, event_date, start_time, end_time, booking_status, medium,
+        venue_id, venue_detail, venue_ids, venue_details, event_date, start_time, end_time, booking_status, medium,
         organizations ( name, acronym ),
         venues ( name, location )
       `)
@@ -932,10 +947,13 @@ export default function CalendarOfActivities() {
                   </div>
                 )}
                 {selectedEvent.venues?.name && (
-                  <div className="cal-modal__row">
+                  <div className="cal-modal__row cal-modal__row--venues">
                     <MapPin size={14} />
-                    {selectedEvent.venues.name}
-                    {selectedEvent.venue_detail && ` — ${selectedEvent.venue_detail}`}
+                    <ul className="cal-modal__venue-list">
+                      {eventVenueLines(selectedEvent, venues).map((line, i) => (
+                        <li key={i}>{line}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
                 {selectedEvent.medium && (
@@ -1142,10 +1160,13 @@ export default function CalendarOfActivities() {
                     </div>
                   )}
                   {selectedEvent.venues?.name && (
-                    <div className="cal-modal__row">
+                    <div className="cal-modal__row cal-modal__row--venues">
                       <MapPin size={14} />
-                      {selectedEvent.venues.name}
-                      {selectedEvent.venue_detail && ` — ${selectedEvent.venue_detail}`}
+                      <ul className="cal-modal__venue-list">
+                        {eventVenueLines(selectedEvent, venues).map((line, i) => (
+                          <li key={i}>{line}</li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                   <p className="cal-modal__limited">

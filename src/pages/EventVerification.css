@@ -129,6 +129,17 @@
   font-weight: 600;
 }
 
+.evp-venue-list {
+  margin: 2px 0 0;
+  padding: 0 0 0 16px;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.evp-venue-list li {
+  list-style: disc;
+}
+
 .evp-approval {
   margin-top: 16px;
   padding-top: 16px;

@@ -1,0 +1,124 @@
+.vms-root {
+  position: relative;
+  width: 100%;
+}
+
+.vms-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #d7dbe0);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.vms-trigger-error {
+  border-color: #d64545;
+}
+
+.vms-disabled .vms-trigger {
+  background: #f3f4f6;
+  cursor: not-allowed;
+  color: #9aa0a6;
+}
+
+.vms-placeholder {
+  color: #9aa0a6;
+}
+
+.vms-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  color: #6b7280;
+}
+
+.vms-chevron-open {
+  transform: rotate(180deg);
+}
+
+.vms-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border, #d7dbe0);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+}
+
+.vms-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.vms-option:hover {
+  background: #f3f4f6;
+}
+
+.vms-option input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
+.vms-option-name {
+  flex: 1;
+}
+
+.vms-spin {
+  animation: vms-spin 0.8s linear infinite;
+  color: #6b7280;
+}
+
+@keyframes vms-spin {
+  to { transform: rotate(360deg); }
+}
+
+.vms-icon-ok { color: #1f9d55; flex-shrink: 0; }
+.vms-icon-bad { color: #d64545; flex-shrink: 0; }
+.vms-icon-warn { color: #b8860b; flex-shrink: 0; }
+
+.vms-status-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vms-status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #4b5563;
+}
+
+.vms-status-row.vms-status-unavailable {
+  color: #b3261e;
+}
+
+.vms-status-row.vms-status-advisory {
+  color: #8a5a00;
+}
+
+.vms-status-row svg {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
