@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
 import { toISODate, formatTime } from '../lib/dateUtils'
 import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
+import AnalyticsSection from '../components/analytics/AnalyticsSection'
 import './Dashboard.css'
 
 const REVIEW_STAGE_BY_ROLE = {
@@ -257,6 +258,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      <AnalyticsSection />
     </div>
   )
 }
