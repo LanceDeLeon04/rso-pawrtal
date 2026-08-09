@@ -30,7 +30,7 @@ const INK = rgb(0.07, 0.07, 0.07)
 const WHITE = rgb(1, 1, 1)
 
 function wrapText(text, font, size, maxWidth) {
-  const words = (text || '').split(/\s+/).filter(Boolean)
+  const words = String(text ?? '').split(/\s+/).filter(Boolean)
   const lines = []
   let line = ''
   for (const word of words) {
