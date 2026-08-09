@@ -56,7 +56,10 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    let cancelled = false
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (cancelled) return
       setSession(session)
       if (session?.user) {
         const p = await loadProfile(session.user.id)
@@ -65,17 +68,36 @@ export function AuthProvider({ children }) {
       setLoading(false)
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    // IMPORTANT: never call another Supabase method (e.g. supabase.from(...))
+    // directly/synchronously inside onAuthStateChange. GoTrue can fire this
+    // callback while it still holds an internal Web Locks lock (e.g. during
+    // a token refresh), and making another Supabase call in that same tick
+    // deadlocks the client — the request never even leaves the browser, it
+    // just hangs forever waiting on the lock. This is why login worked once
+    // but silently hung after the page sat idle and the token had to
+    // auto-refresh on reload. Deferring with setTimeout(...,0) escapes that
+    // lock context before touching the client again.
+    // See: https://github.com/supabase/supabase-js/issues/2111 and
+    // https://github.com/supabase/supabase-js/issues/1401
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return
       setSession(session)
       if (session?.user) {
-        const p = await loadProfile(session.user.id)
-        await enforceActive(p)
+        setTimeout(async () => {
+          if (cancelled) return
+          const p = await loadProfile(session.user.id)
+          if (cancelled) return
+          await enforceActive(p)
+        }, 0)
       } else {
         setProfile(null)
       }
     })
 
-    return () => listener.subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      listener.subscription.unsubscribe()
+    }
   }, [])
 
   async function signIn(username, password) {
@@ -137,6 +159,7 @@ export const ADMIN_ROLES = [
   'sdao_supervisor',
   'academic_director',
   'system_admin',
+  'executive_director',
 ]
 
 export function isAdminTier(role) {
@@ -149,4 +172,15 @@ export function isAdminTier(role) {
 // reschedule bookings.
 export function isFMO(role) {
   return role === 'fmo'
+}
+
+// Executive Director — top-tier "personal account" role, same as FMO in
+// that it's not built for broad UI navigation. Access is intentionally
+// limited to Dashboard (full analytics, since it's in ADMIN_ROLES),
+// Calendar, and Submission Bin (where it can bypass-approve any
+// submission at any stage — see SubmissionBin.jsx). Every other admin
+// route (Accounts, Templates, Clearance, Assignments) explicitly
+// excludes it — see App.jsx.
+export function isExecutiveDirector(role) {
+  return role === 'executive_director'
 }

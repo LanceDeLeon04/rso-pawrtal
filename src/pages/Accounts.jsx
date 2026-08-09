@@ -17,12 +17,16 @@ const ROLE_LABELS = {
   academic_director: 'Academic Director',
   system_admin: 'System Admin',
   fmo: 'Facilities Management Office',
+  executive_director: 'Executive Director',
 }
 
 const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervisor', 'academic_director', 'system_admin']
-// FMO isn't admin-tier (no submissions/clearance/accounts access — see
-// Layout.jsx / App.jsx) but is created the same "personal account" way.
-const OTHER_CREATABLE_ROLES = ['fmo']
+// FMO and Executive Director aren't full-nav admin roles (FMO has no
+// submissions/clearance/accounts access; Executive Director has
+// Dashboard + Calendar + Submission Bin bypass-approve only — see
+// Layout.jsx / App.jsx) but both are created the same "personal
+// account" way.
+const OTHER_CREATABLE_ROLES = ['fmo', 'executive_director']
 const VIEWER_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
 // Council of Leaders (COL) is a distinct org type (organizations.category

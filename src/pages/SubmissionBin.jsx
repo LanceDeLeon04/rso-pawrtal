@@ -147,7 +147,7 @@ const STEPS_REPORT = [
   { key: 'approved', label: 'Received' },
 ]
 
-const REVIEWER_ROLES = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin']
+const REVIEWER_ROLES = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin', 'executive_director']
 
 function stepsFor(type) {
   return type === 'report' ? STEPS_REPORT : STEPS_EVENT_APP
@@ -170,6 +170,14 @@ function stepIndexFor(type, stage, chainComplete) {
 }
 
 function nextActionFor(role, stage, type) {
+  // Executive Director can approve from ANY stage, for ANY submission
+  // type — skipping SDAO Assistant / Supervisor / Academic Director
+  // entirely. Surfaced in the UI with a mandatory justification + a
+  // visible warning banner (see `edBypass` usage in SubmissionBin.jsx).
+  if (role === 'executive_director') {
+    return { to: 'approved', action: 'approved', label: 'Approve (Executive Director Bypass)', edBypass: true }
+  }
+
   const assistantTurn = stage === 'submitted' || stage === 'assistant_review'
 
   // Reports: SDAO Assistant just receives them — no forwarding chain.
@@ -4353,7 +4361,41 @@ export default function SubmissionBin() {
 
                     return (
                       <div className="sb-review-actions">
-                        {actionMode === 'return' || actionMode === 'reject' ? (
+                        {nextAction.edBypass && (
+                          <div className="sb-note sb-note--warn">
+                            <ShieldAlert size={15} />
+                            <span>
+                              Approving as <strong>Executive Director</strong> skips the SDAO Assistant, SDAO Supervisor,
+                              and Academic Director review stages entirely. This action is logged with your name and a
+                              required justification, and cannot be undone.
+                            </span>
+                          </div>
+                        )}
+                        {actionMode === 'ed_bypass' ? (
+                          <>
+                            {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
+                            <textarea
+                              className="sb-comment-box"
+                              rows={2}
+                              placeholder="Reason for bypassing the standard approval chain (required)..."
+                              value={actionComment}
+                              onChange={(e) => setActionComment(e.target.value)}
+                            />
+                            <div className="sb-review-actions__row">
+                              <button className="sb-btn sb-btn--outline" onClick={() => setActionMode(null)} disabled={acting}>Cancel</button>
+                              <button
+                                className="sb-btn sb-btn--danger"
+                                onClick={() => {
+                                  if (!actionComment.trim()) { setActionError('Please provide a justification for the bypass approval.'); return }
+                                  performAction('advance', nextAction, 'approved (Executive Director bypass)')
+                                }}
+                                disabled={acting}
+                              >
+                                {acting ? <Loader2 size={15} className="spin" /> : 'Confirm Bypass Approval'}
+                              </button>
+                            </div>
+                          </>
+                        ) : actionMode === 'return' || actionMode === 'reject' ? (
                           <>
                             {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
                             <textarea
@@ -4436,8 +4478,8 @@ export default function SubmissionBin() {
                                 </button>
                               ) : (
                                 <button
-                                  className="sb-btn sb-btn--success"
-                                  onClick={() => performAction('advance', nextAction)}
+                                  className={`sb-btn ${nextAction.edBypass ? 'sb-btn--danger' : 'sb-btn--success'}`}
+                                  onClick={() => (nextAction.edBypass ? setActionMode('ed_bypass') : performAction('advance', nextAction))}
                                   disabled={acting || (assistantTurn && selected.is_continuing && !reportSubmissionDate)}
                                 >
                                   {acting ? <Loader2 size={15} className="spin" /> : <><CheckCircle2 size={14} /> {nextAction.label}</>}
