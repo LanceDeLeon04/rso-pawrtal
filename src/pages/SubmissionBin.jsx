@@ -2547,7 +2547,7 @@ export default function SubmissionBin() {
                   <span className="sb-hint">Venue is selected per day below, since this is a multi-day event.</span>
                 </div>
               ) : (
-                <div className="sb-field">
+                <div className="sb-field sb-field--full">
                   Venue(s)
                   <VenueMultiSelect
                     venues={venues}
@@ -2826,8 +2826,8 @@ export default function SubmissionBin() {
                     </div>
 
                     {appForm.medium !== 'online' && (
-                      <div className="sb-field-row sb-multiday-venues">
-                        <div className="sb-field">
+                      <div className="sb-multiday-venues">
+                        <div className="sb-field sb-field--full">
                           Venue(s) for this day
                           <VenueMultiSelect
                             venues={venues}
@@ -2853,6 +2853,7 @@ export default function SubmissionBin() {
                           />
                         </div>
 
+                        <div className="sb-field-row">
                         {entry.venue_ids.map((venueId) => {
                           const v = venues.find((x) => x.id === venueId)
                           const detailPrompt = VENUE_DETAIL_PROMPTS[v?.name]
@@ -2997,6 +2998,7 @@ export default function SubmissionBin() {
                             </select>
                           </label>
                         )}
+                        </div>
                       </div>
                     )}
 

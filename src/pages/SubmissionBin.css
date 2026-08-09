@@ -170,7 +170,7 @@
   background: #fff;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
-  padding: 26px;
+  padding: 30px 34px;
   width: 100%;
   max-width: 460px;
   max-height: 88vh;
@@ -180,12 +180,13 @@
 .sb-modal--form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-width: 720px;
+  gap: 18px;
+  max-width: 780px;
 }
 
 @media (max-width: 780px) {
   .sb-modal--form { max-width: 100%; }
+  .sb-modal { padding: 22px 18px; }
 }
 
 .sb-modal--detail {
@@ -242,11 +243,12 @@
 .sb-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   color: var(--ink);
   flex: 1;
+  min-width: 160px;
 }
 
 .sb-field input,
@@ -254,7 +256,7 @@
 .sb-field textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 9px 11px;
   font-size: 13px;
   font-family: inherit;
   color: var(--ink);
@@ -263,7 +265,9 @@
 
 .sb-field-row {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 16px;
+  row-gap: 14px;
 }
 
 .sb-form-error {
@@ -300,8 +304,8 @@
 .sb-venue-booking {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 14px;
+  padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: #f9fafc;
@@ -310,14 +314,15 @@
 .sb-form-notice {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: #fff7e0;
   color: #8a6400;
   border: 1px solid #f1dfa0;
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 10px 12px;
   font-size: 12px;
   font-weight: 600;
+  margin: 2px 0;
 }
 
 .sb-restricted-notice {
@@ -351,8 +356,8 @@
 .sb-venue-detail-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 10px;
+  padding: 12px 14px;
   border: 1px dashed var(--line);
   border-radius: var(--radius-sm);
   background: #fff;
@@ -366,9 +371,34 @@
   letter-spacing: 0.02em;
 }
 
+.sb-multiday-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #f9fafc;
+}
+
+.sb-multiday-card + .sb-multiday-card {
+  margin-top: 16px;
+}
+
+/* Forces a field to take the full row width instead of sharing space
+   with its siblings in a .sb-field-row — used for the venue picker so
+   it (and its per-venue availability status list) always gets full
+   width and never gets squeezed into a narrow column. */
+.sb-field--full {
+  flex-basis: 100%;
+  width: 100%;
+}
+
 .sb-multiday-venues {
-  flex-wrap: wrap;
-  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
 }
 
 .sb-optional {
@@ -391,6 +421,7 @@
 
 .sb-multiday-row {
   align-items: flex-end;
+  gap: 16px;
 }
 .sb-btn--icon {
   display: flex;
