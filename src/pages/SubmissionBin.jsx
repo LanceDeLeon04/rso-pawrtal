@@ -1083,6 +1083,13 @@ export default function SubmissionBin() {
   const gateCappedIngress = !appForm.is_continuing && !!appForm.start_time && appForm.start_time < '08:00'
   const gateCappedEgress = !appForm.is_continuing && !!appForm.end_time && appForm.end_time > '19:00'
 
+  // Starting after 7:00 PM or ending before 7:00 AM is itself a
+  // Security Office letter trigger (independent of any requested
+  // additional ingress/egress time) — this is just a heads-up here;
+  // the letter assignment is auto-created on approval.
+  const startBeyond7pm = !appForm.is_continuing && !!appForm.start_time && appForm.start_time > '19:00'
+  const endBefore7am = !appForm.is_continuing && !!appForm.end_time && appForm.end_time < '07:00'
+
   // Requesting additional ingress/egress time beyond the gate-capped
   // buffer, past the actual gate hours (before 6:00 AM / after 9:00 PM),
   // requires a Security Office letter.
@@ -2122,13 +2129,17 @@ export default function SubmissionBin() {
           })
 
           // Requested additional ingress/egress time that falls outside
-          // gate hours (before 6:00 AM / after 9:00 PM): now that the
-          // Academic Director has approved, automatically assign the org
+          // gate hours (before 6:00 AM / after 9:00 PM), OR the event's
+          // own start/end time falling late at night (after 7:00 PM) or
+          // early morning (before 7:00 AM): now that the Academic
+          // Director has approved, automatically assign the org
           // President to submit the Security Office letter, due 3 days
           // before the event, via the Assignments tab.
           const needsSecurityLetter = !sub.is_continuing && (
             (!!sub.additional_ingress_time && sub.additional_ingress_time < '06:00') ||
-            (!!sub.additional_egress_time && sub.additional_egress_time > '21:00')
+            (!!sub.additional_egress_time && sub.additional_egress_time > '21:00') ||
+            (!!sub.start_time && sub.start_time > '19:00') ||
+            (!!sub.end_time && sub.end_time < '07:00')
           )
           if (needsSecurityLetter && sub.event_date) {
             const { data: presidentMembership } = await supabase
@@ -2141,7 +2152,7 @@ export default function SubmissionBin() {
             securityDue.setDate(securityDue.getDate() - 3)
             await supabase.from('assignments').insert({
               title: `Security Office Letter — ${sub.title}`,
-              description: 'This activity requested ingress before 6:00 AM or egress after 9:00 PM. Submit a letter to the Security Office for approval.',
+              description: 'Once the Academic Director has approved this activity, submit a letter to the Security Office together with the QR-coded ACP Form (attached to this submission) for approval.',
               event_id: eventId,
               assigned_to: presidentMembership?.profile_id || null,
               assigned_tag: presidentMembership?.profile_id ? null : 'President',
@@ -2849,6 +2860,23 @@ export default function SubmissionBin() {
                       )
                     })()}
 
+                    {(() => {
+                      const dayStartBeyond7pm = !!entry.start_time && entry.start_time > '19:00'
+                      const dayEndBefore7am = !!entry.end_time && entry.end_time < '07:00'
+                      if (!dayStartBeyond7pm && !dayEndBefore7am) return null
+                      return (
+                        <div className="sb-form-notice sb-form-notice--warn">
+                          <AlertCircle size={14} />
+                          {dayStartBeyond7pm && dayEndBefore7am
+                            ? 'This day starts after 7:00 PM and ends before 7:00 AM.'
+                            : dayStartBeyond7pm
+                              ? 'This day starts after 7:00 PM.'
+                              : 'This day ends before 7:00 AM.'}
+                          {' '}Once the Academic Director approves this application, submit a letter to the Security Office together with the QR-coded ACP Form.
+                        </div>
+                      )
+                    })()}
+
                     {appForm.medium !== 'online' && (
                       <div className="sb-multiday-venues">
                         <div className="sb-field sb-field--full">
@@ -3088,7 +3116,7 @@ export default function SubmissionBin() {
                       return (
                         <div className="sb-form-error">
                           <AlertCircle size={14} />
-                          Your requested {dayIngressNeedsLetter && dayEgressNeedsLetter ? 'ingress and egress times fall' : dayIngressNeedsLetter ? 'ingress time falls' : 'egress time falls'} outside gate hours (before 6:00 AM or after 9:00 PM) for this day. A letter must be submitted to the Security Office for approval. Once approved by the Academic Director, this will be automatically assigned to the org President via the Assignment tab, due 3 days before the event.
+                          Your requested {dayIngressNeedsLetter && dayEgressNeedsLetter ? 'ingress and egress times fall' : dayIngressNeedsLetter ? 'ingress time falls' : 'egress time falls'} outside gate hours (before 6:00 AM or after 9:00 PM) for this day. Once the Academic Director approves this application, submit a letter to the Security Office together with the QR-coded ACP Form — this will be automatically assigned to the org President via the Assignment tab, due 3 days before the event.
                         </div>
                       )
                     })()}
@@ -3138,6 +3166,18 @@ export default function SubmissionBin() {
               </div>
             )}
 
+            {(startBeyond7pm || endBefore7am) && !appForm.is_continuing && !appForm.is_multi_day && (
+              <div className="sb-form-notice sb-form-notice--warn">
+                <AlertCircle size={14} />
+                {startBeyond7pm && endBefore7am
+                  ? 'This activity starts after 7:00 PM and ends before 7:00 AM.'
+                  : startBeyond7pm
+                    ? 'This activity starts after 7:00 PM.'
+                    : 'This activity ends before 7:00 AM.'}
+                {' '}Once the Academic Director approves this application, submit a letter to the Security Office together with the QR-coded ACP Form.
+              </div>
+            )}
+
             {!appForm.is_continuing && !appForm.is_multi_day && (
               <div className="sb-field">
                 <button
@@ -3177,7 +3217,7 @@ export default function SubmissionBin() {
                 {additionalTimeNeedsLetter && (
                   <div className="sb-form-error">
                     <AlertCircle size={14} />
-                    Your requested {additionalIngressNeedsLetter && additionalEgressNeedsLetter ? 'ingress and egress times fall' : additionalIngressNeedsLetter ? 'ingress time falls' : 'egress time falls'} outside gate hours (before 6:00 AM or after 9:00 PM). A letter must be submitted to the Security Office for approval. Once approved by the Academic Director, this will be automatically assigned to the org President via the Assignment tab, due 3 days before the event.
+                    Your requested {additionalIngressNeedsLetter && additionalEgressNeedsLetter ? 'ingress and egress times fall' : additionalIngressNeedsLetter ? 'ingress time falls' : 'egress time falls'} outside gate hours (before 6:00 AM or after 9:00 PM). Once the Academic Director approves this application, submit a letter to the Security Office together with the QR-coded ACP Form — this will be automatically assigned to the org President via the Assignment tab, due 3 days before the event.
                   </div>
                 )}
               </div>
