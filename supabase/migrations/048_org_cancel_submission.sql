@@ -8,19 +8,12 @@
 -- approved it yet (stage isn't already 'approved', and it isn't
 -- already 'rejected' or 'cancelled').
 --
--- Mirrors the existing submissions_resubmit_owner pattern: `using`
--- gates which existing rows the org may touch, `with check` pins what
--- the row is allowed to become.
+-- Split into two files (048 / 048a) on purpose: Postgres won't let a
+-- freshly-added enum value be *used* (e.g. cast in a policy's `with
+-- check`) in the same transaction that added it via `alter type ...
+-- add value` (error 55P04, "unsafe use of new value ... must be
+-- committed before they can be used"). Since the Supabase CLI runs
+-- each migration file as its own transaction, the add-value has to
+-- live in a file by itself so it commits before 048a references it.
 
 alter type submission_stage add value if not exists 'cancelled';
-
-create policy submissions_cancel_owner on submissions for update
-  using (
-    type in ('event_application', 'merchandise')
-    and stage not in ('approved', 'rejected', 'cancelled')
-    and org_id in (select org_id from org_memberships where profile_id = auth.uid())
-  )
-  with check (
-    stage = 'cancelled'
-    and org_id in (select org_id from org_memberships where profile_id = auth.uid())
-  );
