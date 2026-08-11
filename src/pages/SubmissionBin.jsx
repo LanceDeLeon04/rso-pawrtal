@@ -409,7 +409,7 @@ const EMPTY_APP_FORM = {
   room_selections: {}, lab_selections: {},
   online_platform: '',
   event_date: '', start_time: '', end_time: '', medium: 'f2f', description: '',
-  position: '', email: '', activity_type: '', activity_type_other: '',
+  position: '', email: '', personal_email: '', activity_type: '', activity_type_other: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
   is_multi_day: false,
@@ -437,7 +437,7 @@ const EMPTY_APP_FORM = {
 const EMPTY_MERCH_FORM = {
   contact_person: '', contact_number: '',
   event_date: '', description: '',
-  position: '', email: '',
+  position: '', email: '', personal_email: '',
   target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
   learning_goal_1: '', learning_goal_2: '', learning_goal_3: '',
   merchandise_duration: '',
@@ -730,7 +730,7 @@ export default function SubmissionBin() {
         event_date, start_time, end_time, additional_ingress_time, additional_egress_time, night_before_ingress, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
         is_multi_day, event_dates,
-        position, email, activity_type, activity_type_other, target_audience, target_participants,
+        position, email, personal_email, activity_type, activity_type_other, target_audience, target_participants,
         projected_budget, budget_source, learning_goals,
         sdgs, sdg_representative, sdg_marked_acp_generated, col_event_tags,
         merchandise_types, merchandise_duration, marketing_representative,
@@ -1286,7 +1286,7 @@ export default function SubmissionBin() {
         event_date: sub.event_date || '',
         description: sub.description || '',
         position: sub.position || myMembership?.position || '',
-        email: sub.email || '',
+        email: sub.email || '', personal_email: sub.personal_email || '',
         target_audience: sub.target_audience || '',
         target_participants: sub.target_participants != null ? String(sub.target_participants) : '',
         projected_budget: sub.projected_budget != null ? String(sub.projected_budget) : '',
@@ -1321,7 +1321,7 @@ export default function SubmissionBin() {
       medium: sub.medium || 'f2f',
       description: sub.description || '',
       position: sub.position || myMembership?.position || '',
-      email: sub.email || '',
+      email: sub.email || '', personal_email: sub.personal_email || '',
       activity_type: sub.activity_type || '',
       activity_type_other: sub.activity_type_other || '',
       target_audience: sub.target_audience || '',
@@ -1413,8 +1413,8 @@ export default function SubmissionBin() {
       setFormError('One or more selected venues are unavailable on the chosen date — please change them before submitting.')
       return
     }
-    if (!appForm.position || !appForm.email) {
-      setFormError('Please fill in your position and email address.')
+    if (!appForm.position || !appForm.email || !appForm.personal_email) {
+      setFormError('Please fill in your position, NU email, and personal email address.')
       return
     }
     if (!appForm.activity_type || (appForm.activity_type === 'other' && !appForm.activity_type_other.trim())) {
@@ -1561,6 +1561,7 @@ export default function SubmissionBin() {
       description: appForm.description || null,
       position: appForm.position,
       email: appForm.email,
+      personal_email: appForm.personal_email,
       activity_type: appForm.activity_type,
       activity_type_other: appForm.activity_type === 'other' ? appForm.activity_type_other.trim() : null,
       target_audience: appForm.target_audience,
@@ -1857,8 +1858,8 @@ export default function SubmissionBin() {
       setFormError('Please fill in the release date.')
       return
     }
-    if (!merchForm.position || !merchForm.email) {
-      setFormError('Please fill in your position and email address.')
+    if (!merchForm.position || !merchForm.email || !merchForm.personal_email) {
+      setFormError('Please fill in your position, NU email, and personal email address.')
       return
     }
     if (!merchForm.merchandise_duration) {
@@ -1907,6 +1908,7 @@ export default function SubmissionBin() {
       description: merchForm.description || null,
       position: merchForm.position,
       email: merchForm.email,
+      personal_email: merchForm.personal_email,
       activity_type: 'other',
       activity_type_other: MERCH_ACTIVITY_TYPE_LABEL,
       target_audience: merchForm.target_audience,
@@ -2884,10 +2886,17 @@ export default function SubmissionBin() {
                 <input value={appForm.position} onChange={(e) => setAppForm({ ...appForm, position: e.target.value })} required />
               </label>
               <label className="sb-field">
-                Email Address
-                <input type="email" value={appForm.email} onChange={(e) => setAppForm({ ...appForm, email: e.target.value })} required />
+                NU Email Address
+                <input type="email" placeholder="you@nu-laguna.edu.ph" value={appForm.email} onChange={(e) => setAppForm({ ...appForm, email: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Personal Email (Gmail/Outlook)
+                <input type="email" placeholder="you@gmail.com" value={appForm.personal_email} onChange={(e) => setAppForm({ ...appForm, personal_email: e.target.value })} required />
               </label>
             </div>
+            <p className="sb-field-note">
+              We'll send status updates (checked, endorsed, returned, approved, etc.) to both addresses. You can also check this submission's status anytime from Submission Bin.
+            </p>
 
             <div className="sb-field-row">
               <label className="sb-field">
@@ -3934,10 +3943,17 @@ export default function SubmissionBin() {
                 <input value={merchForm.position} onChange={(e) => setMerchForm({ ...merchForm, position: e.target.value })} required />
               </label>
               <label className="sb-field">
-                Email Address
-                <input type="email" value={merchForm.email} onChange={(e) => setMerchForm({ ...merchForm, email: e.target.value })} required />
+                NU Email Address
+                <input type="email" placeholder="you@nu-laguna.edu.ph" value={merchForm.email} onChange={(e) => setMerchForm({ ...merchForm, email: e.target.value })} required />
+              </label>
+              <label className="sb-field">
+                Personal Email (Gmail/Outlook)
+                <input type="email" placeholder="you@gmail.com" value={merchForm.personal_email} onChange={(e) => setMerchForm({ ...merchForm, personal_email: e.target.value })} required />
               </label>
             </div>
+            <p className="sb-field-note">
+              We'll send status updates (checked, endorsed, returned, approved, etc.) to both addresses. You can also check this submission's status anytime from Submission Bin.
+            </p>
 
             <div className="sb-field-row">
               <label className="sb-field">

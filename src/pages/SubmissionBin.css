@@ -270,6 +270,13 @@
   row-gap: 14px;
 }
 
+.sb-field-note {
+  margin: -6px 0 4px;
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+  line-height: 1.4;
+}
+
 .sb-form-error {
   display: flex;
   align-items: center;

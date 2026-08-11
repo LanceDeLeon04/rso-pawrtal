@@ -16,3 +16,9 @@ verify_jwt = false
 
 [functions.reset-password]
 verify_jwt = false
+
+# Called by the DB trigger (pg_net), not a logged-in user, so there's no
+# user JWT to verify — auth is instead a shared secret in the
+# x-webhook-secret header, checked inside the function itself.
+[functions.notify-status-email]
+verify_jwt = false
