@@ -271,14 +271,14 @@ begin
         sdg_marked_acp_generated = false,
         -- COL has no SDAO Assistant stage: go straight to the
         -- SDAO Supervisor. RSO orgs behave as before.
-        stage = case when v_is_col then 'supervisor_endorsement' else 'assistant_review' end,
+        stage = case when v_is_col then 'supervisor_endorsement'::submission_stage else 'assistant_review'::submission_stage end,
         updated_at = now()
       where id = v_link.submission_id;
     elsif v_link.role = 'marketing_rep' then
       update submissions set
         marketing_representative = v_link.person_name,
         marketing_reviewed_at = now(),
-        stage = case when v_is_col then 'supervisor_endorsement' else 'assistant_review' end,
+        stage = case when v_is_col then 'supervisor_endorsement'::submission_stage else 'assistant_review'::submission_stage end,
         updated_at = now()
       where id = v_link.submission_id;
     else
