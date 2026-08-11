@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, CalendarDays, Inbox, FileText, ShieldCheck,
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
-  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X,
+  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info,
 } from 'lucide-react'
 import { useAuth, isAdminTier, isFMO, isExecutiveDirector } from '../context/AuthContext'
 import './Layout.css'
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true, hideForED: true },
   { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true, hideForED: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
+  { to: '/about', label: 'About the System', icon: Info },
 ]
 
 const ACCREDITATION_LABELS = {

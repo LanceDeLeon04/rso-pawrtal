@@ -13,6 +13,7 @@ import Clearance from './pages/Clearance'
 import Assignments from './pages/Assignments'
 import Accounts from './pages/Accounts'
 import Settings from './pages/Settings'
+import SystemInfo from './pages/SystemInfo'
 import ExternalApproval from './pages/ExternalApproval'
 import EventVerification from './pages/EventVerification'
 
@@ -82,6 +83,10 @@ export default function App() {
             <Route
               path="/settings"
               element={<Settings />}
+            />
+            <Route
+              path="/about"
+              element={<SystemInfo />}
             />
           </Route>
 
