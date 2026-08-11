@@ -709,6 +709,7 @@
 
 .sb-outcome--warn { background: #fdf3d9; color: #8a6408; }
 .sb-outcome--danger { background: #fdecec; color: var(--danger); }
+.sb-outcome--muted { background: var(--paper); color: var(--muted); }
 
 /* ---------- Detail sections ---------- */
 .sb-detail-grid {

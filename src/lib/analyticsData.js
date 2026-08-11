@@ -19,6 +19,7 @@ export const STAGE_LABELS = {
   approved: 'Approved',
   returned: 'Returned',
   rejected: 'Rejected',
+  cancelled: 'Cancelled',
 }
 
 export const BOOKING_STATUS_LABELS = {

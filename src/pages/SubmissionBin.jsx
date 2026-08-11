@@ -4,7 +4,7 @@ import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
-  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag,
+  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag, Pencil,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -130,6 +130,7 @@ const STAGE_META = {
   approved: { label: 'Approved', tone: 'ok' },
   returned: { label: 'Returned', tone: 'danger' },
   rejected: { label: 'Rejected', tone: 'danger' },
+  cancelled: { label: 'Cancelled', tone: 'muted' },
 }
 
 const STEPS_EVENT_APP = [
@@ -470,6 +471,12 @@ export default function SubmissionBin() {
   const [openClearances, setOpenClearances] = useState([])
 
   const [showAppModal, setShowAppModal] = useState(false)
+  // Set instead of null while editing a 'returned' submission (opened via
+  // the "Edit & Resubmit" action) so handleSubmitApp/handleSubmitMerch
+  // know to UPDATE that row instead of inserting a new one. RLS already
+  // allows the owning org to update any column on their own submission
+  // while its stage is 'returned' (see submissions_resubmit_owner).
+  const [editingSubmissionId, setEditingSubmissionId] = useState(null)
   const [appForm, setAppForm] = useState(EMPTY_APP_FORM)
   const [appFiles, setAppFiles] = useState({})
   const [venueConflict, setVenueConflict] = useState(null)
@@ -535,6 +542,10 @@ export default function SubmissionBin() {
   // Resubmission (returned submission, owning org)
   const [resubmitting, setResubmitting] = useState(false)
   const [resubmitNote, setResubmitNote] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
+  const [cancelNote, setCancelNote] = useState('')
+  const [cancelError, setCancelError] = useState('')
 
   // Adviser/Dean external approval links (event applications only)
   const [approvalLinks, setApprovalLinks] = useState([])
@@ -715,8 +726,8 @@ export default function SubmissionBin() {
       .from('submissions')
       .select(`
         id, type, org_id, event_id, title, contact_person, contact_number,
-        venue_id, venue_detail, venue_tag, online_platform, pencil_booked, lab_endorsed,
-        event_date, start_time, end_time, additional_ingress_time, additional_egress_time, medium, description,
+        venue_id, venue_ids, venue_detail, venue_details, venue_tag, online_platform, pencil_booked, lab_endorsed,
+        event_date, start_time, end_time, additional_ingress_time, additional_egress_time, night_before_ingress, medium, description,
         is_continuing, continuing_type, term_label, report_submission_date,
         is_multi_day, event_dates,
         position, email, activity_type, activity_type_other, target_audience, target_participants,
@@ -1227,6 +1238,7 @@ export default function SubmissionBin() {
     setFormError('')
     setVenueConflict(null)
     setVenueAdvisory(null)
+    setEditingSubmissionId(null)
     setShowAppModal(true)
   }
 
@@ -1247,7 +1259,95 @@ export default function SubmissionBin() {
     setMerchOtherText('')
     setMerchFiles({})
     setFormError('')
+    setEditingSubmissionId(null)
     setShowMerchModal(true)
+  }
+
+  // Opens the same create-form modals, pre-filled from a returned
+  // submission's saved data, so the org can revise anything (dates,
+  // venue, ACP fields, etc.) rather than just adding an attachment.
+  // Only reachable for the owning org while stage === 'returned' — see
+  // canEdit in the detail view.
+  function openEditReturned(sub) {
+    const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+    setFormError('')
+    setEditingSubmissionId(sub.id)
+
+    if (sub.type === 'merchandise') {
+      const storedTypes = sub.merchandise_types || []
+      const otherEntry = storedTypes.find((t) => t.startsWith('Others:'))
+      const knownTypes = storedTypes.filter((t) => MERCHANDISE_TYPES.includes(t))
+      setMerchTypes(otherEntry ? [...knownTypes, 'Others'] : knownTypes)
+      setMerchOtherText(otherEntry ? otherEntry.slice('Others:'.length).trim() : '')
+      const [g1, g2, g3] = sub.learning_goals || []
+      setMerchForm({
+        contact_person: sub.contact_person || '',
+        contact_number: sub.contact_number || '',
+        event_date: sub.event_date || '',
+        description: sub.description || '',
+        position: sub.position || myMembership?.position || '',
+        email: sub.email || '',
+        target_audience: sub.target_audience || '',
+        target_participants: sub.target_participants != null ? String(sub.target_participants) : '',
+        projected_budget: sub.projected_budget != null ? String(sub.projected_budget) : '',
+        budget_source: sub.budget_source || '',
+        learning_goal_1: g1 || '', learning_goal_2: g2 || '', learning_goal_3: g3 || '',
+        merchandise_duration: sub.merchandise_duration || '',
+      })
+      setMerchFiles({})
+      setSelected(null)
+      setShowMerchModal(true)
+      return
+    }
+
+    const [g1, g2, g3] = sub.learning_goals || []
+    const knownTags = (sub.col_event_tags || []).filter((t) => COL_EVENT_OPTIONS.includes(t))
+    const otherTag = (sub.col_event_tags || []).find((t) => !COL_EVENT_OPTIONS.includes(t))
+    setAppForm({
+      ...EMPTY_APP_FORM,
+      title: sub.title || '',
+      contact_person: sub.contact_person || '',
+      contact_number: sub.contact_number || '',
+      venue_id: sub.venue_id || '',
+      venue_ids: sub.venue_ids || (sub.venue_id ? [sub.venue_id] : []),
+      venue_detail: sub.venue_detail || '',
+      venue_details: sub.venue_details || {},
+      pencil_booked: sub.pencil_booked === true ? 'yes' : sub.pencil_booked === false ? 'no' : '',
+      lab_endorsed: sub.lab_endorsed === true ? 'yes' : sub.lab_endorsed === false ? 'no' : '',
+      online_platform: sub.online_platform || '',
+      event_date: sub.event_date || '',
+      start_time: sub.start_time || '',
+      end_time: sub.end_time || '',
+      medium: sub.medium || 'f2f',
+      description: sub.description || '',
+      position: sub.position || myMembership?.position || '',
+      email: sub.email || '',
+      activity_type: sub.activity_type || '',
+      activity_type_other: sub.activity_type_other || '',
+      target_audience: sub.target_audience || '',
+      target_participants: sub.target_participants != null ? String(sub.target_participants) : '',
+      projected_budget: sub.projected_budget != null ? String(sub.projected_budget) : '',
+      budget_source: sub.budget_source || '',
+      learning_goal_1: g1 || '', learning_goal_2: g2 || '', learning_goal_3: g3 || '',
+      is_multi_day: !!sub.is_multi_day,
+      event_dates: sub.is_multi_day && sub.event_dates?.length ? sub.event_dates : EMPTY_APP_FORM.event_dates,
+      is_continuing: !!sub.is_continuing,
+      continuing_type: sub.continuing_type || 'year_round',
+      term_label: sub.term_label || '',
+      restricted_period_ack: !!sub.restricted_period_ack,
+      restricted_period_justification: sub.restricted_period_justification || '',
+      wants_additional_time: !!(sub.additional_ingress_time || sub.additional_egress_time),
+      additional_ingress_time: sub.additional_ingress_time || '',
+      additional_egress_time: sub.additional_egress_time || '',
+      night_before_ingress: !!sub.night_before_ingress,
+      col_event_tags: otherTag ? [...knownTags, 'Others'] : knownTags,
+      col_event_other: otherTag || '',
+    })
+    setAppFiles({})
+    setVenueConflict(null)
+    setVenueAdvisory(null)
+    setSelected(null)
+    setShowAppModal(true)
   }
 
   useEffect(() => {
@@ -1395,7 +1495,11 @@ export default function SubmissionBin() {
       }
     }
 
+    // When editing a returned submission, the required docs are almost
+    // always already attached from the original submission — only
+    // validate ones the org is actively replacing/adding here.
     for (const doc of EVENT_APP_DOCS) {
+      if (editingSubmissionId && !appFiles[doc]) continue
       const err = validateAttachmentEntry(doc, appFiles[doc])
       if (err) {
         setFormError(err)
@@ -1404,9 +1508,12 @@ export default function SubmissionBin() {
     }
 
     setSaving(true)
-    const { data: sub, error: err } = await supabase.from('submissions').insert({
-      type: 'event_application',
-      org_id: myOrgId,
+    // Shared between create and edit — sdgs/sdg_representative/submitted_by
+    // are deliberately left out here: on a fresh submission they start
+    // blank (see insert branch below), but on an edit-resubmit we must
+    // NOT clobber SDG marks a rep already signed off on before this was
+    // returned, nor the original submitter's attribution.
+    const appPayload = {
       title: appForm.title,
       contact_person: appForm.contact_person,
       contact_number: appForm.contact_number || null,
@@ -1460,12 +1567,6 @@ export default function SubmissionBin() {
       target_participants: Number(appForm.target_participants),
       projected_budget: Number(appForm.projected_budget),
       budget_source: appForm.budget_source,
-      // SDGs are no longer self-declared by the student — they're left
-      // blank here and marked externally by the SDG Representative
-      // (see the sdg_rep approval-link step), which also fills in
-      // sdg_representative once they've signed off.
-      sdgs: [],
-      sdg_representative: null,
       learning_goals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
       is_continuing: appForm.is_continuing,
       continuing_type: appForm.is_continuing ? appForm.continuing_type : null,
@@ -1475,14 +1576,39 @@ export default function SubmissionBin() {
       additional_ingress_time: appForm.wants_additional_time && appForm.additional_ingress_time ? appForm.additional_ingress_time : null,
       additional_egress_time: appForm.wants_additional_time && appForm.additional_egress_time ? appForm.additional_egress_time : null,
       night_before_ingress: nightBeforeEligible && !nightBeforeConflict && appForm.night_before_ingress,
-      submitted_by: profile.id,
       ...(canTagCOLEvents ? {
         col_event_tags: [
           ...appForm.col_event_tags,
           ...(appForm.col_event_tags.includes('Others') && appForm.col_event_other.trim() ? [appForm.col_event_other.trim()] : []),
         ].filter((t) => t !== 'Others'),
       } : {}),
-    }).select().single()
+    }
+
+    let sub, err
+    if (editingSubmissionId) {
+      // Editing a returned submission — update it in place and send it
+      // straight back into the review queue. RLS (submissions_resubmit_owner)
+      // only allows this while the row's stage is still 'returned'.
+      ;({ data: sub, error: err } = await supabase.from('submissions')
+        .update({ ...appPayload, stage: 'submitted', updated_at: new Date().toISOString() })
+        .eq('id', editingSubmissionId)
+        .select().single())
+    } else {
+      ;({ data: sub, error: err } = await supabase.from('submissions')
+        .insert({
+          type: 'event_application',
+          org_id: myOrgId,
+          submitted_by: profile.id,
+          // SDGs are no longer self-declared by the student — they're left
+          // blank here and marked externally by the SDG Representative
+          // (see the sdg_rep approval-link step), which also fills in
+          // sdg_representative once they've signed off.
+          sdgs: [],
+          sdg_representative: null,
+          ...appPayload,
+        })
+        .select().single())
+    }
 
     if (err) {
       setSaving(false)
@@ -1501,7 +1627,7 @@ export default function SubmissionBin() {
     // the calendar entirely for now — one gets created once the SDAO
     // Assistant assigns a report submission date/deadline.
     if (!sub.is_continuing) {
-      const { data: newEvent } = await supabase.from('events').insert({
+      const eventFields = {
         title: sub.title,
         org_id: sub.org_id,
         contact_person: sub.contact_person,
@@ -1518,12 +1644,18 @@ export default function SubmissionBin() {
         additional_egress_time: sub.additional_egress_time,
         night_before_ingress: sub.night_before_ingress,
         medium: sub.medium,
-        booking_status: 'pencil',
-        submission_id: sub.id,
-        created_by: profile.id,
-      }).select().single()
-      if (newEvent) {
-        await supabase.from('submissions').update({ event_id: newEvent.id }).eq('id', sub.id)
+      }
+      if (editingSubmissionId && selected?.event_id) {
+        // Edit-resubmit with an existing calendar entry — update it in
+        // place with whatever changed, and un-gray it back to tentative.
+        await supabase.from('events').update({ ...eventFields, booking_status: 'pencil' }).eq('id', selected.event_id)
+      } else {
+        const { data: newEvent } = await supabase.from('events').insert({
+          ...eventFields, booking_status: 'pencil', submission_id: sub.id, created_by: profile.id,
+        }).select().single()
+        if (newEvent) {
+          await supabase.from('submissions').update({ event_id: newEvent.id }).eq('id', sub.id)
+        }
       }
     }
 
@@ -1578,12 +1710,32 @@ export default function SubmissionBin() {
         budgetSource: appForm.budget_source,
         // Blank at first submission — no marks yet. The ACP is
         // regenerated with marks once the SDG Representative signs off.
-        sdgs: [],
-        sdgRepresentative: null,
+        // On an edit-resubmit, reuse whatever marks/rep were already on
+        // the submission rather than blanking out an already-approved
+        // SDG sign-off.
+        sdgs: editingSubmissionId ? (sub.sdgs || []) : [],
+        sdgRepresentative: editingSubmissionId ? (sub.sdg_representative || null) : null,
         learningGoals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3],
         description: appForm.description,
       })
-      const acpFile = new File([pdfBytes], `ACP-Form-${sub.id}.pdf`, { type: 'application/pdf' })
+      const acpFile = new File([pdfBytes], `ACP-Form-${sub.id}${editingSubmissionId ? '-revised' : ''}.pdf`, { type: 'application/pdf' })
+
+      if (editingSubmissionId) {
+        // Replace the old ACP Form rather than stacking a duplicate —
+        // same delete-then-reupload pattern used for the SDG-marked swap.
+        const { data: oldAcpRows } = await supabase
+          .from('submission_attachments')
+          .select('id, file_url')
+          .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+        const { error: delErr } = await supabase.from('submission_attachments').delete()
+          .eq('submission_id', sub.id).eq('document_type', 'ACP Form')
+        if (!delErr) {
+          for (const row of oldAcpRows || []) {
+            const path = extractStoragePath(row.file_url)
+            if (path) await supabase.storage.from('submission-attachments').remove([path])
+          }
+        }
+      }
       await uploadAttachment(sub.id, 'ACP Form', acpFile)
     } catch (pdfErr) {
       console.error('Failed to auto-generate ACP Form PDF', pdfErr)
@@ -1592,6 +1744,9 @@ export default function SubmissionBin() {
 
     const failedDocs = []
     for (const doc of EVENT_APP_DOCS) {
+      // Editing: only touches storage for docs the org actually picked a
+      // new file for — otherwise the original attachment stays as-is.
+      if (editingSubmissionId && !appFiles[doc]) continue
       try {
         await uploadAttachment(sub.id, doc, appFiles[doc])
       } catch (uploadErr) {
@@ -1600,14 +1755,18 @@ export default function SubmissionBin() {
       }
     }
     await supabase.from('submission_status_history').insert({
-      submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
+      submission_id: sub.id, stage: 'submitted', action: editingSubmissionId ? 'resubmitted' : 'submitted', actor_id: profile.id,
     })
     if (failedDocs.length) {
       setFormError(`Application submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
     }
 
     setSaving(false)
-    if (!failedDocs.length) setShowAppModal(false)
+    if (!failedDocs.length) {
+      setShowAppModal(false)
+      setEditingSubmissionId(null)
+      setSelected(null)
+    }
     loadSubmissions()
   }
 
@@ -1719,6 +1878,7 @@ export default function SubmissionBin() {
       return
     }
     for (const doc of MERCH_DOCS) {
+      if (editingSubmissionId && !merchFiles[doc]) continue
       const err = validateAttachmentEntry(doc, merchFiles[doc])
       if (err) {
         setFormError(err)
@@ -1737,9 +1897,7 @@ export default function SubmissionBin() {
     ))
 
     setSaving(true)
-    const { data: sub, error: err } = await supabase.from('submissions').insert({
-      type: 'merchandise',
-      org_id: myOrgId,
+    const merchPayload = {
       title: `${orgName} Merchandise Proposal`,
       contact_person: merchForm.contact_person,
       contact_number: merchForm.contact_number || null,
@@ -1758,8 +1916,19 @@ export default function SubmissionBin() {
       learning_goals: [merchForm.learning_goal_1, merchForm.learning_goal_2, merchForm.learning_goal_3].map((g) => g.trim()).filter(Boolean),
       merchandise_types: finalMerchTypes,
       merchandise_duration: merchForm.merchandise_duration,
-      submitted_by: profile.id,
-    }).select().single()
+    }
+
+    let sub, err
+    if (editingSubmissionId) {
+      ;({ data: sub, error: err } = await supabase.from('submissions')
+        .update({ ...merchPayload, stage: 'submitted', updated_at: new Date().toISOString() })
+        .eq('id', editingSubmissionId)
+        .select().single())
+    } else {
+      ;({ data: sub, error: err } = await supabase.from('submissions')
+        .insert({ type: 'merchandise', org_id: myOrgId, submitted_by: profile.id, ...merchPayload })
+        .select().single())
+    }
 
     if (err) {
       setSaving(false)
@@ -1794,7 +1963,22 @@ export default function SubmissionBin() {
         learningGoals: [merchForm.learning_goal_1, merchForm.learning_goal_2, merchForm.learning_goal_3],
         description: merchForm.description,
       })
-      const formFile = new File([pdfBytes], `Merchandise-Request-Form-${sub.id}.pdf`, { type: 'application/pdf' })
+      const formFile = new File([pdfBytes], `Merchandise-Request-Form-${sub.id}${editingSubmissionId ? '-revised' : ''}.pdf`, { type: 'application/pdf' })
+
+      if (editingSubmissionId) {
+        const { data: oldFormRows } = await supabase
+          .from('submission_attachments')
+          .select('id, file_url')
+          .eq('submission_id', sub.id).eq('document_type', 'Merchandise Request Form')
+        const { error: delErr } = await supabase.from('submission_attachments').delete()
+          .eq('submission_id', sub.id).eq('document_type', 'Merchandise Request Form')
+        if (!delErr) {
+          for (const row of oldFormRows || []) {
+            const path = extractStoragePath(row.file_url)
+            if (path) await supabase.storage.from('submission-attachments').remove([path])
+          }
+        }
+      }
       await uploadAttachment(sub.id, 'Merchandise Request Form', formFile)
     } catch (pdfErr) {
       console.error('Failed to auto-generate Merchandise Request Form PDF', pdfErr)
@@ -1803,6 +1987,7 @@ export default function SubmissionBin() {
 
     const failedDocs = []
     for (const doc of MERCH_DOCS) {
+      if (editingSubmissionId && !merchFiles[doc]) continue
       try {
         await uploadAttachment(sub.id, doc, merchFiles[doc])
       } catch (uploadErr) {
@@ -1811,14 +1996,18 @@ export default function SubmissionBin() {
       }
     }
     await supabase.from('submission_status_history').insert({
-      submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
+      submission_id: sub.id, stage: 'submitted', action: editingSubmissionId ? 'resubmitted' : 'submitted', actor_id: profile.id,
     })
     if (failedDocs.length) {
       setFormError(`Proposal submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
     }
 
     setSaving(false)
-    if (!failedDocs.length) setShowMerchModal(false)
+    if (!failedDocs.length) {
+      setShowMerchModal(false)
+      setEditingSubmissionId(null)
+      setSelected(null)
+    }
     loadSubmissions()
   }
 
@@ -1839,6 +2028,10 @@ export default function SubmissionBin() {
     setExtraDocEntry(null)
     setResubmitting(false)
     setResubmitNote('')
+    setCancelling(false)
+    setConfirmingCancel(false)
+    setCancelNote('')
+    setCancelError('')
     setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
     setLinkError('')
     setFrfError('')
@@ -2026,6 +2219,40 @@ export default function SubmissionBin() {
 
     setResubmitting(false)
     setResubmitNote('')
+    setSelected(null)
+    loadSubmissions()
+  }
+
+  // Lets the owning org withdraw its own Event Application / Merchandise
+  // Proposal any time before the Academic Director has approved it
+  // (RLS mirrors this — see submissions_cancel_owner in migration 048).
+  async function handleCancelSubmission() {
+    if (!selected) return
+    setCancelling(true)
+    setCancelError('')
+    const { error } = await supabase.from('submissions')
+      .update({ stage: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', selected.id)
+    if (error) {
+      setCancelError('Could not cancel this submission. Please try again.')
+      setCancelling(false)
+      return
+    }
+    await supabase.from('submission_status_history').insert({
+      submission_id: selected.id, stage: 'cancelled', action: 'cancelled',
+      actor_id: profile.id, comment: cancelNote.trim() || null,
+    })
+
+    // Free up the calendar slot the same way an admin's "Cancel Booking"
+    // does, rather than leaving a pencil/reserved entry sitting there
+    // for an application that no longer exists.
+    if (selected.type === 'event_application' && selected.event_id) {
+      await supabase.from('events').update({ booking_status: 'cancelled' }).eq('id', selected.event_id)
+    }
+
+    setCancelling(false)
+    setConfirmingCancel(false)
+    setCancelNote('')
     setSelected(null)
     loadSubmissions()
   }
@@ -2614,10 +2841,10 @@ export default function SubmissionBin() {
 
       {/* ---------- New Event Application ---------- */}
       {showAppModal && (
-        <div className="sb-modal-backdrop" onClick={() => setShowAppModal(false)}>
+        <div className="sb-modal-backdrop" onClick={() => { setShowAppModal(false); setEditingSubmissionId(null) }}>
           <form className="sb-modal sb-modal--form" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmitApp}>
-            <button type="button" className="sb-modal__close" onClick={() => setShowAppModal(false)}><X size={18} /></button>
-            <h3 className="sb-modal__title">New Event Application</h3>
+            <button type="button" className="sb-modal__close" onClick={() => { setShowAppModal(false); setEditingSubmissionId(null) }}><X size={18} /></button>
+            <h3 className="sb-modal__title">{editingSubmissionId ? 'Edit & Resubmit Application' : 'New Event Application'}</h3>
 
             {formError && <div className="sb-form-error"><AlertCircle size={14} /> {formError}</div>}
 
@@ -3622,7 +3849,7 @@ export default function SubmissionBin() {
               }
               title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.' : undefined}
             >
-              {saving ? <Loader2 size={15} className="spin" /> : 'Submit Application'}
+              {saving ? <Loader2 size={15} className="spin" /> : (editingSubmissionId ? 'Save & Resubmit' : 'Submit Application')}
             </button>
           </form>
         </div>
@@ -3679,10 +3906,10 @@ export default function SubmissionBin() {
 
       {/* ---------- New Merchandise Proposal ---------- */}
       {showMerchModal && (
-        <div className="sb-modal-backdrop" onClick={() => setShowMerchModal(false)}>
+        <div className="sb-modal-backdrop" onClick={() => { setShowMerchModal(false); setEditingSubmissionId(null) }}>
           <form className="sb-modal sb-modal--form" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmitMerch}>
-            <button type="button" className="sb-modal__close" onClick={() => setShowMerchModal(false)}><X size={18} /></button>
-            <h3 className="sb-modal__title">New Merchandise Proposal</h3>
+            <button type="button" className="sb-modal__close" onClick={() => { setShowMerchModal(false); setEditingSubmissionId(null) }}><X size={18} /></button>
+            <h3 className="sb-modal__title">{editingSubmissionId ? 'Edit & Resubmit Proposal' : 'New Merchandise Proposal'}</h3>
 
             {formError && <div className="sb-form-error"><AlertCircle size={14} /> {formError}</div>}
 
@@ -3837,7 +4064,7 @@ export default function SubmissionBin() {
               disabled={saving || clearanceBlocked}
               title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.' : undefined}
             >
-              {saving ? <Loader2 size={15} className="spin" /> : 'Submit Proposal'}
+              {saving ? <Loader2 size={15} className="spin" /> : (editingSubmissionId ? 'Save & Resubmit' : 'Submit Proposal')}
             </button>
           </form>
         </div>
@@ -3847,6 +4074,12 @@ export default function SubmissionBin() {
       {selected && (() => {
         const isOwnerOrg = !admin && myOrgId === selected.org_id
         const canResubmit = isOwnerOrg && selected.stage === 'returned'
+        // Org can withdraw its own application/proposal any time before
+        // the Academic Director has approved it — not once it's already
+        // approved, rejected, or already cancelled.
+        const canCancel = isOwnerOrg
+          && (selected.type === 'event_application' || selected.type === 'merchandise')
+          && !['approved', 'rejected', 'cancelled'].includes(selected.stage)
         const activeAttachment = attachments.find((a) => a.id === viewerAttachmentId) || null
 
         return (
@@ -3865,10 +4098,10 @@ export default function SubmissionBin() {
                     <p className="sb-modal__org"><Building2 size={14} /> {selected.organizations?.acronym} — {selected.organizations?.name}</p>
                   )}
 
-                  {(selected.stage === 'returned' || selected.stage === 'rejected') ? (
-                    <div className={`sb-outcome sb-outcome--${selected.stage === 'returned' ? 'warn' : 'danger'}`}>
+                  {(selected.stage === 'returned' || selected.stage === 'rejected' || selected.stage === 'cancelled') ? (
+                    <div className={`sb-outcome sb-outcome--${selected.stage === 'returned' ? 'warn' : selected.stage === 'cancelled' ? 'muted' : 'danger'}`}>
                       {selected.stage === 'returned' ? <Undo2 size={15} /> : <Ban size={15} />}
-                      This submission was {selected.stage}.
+                      {selected.stage === 'cancelled' ? 'This submission was cancelled by the organization.' : `This submission was ${selected.stage}.`}
                     </div>
                   ) : (
                     <div className="sb-stepper">
@@ -4092,7 +4325,7 @@ export default function SubmissionBin() {
                   </div>
 
                   {/* ---------- Adviser / Dean / SDG Rep external approvals ---------- */}
-                  {(selected.type === 'event_application' || selected.type === 'merchandise') && (selected.stage !== 'rejected' || approvalLinks.length > 0) && (() => {
+                  {(selected.type === 'event_application' || selected.type === 'merchandise') && (selected.stage !== 'rejected' && selected.stage !== 'cancelled' || approvalLinks.length > 0) && (() => {
                     const category = selected.organizations?.category
                     const state = externalApprovalState(approvalLinks, category, selected.type)
                     const { chain } = state
@@ -4309,14 +4542,29 @@ export default function SubmissionBin() {
                     </div>
                   )}
 
+                  {/* ---------- Edit & Resubmit (owning org, full form) ---------- */}
+                  {canResubmit && (selected.type === 'event_application' || selected.type === 'merchandise') && (
+                    <div className="sb-detail-section">
+                      <span className="sb-detail-section__label">Edit</span>
+                      <p className="sb-empty-note">
+                        Need to change the date, venue, or anything else you entered — not just attach a file?
+                        Edit the full {selected.type === 'event_application' ? 'application' : 'proposal'} and it'll go
+                        straight back into review once saved.
+                      </p>
+                      <button type="button" className="sb-btn sb-btn--outline sb-btn--full" onClick={() => openEditReturned(selected)}>
+                        <Pencil size={14} /> Edit {selected.type === 'event_application' ? 'Application' : 'Proposal'}
+                      </button>
+                    </div>
+                  )}
+
                   {/* ---------- Return & Resubmit (owning org) ---------- */}
                   {canResubmit && (
                     <div className="sb-detail-section">
                       <span className="sb-detail-section__label">Resubmit</span>
                       {actionError && <div className="sb-form-error"><AlertCircle size={14} /> {actionError}</div>}
                       <p className="sb-empty-note">
-                        Address the reviewer's comments above, attach any additional documents needed, then resubmit
-                        this {selected.type === 'event_application' ? 'application' : selected.type === 'merchandise' ? 'proposal' : 'report'} for review.
+                        Just attaching an extra file or leaving a note about what changed? Do that here.
+                        {(selected.type === 'event_application' || selected.type === 'merchandise') && ' (Need to change dates, venue, or other details? Use Edit above instead.)'}
                       </p>
                       <textarea
                         className="sb-comment-box"
@@ -4331,8 +4579,44 @@ export default function SubmissionBin() {
                     </div>
                   )}
 
+                  {/* ---------- Cancel (owning org, before Director approval) ---------- */}
+                  {canCancel && (
+                    <div className="sb-detail-section">
+                      <span className="sb-detail-section__label">Cancel</span>
+                      {cancelError && <div className="sb-form-error"><AlertCircle size={14} /> {cancelError}</div>}
+                      {confirmingCancel ? (
+                        <>
+                          <p className="sb-empty-note">
+                            This withdraws the {selected.type === 'event_application' ? 'application' : 'proposal'} from review
+                            {selected.type === 'event_application' && selected.event_id ? ' and frees up its calendar slot' : ''}.
+                            This can't be undone — you'd need to submit a new one to reschedule.
+                          </p>
+                          <textarea
+                            className="sb-comment-box"
+                            rows={2}
+                            placeholder="Optional reason for cancelling..."
+                            value={cancelNote}
+                            onChange={(e) => setCancelNote(e.target.value)}
+                          />
+                          <div className="sb-review-actions__row">
+                            <button type="button" className="sb-btn sb-btn--outline" onClick={() => { setConfirmingCancel(false); setCancelError('') }} disabled={cancelling}>
+                              Never mind
+                            </button>
+                            <button type="button" className="sb-btn sb-btn--danger" onClick={handleCancelSubmission} disabled={cancelling}>
+                              {cancelling ? <Loader2 size={15} className="spin" /> : <><Ban size={14} /> Confirm Cancellation</>}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <button type="button" className="sb-btn sb-btn--outline sb-btn--full" onClick={() => setConfirmingCancel(true)}>
+                          <Ban size={14} /> Cancel {selected.type === 'event_application' ? 'Application' : 'Proposal'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {/* ---------- Reviewer actions ---------- */}
-                  {canReview && !['approved', 'returned', 'rejected'].includes(selected.stage) && (() => {
+                  {canReview && !['approved', 'returned', 'rejected', 'cancelled'].includes(selected.stage) && (() => {
                     const nextAction = nextActionFor(profile.role, selected.stage, selected.type)
                     if (!nextAction) return null
 
