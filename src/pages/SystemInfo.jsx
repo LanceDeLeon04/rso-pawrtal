@@ -166,6 +166,7 @@ function DeveloperSection({ info, canEdit, onSaved }) {
   const [title, setTitle] = useState(info?.developer_title || '')
   const [note, setNote] = useState(info?.developer_note || '')
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
   function startEdit() {
@@ -195,13 +196,33 @@ function DeveloperSection({ info, canEdit, onSaved }) {
     setEditing(false)
   }
 
+  async function handlePhotoChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    setError('')
+    const ext = file.name.split('.').pop()
+    const path = `developer/${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('system-admins').upload(path, file, { upsert: true })
+    if (upErr) { setError('Could not upload photo.'); setUploading(false); return }
+    const { data: pub } = supabase.storage.from('system-admins').getPublicUrl(path)
+    const { data, error: dbErr } = await supabase.from('system_info')
+      .update({ developer_photo_url: pub.publicUrl, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+      .select('*')
+      .single()
+    setUploading(false)
+    if (dbErr) { setError('Could not save photo.'); return }
+    onSaved(data)
+  }
+
   return (
     <div className="sys-card">
       <div className="sys-card__head">
-        <span className="sys-card__label"><Code2 size={13} /> Developed By</span>
+        <span className="sys-card__label"><Code2 size={15} /> Developed By</span>
         {canEdit && !editing && (
           <button type="button" className="sys-icon-btn" onClick={startEdit} title="Edit">
-            <Pencil size={13} />
+            <Pencil size={14} />
           </button>
         )}
       </div>
@@ -210,7 +231,19 @@ function DeveloperSection({ info, canEdit, onSaved }) {
 
       {!editing ? (
         <div className="sys-dev">
-          <div className="sys-dev__avatar"><Sparkles size={20} /></div>
+          <div className="sys-dev__avatar">
+            {info?.developer_photo_url ? (
+              <img src={info.developer_photo_url} alt={info?.developer_name || ''} />
+            ) : (
+              <Sparkles size={26} />
+            )}
+            {canEdit && (
+              <label className="sys-dev__avatar-edit" title="Change photo">
+                {uploading ? <Loader2 size={13} className="spin" /> : <Camera size={13} />}
+                <input type="file" accept="image/*" onChange={handlePhotoChange} hidden disabled={uploading} />
+              </label>
+            )}
+          </div>
           <div className="sys-dev__body">
             <span className="sys-dev__name">{info?.developer_name}</span>
             <span className="sys-dev__title">{info?.developer_title}</span>
@@ -245,6 +278,23 @@ function DeveloperSection({ info, canEdit, onSaved }) {
 
 /* ============================== Administrators ============================== */
 
+// Three-tier org hierarchy: Executive, then Academic, then everyone else
+// (SDAO / QMO / consultants / etc.), inferred from each admin's title.
+const TIERS = [
+  { key: 'executive', label: 'Executive', match: (t) => /executive/i.test(t) },
+  { key: 'academic', label: 'Academic', match: (t) => /academic/i.test(t) },
+  { key: 'other', label: 'SDAO, QMO & Consultants', match: () => true },
+]
+
+function groupByTier(admins) {
+  const buckets = { executive: [], academic: [], other: [] }
+  for (const admin of admins) {
+    const tier = TIERS.find((t) => t.match(admin.title || '')) || TIERS[2]
+    buckets[tier.key].push(admin)
+  }
+  return buckets
+}
+
 function AdministratorsSection({ admins, canEdit, onChanged }) {
   const [managing, setManaging] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -252,6 +302,7 @@ function AdministratorsSection({ admins, canEdit, onChanged }) {
   const [newTitle, setNewTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const tiers = groupByTier(admins)
 
   async function uploadPhoto(adminId, file) {
     const ext = file.name.split('.').pop()
@@ -321,17 +372,29 @@ function AdministratorsSection({ admins, canEdit, onChanged }) {
 
       {error && <div className="sys-error"><AlertCircle size={13} /> {error}</div>}
 
-      <div className="sys-admin-grid">
-        {admins.map((admin) => (
-          <AdminCard
-            key={admin.id}
-            admin={admin}
-            editing={managing}
-            onPhotoChange={(file) => handlePhotoChange(admin.id, file)}
-            onFieldSave={(field, value) => handleTitleEdit(admin, field, value)}
-            onRemove={() => handleRemove(admin)}
-          />
-        ))}
+      <div className="sys-org-chart">
+        {TIERS.map((tier, i) => {
+          const group = tiers[tier.key]
+          if (!group.length) return null
+          return (
+            <div className={`sys-tier sys-tier--${tier.key}`} key={tier.key}>
+              {i > 0 && <div className="sys-tier__connector" aria-hidden="true" />}
+              <span className="sys-tier__label">{tier.label}</span>
+              <div className="sys-admin-grid">
+                {group.map((admin) => (
+                  <AdminCard
+                    key={admin.id}
+                    admin={admin}
+                    editing={managing}
+                    onPhotoChange={(file) => handlePhotoChange(admin.id, file)}
+                    onFieldSave={(field, value) => handleTitleEdit(admin, field, value)}
+                    onRemove={() => handleRemove(admin)}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       {managing && (
