@@ -98,6 +98,135 @@ function bodyFor(opts: {
   return lines.join('\n')
 }
 
+// Status -> accent color for the badge/header in the HTML email.
+const STAGE_COLORS: Record<string, { bg: string; text: string; accent: string }> = {
+  draft:                  { bg: '#f1f5f9', text: '#475569', accent: '#94a3b8' },
+  submitted:              { bg: '#eff6ff', text: '#1d4ed8', accent: '#3b82f6' },
+  assistant_review:       { bg: '#fefce8', text: '#a16207', accent: '#eab308' },
+  supervisor_endorsement: { bg: '#fefce8', text: '#a16207', accent: '#eab308' },
+  director_approval:      { bg: '#fefce8', text: '#a16207', accent: '#eab308' },
+  approved:               { bg: '#f0fdf4', text: '#15803d', accent: '#22c55e' },
+  returned:               { bg: '#fff7ed', text: '#c2410c', accent: '#f97316' },
+  rejected:               { bg: '#fef2f2', text: '#b91c1c', accent: '#ef4444' },
+}
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function htmlBodyFor(opts: {
+  action: string
+  stage: string
+  title: string
+  orgName: string
+  actorName: string | null
+  comment: string | null
+  siteUrl: string
+}) {
+  const { action, stage, title, orgName, actorName, comment, siteUrl } = opts
+  const verb = ACTION_VERBS[action] || action
+  const stageLabel = STAGE_LABELS[stage] || stage
+  const by = actorName ? ` by <strong>${escapeHtml(actorName)}</strong>` : ''
+  const colors = STAGE_COLORS[stage] || { bg: '#f1f5f9', text: '#475569', accent: '#64748b' }
+
+  const commentBlock = comment && comment.trim()
+    ? `
+      <tr>
+        <td style="padding:0 32px 24px 32px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-left:3px solid ${colors.accent};border-radius:6px;">
+            <tr>
+              <td style="padding:14px 18px;">
+                <p style="margin:0 0 6px 0;font:600 12px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#64748b;text-transform:uppercase;letter-spacing:.04em;">Comment</p>
+                <p style="margin:0;font:400 14px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1e293b;white-space:pre-wrap;">${escapeHtml(comment.trim())}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>`
+    : ''
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${escapeHtml(subjectFor(action, title))}</title>
+</head>
+<body style="margin:0;padding:0;background:#eef1f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:#111827;padding:24px 32px;">
+              <span style="font:700 16px/1 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:.02em;">🐾 RSO Pawrtal</span>
+            </td>
+          </tr>
+
+          <!-- Status badge -->
+          <tr>
+            <td style="padding:28px 32px 8px 32px;">
+              <span style="display:inline-block;background:${colors.bg};color:${colors.text};font:600 12px/1 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;letter-spacing:.03em;text-transform:uppercase;padding:6px 12px;border-radius:999px;">
+                ${escapeHtml(stageLabel)}
+              </span>
+            </td>
+          </tr>
+
+          <!-- Title / message -->
+          <tr>
+            <td style="padding:8px 32px 4px 32px;">
+              <p style="margin:0 0 6px 0;font:400 14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#64748b;">Update on your submission${orgName ? ` &middot; ${escapeHtml(orgName)}` : ''}</p>
+              <h1 style="margin:0 0 14px 0;font:700 20px/1.35 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">"${escapeHtml(title)}"</h1>
+              <p style="margin:0;font:400 15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#334155;">
+                This submission was just <strong style="color:${colors.text};">${escapeHtml(verb)}</strong>${by}.
+              </p>
+            </td>
+          </tr>
+
+          <tr><td style="height:20px;"></td></tr>
+${commentBlock}
+          <!-- CTA button -->
+          <tr>
+            <td style="padding:4px 32px 32px 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:8px;background:#111827;">
+                    <a href="${siteUrl}" style="display:inline-block;padding:12px 22px;font:600 14px/1 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#ffffff;text-decoration:none;border-radius:8px;">
+                      View submission status
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 32px 28px 32px;border-top:1px solid #e2e8f0;">
+              <p style="margin:0 0 4px 0;font:400 12px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#94a3b8;">
+                This is an automated message — no need to reply. We'll email both your NU email and personal email as this submission moves through review.
+              </p>
+              <p style="margin:0;font:600 12px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#64748b;">
+                RSO Pawrtal &middot; SDAO
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
@@ -152,6 +281,15 @@ Deno.serve(async (req) => {
       comment: comment || null,
       siteUrl,
     })
+    const html = htmlBodyFor({
+      action,
+      stage,
+      title: sub.title,
+      orgName,
+      actorName: actor_name || null,
+      comment: comment || null,
+      siteUrl,
+    })
 
     const client = new SMTPClient({
       connection: {
@@ -167,6 +305,7 @@ Deno.serve(async (req) => {
       to: recipients,
       subject,
       content: text,
+      html,
     })
 
     await client.close()
