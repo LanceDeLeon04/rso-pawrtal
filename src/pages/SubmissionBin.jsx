@@ -7,7 +7,7 @@ import {
   Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag, Pencil,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier } from '../context/AuthContext'
+import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
 import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
@@ -131,6 +131,14 @@ const STAGE_META = {
   returned: { label: 'Returned', tone: 'danger' },
   rejected: { label: 'Rejected', tone: 'danger' },
   cancelled: { label: 'Cancelled', tone: 'muted' },
+  // SHS chain (migration 052) — same physical people for the shared
+  // steps (SDAO Supervisor, Academic Director), distinct stage keys so
+  // College's branches below never accidentally fire for an SHS record.
+  shs_review: { label: 'With SDAO-SHS', tone: 'warn' },
+  shs_supervisor_endorsement: { label: 'With SDAO Supervisor', tone: 'warn' },
+  shs_principal_approval: { label: 'With SHS Principal', tone: 'warn' },
+  shs_director_approval: { label: 'With Academic Director', tone: 'warn' },
+  shs_executive_approval: { label: 'With Executive Director', tone: 'warn' },
 }
 
 const STEPS_EVENT_APP = [
@@ -141,27 +149,57 @@ const STEPS_EVENT_APP = [
   { key: 'approved', label: 'Approved' },
 ]
 
+// SHS's chain is longer: President -> Moderator -> SDG Rep (external,
+// bundled into the same "Pre-Approval" step) -> SDAO-SHS -> SDAO
+// Supervisor -> SHS Principal -> Academic Director -> Executive
+// Director -> Approved.
+const STEPS_EVENT_APP_SHS = [
+  { key: 'pre_approval', label: 'Pre-Approval' },
+  { key: 'shs_review', label: 'SDAO-SHS' },
+  { key: 'shs_supervisor_endorsement', label: 'SDAO Supervisor' },
+  { key: 'shs_principal_approval', label: 'SHS Principal' },
+  { key: 'shs_director_approval', label: 'Academic Director' },
+  { key: 'shs_executive_approval', label: 'Executive Director' },
+  { key: 'approved', label: 'Approved' },
+]
+
 // Reports don't need Supervisor/Director sign-off — they're closed out
-// as soon as the SDAO Assistant receives them.
+// as soon as the SDAO Assistant (or SDAO-SHS, for an SHS org) receives them.
 const STEPS_REPORT = [
   { key: 'submitted', label: 'SDAO Assistant' },
   { key: 'approved', label: 'Received' },
 ]
+const STEPS_REPORT_SHS = [
+  { key: 'shs_review', label: 'SDAO-SHS' },
+  { key: 'approved', label: 'Received' },
+]
 
-const REVIEWER_ROLES = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin', 'executive_director']
+const REVIEWER_ROLES = [
+  'sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin', 'executive_director',
+  'sdao_shs', 'shs_principal',
+]
 
-function stepsFor(type) {
+function stepsFor(type, isSHS) {
+  if (isSHS) return type === 'report' ? STEPS_REPORT_SHS : STEPS_EVENT_APP_SHS
   return type === 'report' ? STEPS_REPORT : STEPS_EVENT_APP
 }
 
 // `chainComplete` (event applications only) tells us whether the
-// external Adviser -> Dean -> SDG Rep chain has fully cleared yet.
-// The DB doesn't flip `stage` off 'submitted' until that chain
-// resolves (see migration 025), so while it's still pending we show
-// the dedicated "Pre-Approval" step instead of jumping straight to
-// "SDAO Assistant".
-function stepIndexFor(type, stage, chainComplete) {
-  const steps = stepsFor(type)
+// external chain has fully cleared yet — Adviser -> Dean -> SDG Rep for
+// College, President -> Moderator -> SDG Rep for SHS. The DB doesn't
+// flip `stage` off 'submitted' until that chain resolves (see
+// migrations 025 and 052), so while it's still pending we show the
+// dedicated "Pre-Approval" step instead of jumping straight to the
+// first internal reviewer.
+function stepIndexFor(type, stage, chainComplete, isSHS) {
+  const steps = stepsFor(type, isSHS)
+  if (isSHS) {
+    if (type === 'event_application' || type === 'merchandise') {
+      if (stage === 'submitted') return chainComplete ? 1 : 0
+    }
+    const si = steps.findIndex((s) => s.key === stage)
+    return si === -1 ? 0 : si
+  }
   if (type === 'event_application' || type === 'merchandise') {
     if (stage === 'submitted') return chainComplete ? 1 : 0
     if (stage === 'assistant_review') return 1
@@ -170,13 +208,43 @@ function stepIndexFor(type, stage, chainComplete) {
   return i === -1 ? 0 : i
 }
 
-function nextActionFor(role, stage, type) {
+function nextActionFor(role, stage, type, isSHS) {
   // Executive Director can approve from ANY stage, for ANY submission
-  // type — skipping SDAO Assistant / Supervisor / Academic Director
-  // entirely. Surfaced in the UI with a mandatory justification + a
-  // visible warning banner (see `edBypass` usage in SubmissionBin.jsx).
+  // type — skipping every intermediate reviewer entirely. Surfaced in
+  // the UI with a mandatory justification + a visible warning banner
+  // (see `edBypass` usage in SubmissionBin.jsx). This still applies to
+  // SHS submissions — ED sits at the very end of the SHS chain too, so
+  // the bypass is the same "skip ahead" shortcut there as well.
   if (role === 'executive_director') {
+    if (isSHS && stage === 'shs_executive_approval') {
+      return { to: 'approved', action: 'approved', label: 'Approve' }
+    }
     return { to: 'approved', action: 'approved', label: 'Approve (Executive Director Bypass)', edBypass: true }
+  }
+
+  if (isSHS) {
+    const shsAssistantTurn = stage === 'submitted' || stage === 'shs_review'
+
+    if (type === 'report') {
+      if (shsAssistantTurn && (role === 'sdao_shs' || role === 'system_admin')) {
+        return { to: 'approved', action: 'received', label: 'Mark as Received' }
+      }
+      return null
+    }
+
+    if (role === 'system_admin') {
+      if (shsAssistantTurn) return { to: 'shs_supervisor_endorsement', action: 'checked', label: 'Check & Forward' }
+      if (stage === 'shs_supervisor_endorsement') return { to: 'shs_principal_approval', action: 'endorsed', label: 'Endorse & Forward' }
+      if (stage === 'shs_principal_approval') return { to: 'shs_director_approval', action: 'approved', label: 'Approve & Forward' }
+      if (stage === 'shs_director_approval') return { to: 'shs_executive_approval', action: 'approved', label: 'Approve & Forward' }
+      if (stage === 'shs_executive_approval') return { to: 'approved', action: 'approved', label: 'Approve' }
+      return null
+    }
+    if (role === 'sdao_shs' && shsAssistantTurn) return { to: 'shs_supervisor_endorsement', action: 'checked', label: 'Check & Forward' }
+    if (role === 'sdao_supervisor' && stage === 'shs_supervisor_endorsement') return { to: 'shs_principal_approval', action: 'endorsed', label: 'Endorse & Forward' }
+    if (role === 'shs_principal' && stage === 'shs_principal_approval') return { to: 'shs_director_approval', action: 'approved', label: 'Approve & Forward' }
+    if (role === 'academic_director' && stage === 'shs_director_approval') return { to: 'shs_executive_approval', action: 'approved', label: 'Approve & Forward' }
+    return null
   }
 
   const assistantTurn = stage === 'submitted' || stage === 'assistant_review'
@@ -203,11 +271,16 @@ function nextActionFor(role, stage, type) {
 
 // Adviser -> Dean (for School Council/Academic orgs) -> SDG
 // Representative must all sign off externally, in that order, before
-// the SDAO Assistant can pick up an event application. The chain
-// resolution itself lives in lib/approvalLinks.js (externalApprovalState)
-// so the client-side ordering can't drift from what the DB enforces.
+// the SDAO Assistant can pick up a College event application.
+// President -> Moderator -> SDG Representative do the same for an SHS
+// event application, before SDAO-SHS picks it up. The chain resolution
+// itself lives in lib/approvalLinks.js (externalApprovalState) so the
+// client-side ordering can't drift from what the DB enforces.
 
-const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative', marketing_rep: 'Marketing' }
+const ROLE_LABELS = {
+  adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative', marketing_rep: 'Marketing',
+  org_president: 'President', org_moderator: 'Moderator',
+}
 
 // SDG Representatives are a fixed, known set of people (unlike
 // Adviser/Dean, which vary per org) — presented as a dropdown instead
@@ -445,7 +518,11 @@ const EMPTY_MERCH_FORM = {
 
 export default function SubmissionBin() {
   const { profile } = useAuth()
-  const admin = isAdminTier(profile?.role)
+  // SDAO-SHS/SHS Principal get the same "reviewer" shape as College
+  // admins throughout this page — RLS (migration 052) transparently
+  // scopes every submissions/approval_links/etc. query to
+  // department = 'shs' rows only for these two roles.
+  const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
   const canReview = REVIEWER_ROLES.includes(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
   const myMembershipRoot = profile?.org_memberships?.[0]
@@ -549,7 +626,7 @@ export default function SubmissionBin() {
 
   // Adviser/Dean external approval links (event applications only)
   const [approvalLinks, setApprovalLinks] = useState([])
-  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
+  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' } })
   const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
   const [generatingFRF, setGeneratingFRF] = useState(false)
   const [frfError, setFrfError] = useState('')
@@ -563,9 +640,13 @@ export default function SubmissionBin() {
 
   useEffect(() => {
     if (!admin) return
-    supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym')
-      .then(({ data }) => setFilterOrgs(data || []))
-  }, [admin])
+    let q = supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym')
+    // organizations has no RLS restriction on select, so SDAO-SHS/SHS
+    // Principal need an explicit department filter here (everything
+    // else on this page is already scoped correctly by RLS).
+    if (isSHSReviewer(profile?.role)) q = q.eq('department', 'shs')
+    q.then(({ data }) => setFilterOrgs(data || []))
+  }, [admin, profile?.role])
 
   useEffect(() => {
     // Whether "New Merchandise Proposal" is available for RSO officers
@@ -736,7 +817,7 @@ export default function SubmissionBin() {
         merchandise_types, merchandise_duration, marketing_representative,
         restricted_period_ack, restricted_period_justification,
         stage, submitted_by, submitted_at,
-        organizations ( name, acronym, category ),
+        organizations ( name, acronym, category, department ),
         venues ( name ),
         events ( title ),
         submitter:profiles!submissions_submitted_by_fkey ( full_name )
@@ -2034,7 +2115,7 @@ export default function SubmissionBin() {
     setConfirmingCancel(false)
     setCancelNote('')
     setCancelError('')
-    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' } })
+    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' } })
     setLinkError('')
     setFrfError('')
     setApprovalLinks([])
@@ -2643,7 +2724,7 @@ export default function SubmissionBin() {
     try {
       const { data: fullSub } = await supabase
         .from('submissions')
-        .select('*, organizations ( name, category ), venues ( name )')
+        .select('*, organizations ( name, category, department ), venues ( name )')
         .eq('id', sub.id)
         .single()
       if (!fullSub) throw new Error('Could not load the submission.')
@@ -2655,7 +2736,16 @@ export default function SubmissionBin() {
       }
 
       const adviserName = approvalLinks.find((l) => l.role === 'adviser')?.person_name || ''
-      const deanName = approvalLinks.find((l) => l.role === 'dean')?.person_name || ''
+      // SHS submissions have no adviser/dean links — Moderator is the
+      // closest equivalent to "Unit Head/School Dean" on the printed
+      // FRF form, and President stands in where an Adviser name would go.
+      const isSHSOrg = fullSub.organizations?.department === 'shs'
+      const deanName = isSHSOrg
+        ? (approvalLinks.find((l) => l.role === 'org_moderator')?.person_name || '')
+        : (approvalLinks.find((l) => l.role === 'dean')?.person_name || '')
+      const presidentAsAdviser = isSHSOrg
+        ? (approvalLinks.find((l) => l.role === 'org_president')?.person_name || '')
+        : adviserName
 
       for (const group of groups) {
         const pdfBytes = await generateFacilityReservationFormPdf({
@@ -2670,7 +2760,7 @@ export default function SubmissionBin() {
           eventName: fullSub.title,
           expectedAttendance: fullSub.target_participants,
           initialReviewName: FRF_SDAO_REVIEWER,
-          adviserName,
+          adviserName: presidentAsAdviser,
           deanName,
           directorName: FRF_ACADEMIC_DIRECTOR,
           fmoHeadName: '',
@@ -2805,7 +2895,7 @@ export default function SubmissionBin() {
                   <tr key={s.id} onClick={() => openDetail(s)}>
                     <td className="sb-table__title">{s.title}</td>
                     <td>{s.type === 'event_application' ? 'Event Application' : s.type === 'merchandise' ? 'Merchandise Proposal' : 'Report'}</td>
-                    {admin && <td>{s.organizations?.acronym}</td>}
+                {admin && <td>{s.organizations?.acronym}{seesAllDepartments(profile?.role) && s.organizations?.department === 'shs' && <span className="sb-badge sb-badge--muted" style={{ marginLeft: 6 }}>SHS</span>}</td>}
                     <td><span className={`sb-badge sb-badge--${meta.tone}`}>{meta.label}</span></td>
                     <td>{s.submitted_at?.slice(0, 10)}</td>
                     <td><ChevronRight size={15} color="var(--muted)" /></td>
@@ -4122,11 +4212,12 @@ export default function SubmissionBin() {
                   ) : (
                     <div className="sb-stepper">
                       {(() => {
-                        const steps = stepsFor(selected.type)
+                        const isSHS = selected.organizations?.department === 'shs'
+                        const steps = stepsFor(selected.type, isSHS)
                         const chainComplete = (selected.type === 'event_application' || selected.type === 'merchandise')
-                          ? externalApprovalState(approvalLinks, selected.organizations?.category, selected.type).complete
+                          ? externalApprovalState(approvalLinks, selected.organizations?.category, selected.type, selected.organizations?.department).complete
                           : true
-                        const current = stepIndexFor(selected.type, selected.stage, chainComplete)
+                        const current = stepIndexFor(selected.type, selected.stage, chainComplete, isSHS)
                         return steps.map((step, i) => {
                           const state = i < current ? 'done' : i === current ? 'active' : 'pending'
                           return (
@@ -4343,7 +4434,8 @@ export default function SubmissionBin() {
                   {/* ---------- Adviser / Dean / SDG Rep external approvals ---------- */}
                   {(selected.type === 'event_application' || selected.type === 'merchandise') && (selected.stage !== 'rejected' && selected.stage !== 'cancelled' || approvalLinks.length > 0) && (() => {
                     const category = selected.organizations?.category
-                    const state = externalApprovalState(approvalLinks, category, selected.type)
+                    const department = selected.organizations?.department
+                    const state = externalApprovalState(approvalLinks, category, selected.type, department)
                     const { chain } = state
                     const linkByRole = state.byRole
                     const canManage = (isOwnerOrg || admin) && selected.stage === 'submitted'
@@ -4633,7 +4725,7 @@ export default function SubmissionBin() {
 
                   {/* ---------- Reviewer actions ---------- */}
                   {canReview && !['approved', 'returned', 'rejected', 'cancelled'].includes(selected.stage) && (() => {
-                    const nextAction = nextActionFor(profile.role, selected.stage, selected.type)
+                    const nextAction = nextActionFor(profile.role, selected.stage, selected.type, selected.organizations?.department === 'shs')
                     if (!nextAction) return null
 
                     const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
@@ -4641,7 +4733,7 @@ export default function SubmissionBin() {
                     const blocked = assistantTurn && openTasks.length > 0
 
                     const externalGate = assistantTurn && (selected.type === 'event_application' || selected.type === 'merchandise')
-                      ? externalApprovalState(approvalLinks, selected.organizations?.category, selected.type)
+                      ? externalApprovalState(approvalLinks, selected.organizations?.category, selected.type, selected.organizations?.department)
                       : null
                     if (externalGate && !externalGate.complete) {
                       const linkByRole = externalGate.byRole

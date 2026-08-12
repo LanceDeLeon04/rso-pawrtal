@@ -172,6 +172,18 @@
   border-radius: 999px;
 }
 
+.topbar__org-chip--shs {
+  color: #9a5b00;
+  background: #fff3e0;
+  border-color: #ffe0b2;
+}
+
+.topbar__org-chip--all-dept {
+  color: #3d1c8c;
+  background: #f1ecff;
+  border-color: #e0d4ff;
+}
+
 .topbar__actions {
   display: flex;
   align-items: center;

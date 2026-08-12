@@ -47,25 +47,29 @@ export default function App() {
                 other route below explicitly excludes 'fmo'. Executive
                 Director is likewise limited to Dashboard + Calendar +
                 Submission Bin (bypass-approve only), so it's excluded from
-                Templates/Clearance/Assignments/Accounts too. */}
+                Templates/Clearance/Assignments/Accounts too. SHS Principal
+                gets the same trimmed shape as Executive Director — one
+                approval step, not a daily admin user. SDAO-SHS gets the
+                full College-admin-shaped nav (minus Accounts), scoped to
+                department = 'shs' server-side (migration 052). */}
             <Route
               path="/submissions"
               element={<ProtectedRoute excludeRoles={['fmo']}><SubmissionBin /></ProtectedRoute>}
             />
             <Route
               path="/templates"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director']}><Templates /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal']}><Templates /></ProtectedRoute>}
             />
             <Route
               path="/clearance"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director']}><Clearance /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal']}><Clearance /></ProtectedRoute>}
             />
             {/* No allowedRoles here on purpose — RSO Officers need this page too,
                 to see and act on tasks assigned to them. Assignments.jsx itself
                 already gates creation/review controls to admin-tier roles. */}
             <Route
               path="/assignments"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director']}><Assignments /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal']}><Assignments /></ProtectedRoute>}
             />
             <Route
               path="/accounts"

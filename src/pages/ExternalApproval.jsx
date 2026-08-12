@@ -16,7 +16,10 @@ const STATUS_META = {
   expired: { label: 'Link expired', tone: 'danger' },
 }
 
-const ROLE_LABELS = { adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative', marketing_rep: 'Marketing' }
+const ROLE_LABELS = {
+  adviser: 'Adviser', dean: 'Dean', sdg_rep: 'SDG Representative', marketing_rep: 'Marketing',
+  org_president: 'President', org_moderator: 'Moderator',
+}
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -134,7 +137,7 @@ export default function ExternalApproval() {
   const effectiveStatus = doneDecision ? (doneDecision === 'approved' ? 'approved' : 'rejected') : link.status
   const meta = STATUS_META[effectiveStatus] || STATUS_META.pending
   const isDecided = effectiveStatus !== 'pending'
-  const roleBlocked = ['dean', 'sdg_rep', 'marketing_rep'].includes(link.role) && !priorChainComplete && !isDecided
+  const roleBlocked = ['dean', 'sdg_rep', 'marketing_rep', 'org_moderator'].includes(link.role) && !priorChainComplete && !isDecided
   const rejectLabel = link.role === 'marketing_rep' ? 'Return for Revisions' : 'Reject'
 
   return (
@@ -207,11 +210,13 @@ export default function ExternalApproval() {
           </ul>
         </section>
 
-        {['dean', 'sdg_rep', 'marketing_rep'].includes(link.role) && (
+        {['dean', 'sdg_rep', 'marketing_rep', 'org_moderator'].includes(link.role) && (
           <div className={`xap-note ${priorChainComplete ? 'xap-note--ok' : 'xap-note--warn'}`}>
             {priorChainComplete
               ? 'Everyone ahead of you in the review chain has approved. You may proceed.'
-              : 'Waiting on earlier reviewers (Adviser, and Dean if required) to approve first. You will be able to decide once they do.'}
+              : link.role === 'org_moderator'
+                ? 'Waiting on the President to approve first. You will be able to decide once they do.'
+                : 'Waiting on earlier reviewers (Adviser, and Dean if required) to approve first. You will be able to decide once they do.'}
           </div>
         )}
 

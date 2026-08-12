@@ -6,7 +6,7 @@ import {
   Link2, Trash2, Check,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier } from '../context/AuthContext'
+import { useAuth, isAdminTier, isSHSReviewer } from '../context/AuthContext'
 import { toISODate } from '../lib/dateUtils'
 import './Assignments.css'
 
@@ -25,7 +25,10 @@ const EMPTY_FORM = {
 
 export default function Assignments() {
   const { profile } = useAuth()
-  const admin = isAdminTier(profile?.role)
+  // SDAO-SHS gets the same reviewer-side UI as College admins — RLS
+  // (migration 052) already restricts which rows come back to SHS-only,
+  // so "admin" here just means "reviewer view" rather than "org's own view".
+  const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
   const canManage = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
   const navigate = useNavigate()
 

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier } from '../context/AuthContext'
+import { useAuth, isAdminTier, isSHSReviewer } from '../context/AuthContext'
 import { toISODate } from '../lib/dateUtils'
 import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import './Clearance.css'
@@ -27,7 +27,7 @@ function daysUntil(dateStr) {
 
 export default function Clearance() {
   const { profile } = useAuth()
-  const admin = isAdminTier(profile?.role)
+  const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
   const canManage = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
 

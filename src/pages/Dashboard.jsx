@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier } from '../context/AuthContext'
+import { useAuth, isAdminTier, isSHSReviewer } from '../context/AuthContext'
 import { toISODate, formatTime } from '../lib/dateUtils'
 import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import AnalyticsSection from '../components/analytics/AnalyticsSection'
@@ -13,15 +13,26 @@ import './Dashboard.css'
 
 const REVIEW_STAGE_BY_ROLE = {
   sdao_assistant: ['submitted', 'assistant_review'],
-  sdao_supervisor: ['supervisor_endorsement'],
-  academic_director: ['director_approval'],
+  sdao_supervisor: ['supervisor_endorsement', 'shs_supervisor_endorsement'],
+  academic_director: ['director_approval', 'shs_director_approval'],
+  executive_director: ['shs_executive_approval'],
+  sdao_shs: ['shs_review'],
+  shs_principal: ['shs_principal_approval'],
 }
 
-const OPEN_STAGES = ['submitted', 'assistant_review', 'supervisor_endorsement', 'director_approval']
+const OPEN_STAGES = [
+  'submitted', 'assistant_review', 'supervisor_endorsement', 'director_approval',
+  'shs_review', 'shs_supervisor_endorsement', 'shs_principal_approval',
+  'shs_director_approval', 'shs_executive_approval',
+]
 
 export default function Dashboard() {
   const { profile } = useAuth()
-  const admin = isAdminTier(profile?.role)
+  // SDAO-SHS/SHS Principal get the same "reviewer dashboard" shape as
+  // College admins — RLS (migration 052) transparently scopes every
+  // query below to department = 'shs' rows only for these two roles,
+  // so no manual org/department filtering is needed here.
+  const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
   const myOrgAcronym = profile?.org_memberships?.[0]?.organizations?.acronym
 
@@ -77,8 +88,15 @@ export default function Dashboard() {
     ]
 
     if (admin) {
+      // organizations has no RLS restriction on select (every role can
+      // browse the org directory for dropdowns), so SDAO-SHS/SHS
+      // Principal need an explicit department filter here — unlike
+      // clearances/submissions below, which RLS already scopes for them.
+      let activeOrgsQuery = supabase.from('organizations').select('id', { count: 'exact', head: true }).eq('is_active', true)
+      if (isSHSReviewer(profile.role)) activeOrgsQuery = activeOrgsQuery.eq('department', 'shs')
+
       queries.push(
-        supabase.from('organizations').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        activeOrgsQuery,
         supabase.from('clearances').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
         supabase.from('clearances').select('id', { count: 'exact', head: true }).eq('status', 'overdue'),
       )
@@ -121,7 +139,9 @@ export default function Dashboard() {
     setLoading(false)
   }
 
-  const roleLabel = admin ? 'SDAO Admin View' : (myOrgAcronym || 'No org assigned')
+  const roleLabel = isSHSReviewer(profile?.role)
+    ? 'SDAO-SHS Admin View'
+    : admin ? 'SDAO Admin View' : (myOrgAcronym || 'No org assigned')
 
   return (
     <div className="dash-page">

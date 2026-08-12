@@ -28,7 +28,7 @@ export function AuthProvider({ children }) {
       .from('profiles')
       .select(`
         id, full_name, email, role, photo_url, must_change_password, is_active,
-        org_memberships:org_memberships ( org_id, position, is_primary, organizations ( name, acronym, category, logo_url, adviser_name, accreditation_status, contact_email, contact_number, is_active ) ),
+        org_memberships:org_memberships ( org_id, position, is_primary, organizations ( name, acronym, category, department, logo_url, adviser_name, accreditation_status, contact_email, contact_number, is_active ) ),
         admin_viewer_scopes ( scope )
       `)
       .eq('id', userId)
@@ -184,3 +184,33 @@ export function isFMO(role) {
 export function isExecutiveDirector(role) {
   return role === 'executive_director'
 }
+
+// ---------- SHS sub-system ----------
+// SDAO-SHS and SHS Principal are a department-scoped reviewer tier
+// (see migration 052) — NOT part of ADMIN_ROLES/is_admin_tier(), since
+// they only ever see org_id's whose organizations.department = 'shs'
+// (enforced by RLS at the database level; these client helpers just
+// drive which nav items/routes render).
+export const SHS_REVIEWER_ROLES = ['sdao_shs', 'shs_principal']
+
+export function isSHSReviewer(role) {
+  return SHS_REVIEWER_ROLES.includes(role)
+}
+
+// Roles that need to see BOTH departments tagged, everywhere, per the
+// product requirement: "SDAO Assistant, SDAO Supervisor, QMO, Academic
+// Director, Executive Director and Admins can still see ALL EVENTS
+// BOTH COLLEGE AND SHS." These are exactly ADMIN_ROLES today — kept as
+// its own name so the intent reads clearly at call sites (Calendar,
+// Dashboard, Submission Bin) even though the role list is identical.
+export function seesAllDepartments(role) {
+  return isAdminTier(role)
+}
+
+// A role is "department aware" if it should ever see a College/SHS tag
+// pill at all — i.e. it can see more than just its own single org.
+export function isDepartmentAware(role) {
+  return isAdminTier(role) || isSHSReviewer(role) || role === 'fmo'
+}
+
+export const DEPARTMENT_LABELS = { college: 'College', shs: 'SHS' }

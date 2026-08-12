@@ -18,6 +18,8 @@ const ROLE_LABELS = {
   system_admin: 'System Admin',
   fmo: 'Facilities Management Office',
   executive_director: 'Executive Director',
+  sdao_shs: 'SDAO - SHS',
+  shs_principal: 'SHS Principal',
 }
 
 const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervisor', 'academic_director', 'system_admin']
@@ -26,7 +28,11 @@ const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervis
 // Dashboard + Calendar + Submission Bin bypass-approve only — see
 // Layout.jsx / App.jsx) but both are created the same "personal
 // account" way.
-const OTHER_CREATABLE_ROLES = ['fmo', 'executive_director']
+// SDAO-SHS and SHS Principal are the SHS sub-system's reviewer tier —
+// same "personal account" creation flow as FMO/Executive Director, but
+// scoped to department = 'shs' at the database level (see migration
+// 052) rather than being full is_admin_tier() roles.
+const OTHER_CREATABLE_ROLES = ['fmo', 'executive_director', 'sdao_shs', 'shs_principal']
 const VIEWER_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
 // Council of Leaders (COL) is a distinct org type (organizations.category
@@ -47,9 +53,13 @@ const ACCREDITATION_LABELS = {
 }
 
 const CATEGORY_OPTIONS = ['School Council', 'Academic', 'Special Interest', 'COL']
+const DEPARTMENT_OPTIONS = [
+  { value: 'college', label: 'College' },
+  { value: 'shs', label: 'Senior High School' },
+]
 
 const EMPTY_ORG_FORM = {
-  name: '', acronym: '', category: '', adviser_name: '',
+  name: '', acronym: '', category: '', adviser_name: '', department: 'college',
   accreditation_status: 'pending', contact_email: '', contact_number: '',
   bank_name: '', account_name: '', account_number: '',
 }
@@ -69,7 +79,7 @@ export default function Accounts() {
     setLoading(true)
     const [{ data: o }, { data: p }, { data: m }, { data: b }] = await Promise.all([
       supabase.from('organizations')
-        .select('id, name, acronym, category, adviser_name, logo_url, accreditation_status, contact_email, contact_number, is_active')
+        .select('id, name, acronym, category, adviser_name, department, logo_url, accreditation_status, contact_email, contact_number, is_active')
         .order('acronym'),
       supabase.from('profiles').select('id, full_name, email, role, is_active').order('full_name'),
       supabase.from('org_memberships')
@@ -577,6 +587,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
       acronym: org.acronym || '',
       category: org.category || '',
       adviser_name: org.adviser_name || '',
+      department: org.department || 'college',
       accreditation_status: org.accreditation_status || 'pending',
       contact_email: org.contact_email || '',
       contact_number: org.contact_number || '',
@@ -603,6 +614,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
       acronym: editForm.acronym.trim(),
       category: editForm.category.trim() || null,
       adviser_name: editForm.adviser_name.trim() || null,
+      department: editForm.department || 'college',
       accreditation_status: editForm.accreditation_status,
       contact_email: editForm.contact_email.trim() || null,
       contact_number: editForm.contact_number.trim() || null,
@@ -638,6 +650,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
       acronym: form.acronym.trim(),
       category: form.category.trim() || null,
       adviser_name: form.adviser_name.trim() || null,
+      department: form.department || 'college',
       accreditation_status: form.accreditation_status,
       contact_email: form.contact_email.trim() || null,
       contact_number: form.contact_number.trim() || null,
@@ -735,6 +748,14 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
                 <option value="">Select category</option>
                 {CATEGORY_OPTIONS.map((c) => (
                   <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+            <label className="acc-field">
+              Department
+              <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
+                {DEPARTMENT_OPTIONS.map((d) => (
+                  <option key={d.value} value={d.value}>{d.label}</option>
                 ))}
               </select>
             </label>
@@ -843,6 +864,16 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
                           <option key={c} value={c}>{c}</option>
                         ))}
                       </select>
+                      <select
+                        className="acc-inline-input"
+                        value={editForm.department}
+                        onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
+                        style={{ marginTop: 4 }}
+                      >
+                        {DEPARTMENT_OPTIONS.map((d) => (
+                          <option key={d.value} value={d.value}>{d.label}</option>
+                        ))}
+                      </select>
                     </td>
                     <td>
                       <input
@@ -891,6 +922,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
                   <>
                     <td className="acc-table__strong">
                       <button type="button" className="acc-link-btn" onClick={() => setViewingOrg(o)}>{o.acronym}</button>
+                      {o.department === 'shs' && <span className="acc-badge acc-badge--shs" style={{ marginLeft: 6 }}>SHS</span>}
                     </td>
                     <td>
                       <button type="button" className="acc-link-btn" onClick={() => setViewingOrg(o)}>{o.name}</button>

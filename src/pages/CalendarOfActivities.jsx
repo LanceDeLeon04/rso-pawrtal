@@ -6,7 +6,7 @@ import {
   Ban, Move, PartyPopper, GraduationCap, FileClock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier, isFMO } from '../context/AuthContext'
+import { useAuth, isAdminTier, isFMO, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
 import {
   MONTH_NAMES, WEEKDAY_LABELS, toISODate, buildMonthGrid, formatTime, MEDIUM_LABELS, addDaysISO,
 } from '../lib/dateUtils'
@@ -31,7 +31,13 @@ export default function CalendarOfActivities() {
   const { profile } = useAuth()
   const admin = isAdminTier(profile?.role)
   const fmo = isFMO(profile?.role)
+  const shsReviewer = isSHSReviewer(profile?.role)
+  const seesAllDepts = seesAllDepartments(profile?.role)
   const canManageVenues = admin || fmo // block dates + reschedule bookings
+  // SDAO-SHS can schedule/remove only its own department's exam
+  // periods (never holidays, never College's exam periods — see
+  // migration 052). Venue blocking itself stays FMO/admin-only.
+  const canManageExamPeriods = canManageVenues || shsReviewer
   const myOrgId = profile?.org_memberships?.[0]?.org_id
 
   const today = new Date()
@@ -231,12 +237,24 @@ export default function CalendarOfActivities() {
 
     // Overlap: a period is visible this month if it starts on/before
     // the month's last day AND ends on/after the month's first day.
-    const { data } = await supabase
+    let query = supabase
       .from('restricted_periods')
-      .select('id, kind, label, start_date, end_date, note')
+      .select('id, kind, label, start_date, end_date, note, department')
       .lte('start_date', rangeEnd)
       .gte('end_date', rangeStart)
       .order('start_date', { ascending: true })
+
+    // Holidays (department is null) always show for everyone. Exam
+    // periods only show for their own department, unless the viewer is
+    // one of the roles that sees both (full admin tier) — those get
+    // both, tagged in the UI (see the pill on each exam-period chip).
+    if (!seesAllDepts) {
+      query = shsReviewer
+        ? query.or('kind.eq.holiday,department.eq.shs')
+        : query.or('kind.eq.holiday,department.eq.college,department.is.null')
+    }
+
+    const { data } = await query
     setRestrictedPeriods(data || [])
   }
 
@@ -497,6 +515,11 @@ export default function CalendarOfActivities() {
       end_date: periodForm.end_date,
       note: periodForm.note.trim() || null,
       created_by: profile?.id,
+      // Exam periods are department-specific (College and SHS run
+      // different exam calendars on the same venues); holidays are
+      // university-wide and stay untagged. SDAO-SHS can only ever
+      // reach this with kind = 'exam_period' — see canManageExamPeriods.
+      department: periodForm.kind === 'exam_period' ? (shsReviewer ? 'shs' : 'college') : null,
     })
     setSavingPeriod(false)
     if (err) {
@@ -785,12 +808,20 @@ export default function CalendarOfActivities() {
                   <Ban size={14} /> Block Date
                 </button>
               )}
-              {canManageVenues && (
+              {canManageExamPeriods && (
                 <button
                   className="cal-btn cal-btn--outline cal-btn--toolbar"
-                  onClick={() => { setPeriodError(''); setPeriodForm({ kind: 'holiday', label: '', start_date: '', end_date: '', note: '' }); setShowPeriodModal(true) }}
+                  onClick={() => {
+                    setPeriodError('')
+                    // SDAO-SHS can only ever create exam periods (never
+                    // holidays), pre-tagged to its own department.
+                    setPeriodForm(shsReviewer
+                      ? { kind: 'exam_period', label: '', start_date: '', end_date: '', note: '' }
+                      : { kind: 'holiday', label: '', start_date: '', end_date: '', note: '' })
+                    setShowPeriodModal(true)
+                  }}
                 >
-                  <PartyPopper size={14} /> Holiday / Exam Period
+                  <PartyPopper size={14} /> {shsReviewer ? 'Exam Period (SHS)' : 'Holiday / Exam Period'}
                 </button>
               )}
             </div>
@@ -1294,7 +1325,10 @@ export default function CalendarOfActivities() {
                 allowed under extraordinary circumstances.
               </p>
               {selectedPeriod.note && <p className="cal-modal__desc">{selectedPeriod.note}</p>}
-              {canManageVenues && (
+              {selectedPeriod.department && seesAllDepts && (
+                <p className="cal-modal__desc"><strong>{selectedPeriod.department === 'shs' ? 'SHS' : 'College'} exam period</strong></p>
+              )}
+              {(canManageVenues || (shsReviewer && selectedPeriod.department === 'shs' && selectedPeriod.kind === 'exam_period')) && (
                 <div className="cal-modal__actions">
                   <button className="cal-btn cal-btn--danger-outline" onClick={() => handleUnschedulePeriod(selectedPeriod.id)}>
                     <Trash2 size={14} /> Unschedule This Period
@@ -1312,14 +1346,25 @@ export default function CalendarOfActivities() {
             <button className="cal-modal__close" onClick={() => setShowPeriodModal(false)}>
               <X size={18} />
             </button>
-            <h3 className="cal-modal__title"><PartyPopper size={16} /> Schedule Holiday / Exam Period</h3>
+            <h3 className="cal-modal__title"><PartyPopper size={16} /> {shsReviewer ? 'Schedule SHS Exam Period' : 'Schedule Holiday / Exam Period'}</h3>
             {periodError && <div className="cal-error"><AlertCircle size={14} /> {periodError}</div>}
             <form className="cal-move-form" onSubmit={handleSchedulePeriod}>
               <label className="cal-move-form__field">
                 Type
-                <select value={periodForm.kind} onChange={(e) => setPeriodForm({ ...periodForm, kind: e.target.value })} required>
-                  <option value="holiday">Holiday</option>
-                  <option value="exam_period">Exam Week (include the week before, if applicable)</option>
+                <select
+                  value={periodForm.kind}
+                  onChange={(e) => setPeriodForm({ ...periodForm, kind: e.target.value })}
+                  disabled={shsReviewer}
+                  required
+                >
+                  {shsReviewer ? (
+                    <option value="exam_period">Exam Week (include the week before, if applicable)</option>
+                  ) : (
+                    <>
+                      <option value="holiday">Holiday</option>
+                      <option value="exam_period">Exam Week (include the week before, if applicable)</option>
+                    </>
+                  )}
                 </select>
               </label>
               <label className="cal-move-form__field">

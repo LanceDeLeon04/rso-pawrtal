@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Download, FileSpreadsheet, FileText, Filter, Loader2 } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
-import { useAuth, isAdminTier, isFMO } from '../../context/AuthContext'
+import { useAuth, isAdminTier, isFMO, isSHSReviewer } from '../../context/AuthContext'
 import {
   fetchAdminAnalytics, fetchOrgAnalytics, fetchFacilityAnalytics,
   formatCurrency, defaultDateRange,
@@ -12,7 +12,10 @@ import './AnalyticsSection.css'
 
 export default function AnalyticsSection() {
   const { profile } = useAuth()
-  const admin = isAdminTier(profile?.role)
+  // SDAO-SHS/SHS Principal get the same "admin analytics" shape,
+  // RLS-scoped (migration 052) to department = 'shs' rows only.
+  const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
+  const shsOnly = isSHSReviewer(profile?.role)
   const fmo = isFMO(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
   const myOrgAcronym = profile?.org_memberships?.[0]?.organizations?.acronym
@@ -29,15 +32,16 @@ export default function AnalyticsSection() {
 
   useEffect(() => {
     if (admin) {
-      supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym')
-        .then(({ data: o }) => setOrgOptions(o || []))
+      let q = supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym')
+      if (shsOnly) q = q.eq('department', 'shs') // organizations select has no RLS restriction, so filter explicitly
+      q.then(({ data: o }) => setOrgOptions(o || []))
     }
     if (fmo) {
       supabase.from('venues').select('id, name').eq('is_active', true).order('name')
         .then(({ data: v }) => setVenueOptions(v || []))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admin, fmo])
+  }, [admin, fmo, shsOnly])
 
   useEffect(() => {
     load()

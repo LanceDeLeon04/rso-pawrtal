@@ -5,20 +5,30 @@ import {
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
   Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info,
 } from 'lucide-react'
-import { useAuth, isAdminTier, isFMO, isExecutiveDirector } from '../context/AuthContext'
+import {
+  useAuth, isAdminTier, isFMO, isExecutiveDirector,
+  isSHSReviewer, seesAllDepartments, DEPARTMENT_LABELS,
+} from '../context/AuthContext'
 import './Layout.css'
 
 // Executive Director is admin-tier (full Dashboard analytics) but, like
 // FMO, only gets a slice of the nav — Dashboard, Calendar, and
 // Submission Bin (bypass-approve only). See App.jsx for the matching
 // route guards.
+//
+// SDAO-SHS gets the same slice of nav as a College admin (Dashboard,
+// Calendar, Submission Bin, Templates, Clearance, Assignments) minus
+// Accounts, all scoped server-side to department = 'shs' (migration
+// 052). SHS Principal is a single internal approval step, not a daily
+// dashboard user, so it's trimmed further to Dashboard/Calendar/
+// Submission Bin — same shape as Executive Director.
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/calendar', label: 'Calendar of Activities', icon: CalendarDays },
   { to: '/submissions', label: 'Submission Bin', icon: Inbox, hideForFMO: true },
-  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true, hideForED: true },
-  { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true, hideForED: true },
-  { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true, hideForED: true },
+  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
+  { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
+  { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
   { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true, hideForED: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/about', label: 'About the System', icon: Info },
@@ -40,6 +50,8 @@ const ROLE_LABELS = {
   system_admin: 'System Admin',
   fmo: 'Facilities Management Office',
   executive_director: 'Executive Director',
+  sdao_shs: 'SDAO - SHS',
+  shs_principal: 'SHS Principal',
 }
 
 function initialsOf(name) {
@@ -58,8 +70,13 @@ export default function Layout() {
   const admin = isAdminTier(profile?.role)
   const fmo = isFMO(profile?.role)
   const ed = isExecutiveDirector(profile?.role)
+  const shsPrincipal = profile?.role === 'shs_principal'
+  const seesAllDepts = seesAllDepartments(profile?.role)
   const visibleNav = NAV_ITEMS.filter((item) =>
-    (!item.adminOnly || admin) && (!fmo || !item.hideForFMO) && (!ed || !item.hideForED))
+    (!item.adminOnly || admin)
+    && (!fmo || !item.hideForFMO)
+    && (!ed || !item.hideForED)
+    && (!shsPrincipal || !item.hideForShsPrincipal))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
   const org = profile?.org_memberships?.[0]?.organizations
   const orgLabel = org?.acronym
@@ -111,6 +128,12 @@ export default function Layout() {
           <div className="topbar__title">
             <h1>{activeItem?.label || 'RSO PAWrtal'}</h1>
             {orgLabel && <span className="topbar__org-chip">{orgLabel}</span>}
+            {isSHSReviewer(profile?.role) && (
+              <span className="topbar__org-chip topbar__org-chip--shs">SHS</span>
+            )}
+            {seesAllDepts && (
+              <span className="topbar__org-chip topbar__org-chip--all-dept">College + SHS</span>
+            )}
           </div>
 
           <div className="topbar__actions">
