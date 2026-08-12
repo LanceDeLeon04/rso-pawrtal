@@ -34,7 +34,11 @@ const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervis
 // 052) rather than being full is_admin_tier() roles.
 const OTHER_CREATABLE_ROLES = ['fmo', 'executive_director', 'sdao_shs', 'shs_principal']
 const VIEWER_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
-const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
+// "Moderator" (SHS's adviser-equivalent — see migration 052) is kept in
+// the general position list too, not just SHS_POSITIONS, so it always
+// shows up first even for orgs whose `department` hasn't been tagged
+// 'shs' yet, or when viewed from the full admin Accounts page.
+const POSITIONS = ['Moderator', 'President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
 // Council of Leaders (COL) is a distinct org type (organizations.category
 // === 'COL') that reuses every RSO feature but has its own account
 // roster and no Adviser/Dean in its approval chain (see migration 041).
