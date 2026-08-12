@@ -14,11 +14,14 @@ const ADMIN_ROLES = [
   'sdao_supervisor', 'academic_director', 'system_admin',
 ]
 // Keep in sync with OTHER_CREATABLE_ROLES in src/pages/Accounts.jsx — that
-// dropdown offers 'executive_director' as a selectable role, but it was
-// missing here, so every attempt to create one was rejected with "Invalid
-// role." (surfaced client-side only as a generic error) and no account was
-// ever created.
-const VALID_ROLES = ['rso_officer', 'fmo', 'executive_director', ...ADMIN_ROLES]
+// dropdown offers 'executive_director', 'sdao_shs', and 'shs_principal' as
+// selectable roles. 'executive_director' was missing here originally, and
+// then 'sdao_shs'/'shs_principal' were missed again when the SHS
+// sub-system (migrations 052a/052b) added them — each time, every attempt
+// to create that role was rejected with "Invalid role." (surfaced
+// client-side only as a generic "Could not create the account" error) and
+// no account was ever created.
+const VALID_ROLES = ['rso_officer', 'fmo', 'executive_director', 'sdao_shs', 'shs_principal', ...ADMIN_ROLES]
 const VALID_SCOPES = ['events', 'calendar', 'submissions', 'clearance', 'all']
 
 const cors = {

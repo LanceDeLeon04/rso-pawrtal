@@ -1,4 +1,22 @@
 -- ============================================================
+-- ⚠️  DEPRECATED — DO NOT RUN THIS FILE  ⚠️
+-- ============================================================
+-- This is a Phase-1 snapshot only. It predates roles like fmo,
+-- executive_director, sdg_rep, sdao_shs, shs_principal; the whole SHS
+-- sub-system; multi-venue support; the clearance-gate fixes; email
+-- notifications; and 40+ other migrations. Running it against a fresh
+-- project will NOT produce a working database.
+--
+-- For setup, run every file in supabase/migrations/ in filename order
+-- (001, 002, ... 052a, 052b) instead. See README.md → Setup.
+--
+-- This file is kept only for historical reference and will be deleted.
+-- ============================================================
+do $$ begin
+  raise exception 'schema.sql is deprecated — run supabase/migrations/*.sql in order instead. See README.md.';
+end $$;
+
+-- ============================================================
 -- RSO PAWrtal — Supabase Schema
 -- NU Laguna SDAO — RSO Management Portal
 -- ============================================================

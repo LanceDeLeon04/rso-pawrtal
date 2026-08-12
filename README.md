@@ -23,8 +23,16 @@ cp .env.example .env   # fill in your Supabase project URL + anon key
 npm run dev
 ```
 
-Run `supabase/schema.sql` against your Supabase project (SQL editor or CLI)
-to create the tables and policies.
+**Do NOT run `supabase/schema.sql`** — it's a Phase‑1 snapshot from very
+early in the project and is missing almost everything added since
+(roles like `fmo`/`executive_director`/`sdg_rep`/`sdao_shs`/`shs_principal`,
+the SHS sub-system, multi-venue support, clearance-gate fixes, email
+notifications, etc.). It's kept only for historical reference and will be
+removed. For a fresh project, run every file in `supabase/migrations/` in
+filename order (001, 002, 003, ... 052a, 052b) — via `supabase db push`
+if you have the CLI linked, or by pasting each file into the SQL editor
+in order. This is also how to get an existing project fully up to date:
+just run whichever numbered migrations haven't been applied yet.
 
 ### Assets to add
 
@@ -82,19 +90,20 @@ where email = 'your-admin-email@nu-laguna.edu.ph';
 
 1. In the Supabase dashboard, go to **Storage → New bucket** and create one
    named exactly `submission-attachments` (private is fine).
-2. If this is a fresh project, `supabase/schema.sql` already includes
-   everything needed. If you already ran the original schema, run
-   `supabase/migrations/002_submission_bin.sql` instead to patch it in
-   place (adds the new submission fields, fixes the clearance gate so it
-   no longer blocks the report that would clear it, and adds several RLS
-   policies that were missing for the approval chain).
+2. Run `supabase/migrations/002_submission_bin.sql` (adds the new
+   submission fields, fixes the clearance gate so it no longer blocks the
+   report that would clear it, and adds several RLS policies that were
+   missing for the approval chain). If you're setting up fresh, this is
+   just the next file in the `supabase/migrations/` sequence — see Setup
+   above.
 
 ### Extra setup for Templates
 
 In the Supabase dashboard, go to **Storage → New bucket** and create one
 named exactly `templates` (public is fine — every logged-in role can
-download these). If you already ran schema.sql before this phase, run
-`supabase/migrations/003_templates.sql` to add the storage policies.
+download these). Run `supabase/migrations/003_templates.sql` to add the
+storage policies (part of the normal migration sequence — see Setup
+above).
 
 - **Assignments** — admins create tasks/deliverables targeting a specific
   user, a cross-org position tag ("all Treasurers"), or a whole org.
@@ -112,9 +121,8 @@ download these). If you already ran schema.sql before this phase, run
 
 1. In the Supabase dashboard, go to **Storage → New bucket** and create one
    named exactly `assignment-deliverables` (private is fine).
-2. If this is a fresh project, `supabase/schema.sql` already includes
-   everything needed. If you already ran the earlier schema/migrations,
-   run `supabase/migrations/004_assignments.sql` — it rebuilds the
+2. Run `supabase/migrations/004_assignments.sql` (next in the normal
+   migration sequence — see Setup above) — it rebuilds the
    `assignments` table with the new targeting model (**this drops any
    existing assignment rows**, so export first if you have real data) and
    fixes a bug where `org_memberships` had RLS enabled with no policy at
