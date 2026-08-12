@@ -26,7 +26,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/calendar', label: 'Calendar of Activities', icon: CalendarDays },
   { to: '/submissions', label: 'Submission Bin', icon: Inbox, hideForFMO: true },
-  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
+  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true, hideForED: true },
   { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
   { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
   { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true, hideForED: true },
@@ -71,9 +71,13 @@ export default function Layout() {
   const fmo = isFMO(profile?.role)
   const ed = isExecutiveDirector(profile?.role)
   const shsPrincipal = profile?.role === 'shs_principal'
+  const shsReviewer = isSHSReviewer(profile?.role)
   const seesAllDepts = seesAllDepartments(profile?.role)
   const visibleNav = NAV_ITEMS.filter((item) =>
-    (!item.adminOnly || admin)
+    // Accounts is admin-only, PLUS SDAO-SHS/SHS Principal, who get a
+    // narrowed version of it (SHS orgs + SHS RSO/Moderator accounts
+    // only — see Accounts.jsx).
+    (!item.adminOnly || admin || shsReviewer)
     && (!fmo || !item.hideForFMO)
     && (!ed || !item.hideForED)
     && (!shsPrincipal || !item.hideForShsPrincipal))

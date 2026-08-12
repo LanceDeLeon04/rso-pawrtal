@@ -583,3 +583,9 @@
   border: 1px solid #ffe0b2;
 }
 
+.acc-badge--warning {
+  color: #b3261e;
+  background: #fdecea;
+  border: 1px solid #f5c2c0;
+}
+

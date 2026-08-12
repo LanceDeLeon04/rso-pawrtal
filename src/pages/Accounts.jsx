@@ -5,7 +5,7 @@ import {
   Eye, Landmark, ShieldCheck, BadgeCheck,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth } from '../context/AuthContext'
+import { useAuth, isSHSReviewer } from '../context/AuthContext'
 import './Accounts.css'
 
 const ROLE_LABELS = {
@@ -39,7 +39,16 @@ const POSITIONS = ['President', 'VP Internal', 'VP External', 'PRO', 'Treasurer'
 // === 'COL') that reuses every RSO feature but has its own account
 // roster and no Adviser/Dean in its approval chain (see migration 041).
 const COL_POSITIONS = ['President', 'Vice President', 'Secretary', 'Programs Head', 'Operations Head', 'Growth Head']
-const positionsForOrg = (org) => (org?.category === 'COL' ? COL_POSITIONS : POSITIONS)
+// SHS orgs have no Adviser — they have a Moderator instead (see
+// migration 052 / org_moderator approval-link role), and every SHS org
+// needs at least one Moderator ACCOUNT (unlike College's Adviser, which
+// is just a name + ad-hoc email on the approval link). "Moderator" is
+// listed first so it reads as required, not optional.
+const SHS_POSITIONS = ['Moderator', 'President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
+const positionsForOrg = (org) => {
+  if (org?.department === 'shs') return SHS_POSITIONS
+  return org?.category === 'COL' ? COL_POSITIONS : POSITIONS
+}
 
 const EMPTY_ADMIN_FORM = {
   full_name: '', username: '', role: ADMIN_ROLES[0], viewer_scopes: [],
@@ -67,6 +76,13 @@ const EMPTY_MEMBERSHIP_FORM = { profile_id: '', org_id: '', position: '', is_pri
 
 export default function Accounts() {
   const { profile: currentProfile } = useAuth()
+  // SDAO-SHS and SHS Principal get a narrowed Accounts page: they can
+  // create/manage RSO + Moderator accounts and organizations, but only
+  // ever for department = 'shs' orgs, and they never touch the
+  // Administrator-account tools (that's for full admin-tier roles only,
+  // and SDAO-SHS/SHS Principal aren't in ADMIN_ROLES — see
+  // AuthContext.jsx).
+  const shsReviewer = isSHSReviewer(currentProfile?.role)
   const [orgs, setOrgs] = useState([])
   const [profiles, setProfiles] = useState([])
   const [memberships, setMemberships] = useState([])
@@ -100,15 +116,32 @@ export default function Accounts() {
   // alone silently hid FMO from this list even though it's a real profile.
   const adminProfiles = profiles.filter((p) => [...ADMIN_ROLES, ...OTHER_CREATABLE_ROLES].includes(p.role))
 
+  // SHS-scoped views used by SDAO-SHS/SHS Principal below.
+  const shsOrgs = orgs.filter((o) => o.department === 'shs')
+  const shsOrgIds = new Set(shsOrgs.map((o) => o.id))
+  const shsMemberships = memberships.filter((m) => shsOrgIds.has(m.org_id))
+  const shsProfileIds = new Set(shsMemberships.map((m) => m.profile_id))
+  const shsProfiles = profiles.filter((p) => p.role === 'rso_officer' && shsProfileIds.has(p.id))
+
   return (
     <div className="acc-page">
       <div className="acc-header">
         <h2 className="acc-header__title"><Users size={17} color="var(--nu-blue-700)" /> Accounts</h2>
-        <p className="acc-header__sub">Create logins, manage organizations, and tag officers across orgs.</p>
+        <p className="acc-header__sub">
+          {shsReviewer
+            ? 'Create SHS RSO and Moderator logins, and manage SHS organizations.'
+            : 'Create logins, manage organizations, and tag officers across orgs.'}
+        </p>
       </div>
 
       {loading ? (
         <Loader2 size={20} className="spin" />
+      ) : shsReviewer ? (
+        <>
+          <CreateRSOAccountSection orgs={shsOrgs} onCreated={loadAll} />
+          <OrganizationsSection orgs={shsOrgs} memberships={shsMemberships} bankDetails={bankDetails} onChanged={loadAll} lockDepartment="shs" />
+          <MembershipsSection orgs={shsOrgs} profiles={shsProfiles} memberships={shsMemberships} onChanged={loadAll} />
+        </>
       ) : (
         <>
           <CreateAdminAccountSection onCreated={loadAll} />
@@ -531,8 +564,8 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
   )
 }
 
-function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
-  const [form, setForm] = useState(EMPTY_ORG_FORM)
+function OrganizationsSection({ orgs, memberships, bankDetails, onChanged, lockDepartment }) {
+  const [form, setForm] = useState(lockDepartment ? { ...EMPTY_ORG_FORM, department: lockDepartment } : EMPTY_ORG_FORM)
   const [logoFile, setLogoFile] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -751,17 +784,22 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
                 ))}
               </select>
             </label>
+            {!lockDepartment && (
+              <label className="acc-field">
+                Department
+                <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
+                  {DEPARTMENT_OPTIONS.map((d) => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="acc-field">
-              Department
-              <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
-                {DEPARTMENT_OPTIONS.map((d) => (
-                  <option key={d.value} value={d.value}>{d.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="acc-field">
-              Adviser
+              {form.department === 'shs' ? 'Moderator' : 'Adviser'}
               <input value={form.adviser_name} onChange={(e) => setForm({ ...form, adviser_name: e.target.value })} />
+              {form.department === 'shs' && (
+                <span className="acc-hint">SHS orgs have a Moderator, not an Adviser. Also create a Moderator login below (RSO Account, position "Moderator").</span>
+              )}
             </label>
           </div>
           <div className="acc-field-row">
@@ -821,7 +859,7 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
       <table className="acc-table">
         <thead>
           <tr>
-            <th>Logo</th><th>Acronym</th><th>Name</th><th>Category</th><th>Adviser</th>
+            <th>Logo</th><th>Acronym</th><th>Name</th><th>Category</th><th>Adviser / Moderator</th>
             <th>Contact</th><th>Bank Details</th><th>Accreditation</th><th>Status</th><th /><th />
           </tr>
         </thead>
@@ -864,20 +902,23 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
                           <option key={c} value={c}>{c}</option>
                         ))}
                       </select>
-                      <select
-                        className="acc-inline-input"
-                        value={editForm.department}
-                        onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
-                        style={{ marginTop: 4 }}
-                      >
-                        {DEPARTMENT_OPTIONS.map((d) => (
-                          <option key={d.value} value={d.value}>{d.label}</option>
-                        ))}
-                      </select>
+                      {!lockDepartment && (
+                        <select
+                          className="acc-inline-input"
+                          value={editForm.department}
+                          onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
+                          style={{ marginTop: 4 }}
+                        >
+                          {DEPARTMENT_OPTIONS.map((d) => (
+                            <option key={d.value} value={d.value}>{d.label}</option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td>
                       <input
                         className="acc-inline-input"
+                        placeholder={editForm.department === 'shs' ? 'Moderator' : 'Adviser'}
                         value={editForm.adviser_name}
                         onChange={(e) => setEditForm({ ...editForm, adviser_name: e.target.value })}
                       />
@@ -923,6 +964,11 @@ function OrganizationsSection({ orgs, memberships, bankDetails, onChanged }) {
                     <td className="acc-table__strong">
                       <button type="button" className="acc-link-btn" onClick={() => setViewingOrg(o)}>{o.acronym}</button>
                       {o.department === 'shs' && <span className="acc-badge acc-badge--shs" style={{ marginLeft: 6 }}>SHS</span>}
+                      {o.department === 'shs' && !memberships.some((m) => m.org_id === o.id && m.position === 'Moderator') && (
+                        <span className="acc-badge acc-badge--warning" style={{ marginLeft: 6 }} title="This SHS org has no Moderator account yet">
+                          No Moderator
+                        </span>
+                      )}
                     </td>
                     <td>
                       <button type="button" className="acc-link-btn" onClick={() => setViewingOrg(o)}>{o.name}</button>
@@ -1049,7 +1095,7 @@ function OrgDetailsModal({ org, bank, memberships, onClose }) {
           <h4><ShieldCheck size={13} /> Org Details</h4>
           <div className="acc-modal__grid">
             <div><span>Category</span><strong>{org.category || '—'}</strong></div>
-            <div><span>Adviser</span><strong>{org.adviser_name || '—'}</strong></div>
+            <div><span>{org.department === 'shs' ? 'Moderator' : 'Adviser'}</span><strong>{org.adviser_name || '—'}</strong></div>
             <div><span>Accreditation</span><strong>{ACCREDITATION_LABELS[org.accreditation_status] || '—'}</strong></div>
             <div><span>Status</span><strong>{org.is_active ? 'Active' : 'Inactive'}</strong></div>
             <div><span>Contact Email</span><strong>{org.contact_email || '—'}</strong></div>

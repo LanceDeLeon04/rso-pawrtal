@@ -3,7 +3,7 @@ import {
   FileText, Download, Plus, X, Loader2, AlertCircle, Pencil, Trash2,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier } from '../context/AuthContext'
+import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments, DEPARTMENT_LABELS } from '../context/AuthContext'
 import './Templates.css'
 
 const STANDARD_DOCS = [
@@ -26,6 +26,19 @@ const EMPTY_FORM = { name: '', customName: '', category: 'event_application', ve
 export default function Templates() {
   const { profile } = useAuth()
   const admin = isAdminTier(profile?.role)
+  const shsReviewer = isSHSReviewer(profile?.role)
+  // SDAO Supervisor, SDAO Assistant, and every other full admin-tier
+  // role can see BOTH College and SHS templates via a tab. SDAO-SHS and
+  // SHS Principal only ever have SHS templates, so they don't need (or
+  // get) a tab — everything they see/upload is SHS. Anyone else
+  // (RSO Officer, FMO, Executive Director where reachable) just sees
+  // their own org's department, or College by default.
+  const seesBothDepts = seesAllDepartments(profile?.role)
+  const orgDept = profile?.org_memberships?.[0]?.organizations?.department || 'college'
+  const fixedDept = shsReviewer ? 'shs' : (!seesBothDepts ? orgDept : null)
+  const canManage = admin || shsReviewer
+
+  const [deptTab, setDeptTab] = useState(fixedDept || 'college')
 
   const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
@@ -42,12 +55,15 @@ export default function Templates() {
     loadTemplates()
   }, [])
 
+  const activeDept = fixedDept || deptTab
+  const visibleTemplates = templates.filter((t) => (t.department || 'college') === activeDept)
+
   async function loadTemplates() {
     setLoading(true)
     setError('')
     const { data, error: err } = await supabase
       .from('templates')
-      .select('id, name, category, file_url, version, updated_at, updater:profiles!templates_updated_by_fkey ( full_name )')
+      .select('id, name, category, department, file_url, version, updated_at, updater:profiles!templates_updated_by_fkey ( full_name )')
       .order('category', { ascending: true })
       .order('name', { ascending: true })
 
@@ -113,10 +129,11 @@ export default function Templates() {
 
     const { data: pub } = supabase.storage.from('templates').getPublicUrl(path)
 
-    const existing = templates.find((t) => t.name === finalName)
+    const existing = templates.find((t) => t.name === finalName && (t.department || 'college') === activeDept)
     const payload = {
       name: finalName,
       category: form.category,
+      department: activeDept,
       file_url: pub.publicUrl,
       version: form.version || null,
       updated_by: profile.id,
@@ -144,7 +161,7 @@ export default function Templates() {
     loadTemplates()
   }
 
-  const grouped = templates.reduce((acc, t) => {
+  const grouped = visibleTemplates.reduce((acc, t) => {
     const key = t.category || 'other'
     acc[key] = acc[key] || []
     acc[key].push(t)
@@ -156,23 +173,46 @@ export default function Templates() {
       <div className="tpl-toolbar">
         <div>
           <h2 className="tpl-toolbar__title"><FileText size={17} color="var(--nu-blue-700)" /> Templates</h2>
-          <p className="tpl-toolbar__sub">Official SDAO forms for event applications and activity reports.</p>
+          <p className="tpl-toolbar__sub">
+            {shsReviewer
+              ? 'Official SDAO-SHS forms for SHS event applications and activity reports.'
+              : 'Official SDAO forms for event applications and activity reports.'}
+          </p>
         </div>
-        {admin && (
+        {canManage && (
           <button className="tpl-btn tpl-btn--gold" onClick={() => openUploadModal(null)}>
             <Plus size={15} /> Upload Template
           </button>
         )}
       </div>
 
+      {/* SDAO Supervisor, SDAO Assistant, and every other full admin-tier
+          role see both departments' templates via this tab. Everyone
+          else (SDAO-SHS/SHS Principal, RSO Officers, etc.) is fixed to
+          a single department and never sees the tab at all. */}
+      {!fixedDept && (
+        <div className="tpl-dept-tabs">
+          {['college', 'shs'].map((d) => (
+            <button
+              key={d}
+              type="button"
+              className={`tpl-dept-tab ${deptTab === d ? 'tpl-dept-tab--active' : ''}`}
+              onClick={() => setDeptTab(d)}
+            >
+              {DEPARTMENT_LABELS[d]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {error && <div className="tpl-error"><AlertCircle size={15} /> {error}</div>}
 
       {loading ? (
         <div className="tpl-loading"><Loader2 size={22} className="spin" /></div>
-      ) : templates.length === 0 ? (
+      ) : visibleTemplates.length === 0 ? (
         <div className="tpl-empty">
           <FileText size={26} strokeWidth={1.6} />
-          <p>{admin ? 'No templates uploaded yet.' : 'No templates are available yet — check back soon.'}</p>
+          <p>{canManage ? 'No templates uploaded yet.' : 'No templates are available yet — check back soon.'}</p>
         </div>
       ) : (
         Object.entries(CATEGORY_META).map(([key, meta]) => {
@@ -197,7 +237,7 @@ export default function Templates() {
                       <a href={t.file_url} target="_blank" rel="noreferrer" className="tpl-icon-btn" title="Download">
                         <Download size={15} />
                       </a>
-                      {admin && (
+                      {canManage && (
                         <>
                           <button className="tpl-icon-btn" title="Replace" onClick={() => openUploadModal(t)}>
                             <Pencil size={14} />

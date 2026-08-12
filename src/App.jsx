@@ -56,9 +56,12 @@ export default function App() {
               path="/submissions"
               element={<ProtectedRoute excludeRoles={['fmo']}><SubmissionBin /></ProtectedRoute>}
             />
+            {/* SHS Principal DOES get Templates (unlike Clearance/Assignments) —
+                it can see and upload SHS Templates only, scoped server-side
+                (migration 053). */}
             <Route
               path="/templates"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal']}><Templates /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director']}><Templates /></ProtectedRoute>}
             />
             <Route
               path="/clearance"
@@ -78,6 +81,11 @@ export default function App() {
                   allowedRoles={[
                     'sdao_assistant', 'crso_chairperson', 'qmo',
                     'sdao_supervisor', 'academic_director', 'system_admin',
+                    // SDAO-SHS and SHS Principal also get Accounts, but
+                    // strictly limited to SHS orgs + SHS RSO/Moderator
+                    // accounts — see the department gating in
+                    // Accounts.jsx itself.
+                    'sdao_shs', 'shs_principal',
                   ]}
                 >
                   <Accounts />
