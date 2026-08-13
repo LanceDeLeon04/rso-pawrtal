@@ -29,7 +29,12 @@ export default function Assignments() {
   // (migration 052) already restricts which rows come back to SHS-only,
   // so "admin" here just means "reviewer view" rather than "org's own view".
   const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
-  const canManage = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
+  const shsReviewer = isSHSReviewer(profile?.role)
+  // SDAO-SHS can create assignments too, scoped to SHS Faculty/RSO
+  // targets only (enforced both here — no cross-org "Tagged Group"
+  // option, org picker limited to SHS orgs — and at the RLS level,
+  // migration 061).
+  const canManage = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin', 'sdao_shs'].includes(profile?.role)
   const navigate = useNavigate()
 
   const [assignments, setAssignments] = useState([])
@@ -99,10 +104,15 @@ export default function Assignments() {
     if (!admin) return
     async function loadOrgFilterData() {
       const [{ data: o }, { data: m }] = await Promise.all([
-        supabase.from('organizations').select('id, acronym').eq('is_active', true).order('acronym'),
+        supabase.from('organizations').select('id, acronym, department').eq('is_active', true).order('acronym'),
         supabase.from('org_memberships').select('profile_id, org_id, position'),
       ])
-      setOrgs(o || [])
+      // organizations has no RLS restriction (every role can browse it
+      // for dropdowns), so SDAO-SHS needs an explicit department filter
+      // here, same as Dashboard/AnalyticsSection — otherwise the org
+      // filter and the "Whole Org" assignment target would both list
+      // College orgs too.
+      setOrgs(shsReviewer ? (o || []).filter((org) => org.department === 'shs') : (o || []))
       const pMap = {}
       const tMap = {}
       ;(m || []).forEach((row) => {
@@ -115,7 +125,7 @@ export default function Assignments() {
       setTagOrgMap(tMap)
     }
     loadOrgFilterData()
-  }, [admin])
+  }, [admin, shsReviewer])
 
   async function loadAssignments() {
     if (!profile) return
@@ -553,7 +563,7 @@ export default function Assignments() {
             </label>
 
             <div className="asg-target-tabs">
-              {['user', 'tag', 'org'].map((t) => (
+              {(shsReviewer ? ['user', 'org'] : ['user', 'tag', 'org']).map((t) => (
                 <button
                   type="button"
                   key={t}

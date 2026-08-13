@@ -43,10 +43,16 @@ export default function CalendarOfActivities() {
   const seesShsVenueBookings = isSHSVenueRequestParty(profile?.role) || isSHSFacultyModerator(profile)
   const seesAllDepts = seesAllDepartments(profile?.role)
   const canManageVenues = admin || fmo // block dates + reschedule bookings
-  // SDAO-SHS can schedule/remove only its own department's exam
-  // periods (never holidays, never College's exam periods — see
-  // migration 052). Venue blocking itself stays FMO/admin-only.
+  // SDAO-SHS can schedule/remove its own department's exam periods AND
+  // holidays (migration 060 extended restricted_periods_write_shs* to
+  // kind = 'holiday' too, department = 'shs' — never College's holidays
+  // or exam periods). Venue blocking itself stays FMO/admin-only.
   const canManageExamPeriods = canManageVenues || shsReviewer
+  // Classroom blocking (migration 060) is SDAO-SHS's own tool, same
+  // ownership split as shs_classrooms itself — SHS Principal's role in
+  // this sub-system is approval, not room/schedule upkeep. system_admin
+  // kept as the usual maintenance escape hatch.
+  const canManageShsClassroomBlocks = profile?.role === 'sdao_shs' || profile?.role === 'system_admin'
   const myOrgId = profile?.org_memberships?.[0]?.org_id
 
   const today = new Date()
@@ -90,6 +96,17 @@ export default function CalendarOfActivities() {
   // classroom+date+time on THIS calendar only.
   const [shsVenueBookings, setShsVenueBookings] = useState([])
   const [selectedShsBooking, setSelectedShsBooking] = useState(null)
+
+  // ---------- SHS classroom blocks (migration 060) ----------
+  // Same visibility as shsVenueBookings (shs_faculty/sdao_shs/
+  // shs_principal/Faculty-Moderator only); write is SDAO-SHS-only.
+  const [shsClassrooms, setShsClassrooms] = useState([])
+  const [shsClassroomBlocks, setShsClassroomBlocks] = useState([])
+  const [showShsBlockModal, setShowShsBlockModal] = useState(false)
+  const [shsBlockForm, setShsBlockForm] = useState({ classroom_id: '', block_date: '', reason: '' })
+  const [savingShsBlock, setSavingShsBlock] = useState(false)
+  const [selectedShsClassroomBlock, setSelectedShsClassroomBlock] = useState(null)
+  const [shsBlockError, setShsBlockError] = useState('')
 
   // ---------- Org report deadlines (org-only, never admin/FMO) ----------
   // Pulled from `clearances` — the same rows the org's Clearance page
@@ -240,8 +257,16 @@ export default function CalendarOfActivities() {
     loadBlocks()
     loadRestrictedPeriods()
     loadShsVenueBookings()
+    loadShsClassroomBlocks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor, venueFilter, viewingAcademicYear])
+
+  useEffect(() => {
+    if (!seesShsVenueBookings) return
+    supabase.from('shs_classrooms').select('id, name').eq('is_active', true).order('sort_order')
+      .then(({ data }) => setShsClassrooms(data || []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seesShsVenueBookings])
 
   useEffect(() => {
     loadOrgReportDeadlines()
@@ -330,6 +355,24 @@ export default function CalendarOfActivities() {
       .lte('request_date', rangeEnd)
 
     setShsVenueBookings(data || [])
+  }
+
+  // SHS-only, same gate as loadShsVenueBookings — see migration 060.
+  async function loadShsClassroomBlocks() {
+    if (!seesShsVenueBookings) {
+      setShsClassroomBlocks([])
+      return
+    }
+    const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
+    const rangeEnd = toISODate(new Date(cursor.year, cursor.month + 1, 0))
+
+    const { data } = await supabase
+      .from('shs_classroom_blocks')
+      .select('id, classroom_id, block_date, reason, shs_classrooms ( name )')
+      .gte('block_date', rangeStart)
+      .lte('block_date', rangeEnd)
+
+    setShsClassroomBlocks(data || [])
   }
 
   async function loadEvents() {
@@ -434,6 +477,11 @@ export default function CalendarOfActivities() {
   function shsVenueBookingsForDay(date) {
     const iso = toISODate(date)
     return shsVenueBookings.filter((b) => b.request_date === iso)
+  }
+
+  function shsClassroomBlocksForDay(date) {
+    const iso = toISODate(date)
+    return shsClassroomBlocks.filter((b) => b.block_date === iso)
   }
 
   function periodsForDay(date) {
@@ -558,11 +606,12 @@ export default function CalendarOfActivities() {
       end_date: periodForm.end_date,
       note: periodForm.note.trim() || null,
       created_by: profile?.id,
-      // Exam periods are department-specific (College and SHS run
-      // different exam calendars on the same venues); holidays are
-      // university-wide and stay untagged. SDAO-SHS can only ever
-      // reach this with kind = 'exam_period' — see canManageExamPeriods.
-      department: periodForm.kind === 'exam_period' ? (shsReviewer ? 'shs' : 'college') : null,
+      // Exam periods are always department-specific (College and SHS run
+      // different exam calendars on the same venues). Holidays are
+      // university-wide (untagged) UNLESS an SDAO-SHS reviewer is
+      // scheduling one — those get tagged 'shs' so they don't show as
+      // a university-wide holiday on the College calendar (migration 060).
+      department: shsReviewer ? 'shs' : (periodForm.kind === 'exam_period' ? 'college' : null),
     })
     setSavingPeriod(false)
     if (err) {
@@ -604,6 +653,33 @@ export default function CalendarOfActivities() {
     await supabase.from('venue_blocks').delete().eq('id', blockId)
     setSelectedBlock(null)
     loadBlocks()
+  }
+
+  async function handleBlockShsClassroom(e) {
+    e.preventDefault()
+    setShsBlockError('')
+    if (!shsBlockForm.classroom_id || !shsBlockForm.block_date) return
+    setSavingShsBlock(true)
+    const { error: err } = await supabase.from('shs_classroom_blocks').insert({
+      classroom_id: shsBlockForm.classroom_id,
+      block_date: shsBlockForm.block_date,
+      reason: shsBlockForm.reason.trim() || null,
+      created_by: profile?.id,
+    })
+    setSavingShsBlock(false)
+    if (err) {
+      setShsBlockError(err.code === '23505' ? 'That classroom is already blocked on this date.' : 'Could not block this date. Please try again.')
+      return
+    }
+    setShowShsBlockModal(false)
+    setShsBlockForm({ classroom_id: '', block_date: '', reason: '' })
+    loadShsClassroomBlocks()
+  }
+
+  async function handleUnblockShsClassroom(blockId) {
+    await supabase.from('shs_classroom_blocks').delete().eq('id', blockId)
+    setSelectedShsClassroomBlock(null)
+    loadShsClassroomBlocks()
   }
 
   function startMove(ev) {
@@ -833,7 +909,7 @@ export default function CalendarOfActivities() {
             )}
           </div>
 
-          {(canManageAcademic || canManageVenues) && (
+          {(canManageAcademic || canManageVenues || canManageExamPeriods || canManageShsClassroomBlocks) && (
             <div className="cal-toolbar__admin-actions">
               {canManageAcademic && (
                 <button
@@ -856,15 +932,19 @@ export default function CalendarOfActivities() {
                   className="cal-btn cal-btn--outline cal-btn--toolbar"
                   onClick={() => {
                     setPeriodError('')
-                    // SDAO-SHS can only ever create exam periods (never
-                    // holidays), pre-tagged to its own department.
-                    setPeriodForm(shsReviewer
-                      ? { kind: 'exam_period', label: '', start_date: '', end_date: '', note: '' }
-                      : { kind: 'holiday', label: '', start_date: '', end_date: '', note: '' })
+                    setPeriodForm({ kind: 'exam_period', label: '', start_date: '', end_date: '', note: '' })
                     setShowPeriodModal(true)
                   }}
                 >
-                  <PartyPopper size={14} /> {shsReviewer ? 'Exam Period (SHS)' : 'Holiday / Exam Period'}
+                  <PartyPopper size={14} /> {shsReviewer ? 'Holiday / Exam Period (SHS)' : 'Holiday / Exam Period'}
+                </button>
+              )}
+              {canManageShsClassroomBlocks && (
+                <button
+                  className="cal-btn cal-btn--outline cal-btn--toolbar"
+                  onClick={() => { setShsBlockError(''); setShsBlockForm({ classroom_id: '', block_date: '', reason: '' }); setShowShsBlockModal(true) }}
+                >
+                  <Ban size={14} /> Block SHS Classroom
                 </button>
               )}
             </div>
@@ -908,6 +988,7 @@ export default function CalendarOfActivities() {
             const dayEvents = eventsForDay(date)
             const dayBlocks = blocksForDay(date)
             const dayShsVenueBookings = shsVenueBookingsForDay(date)
+            const dayShsClassroomBlocks = shsClassroomBlocksForDay(date)
             const dayPeriods = periodsForDay(date)
             const dayTermBreaks = termBreaksForDay(date)
             const dayReportDeadlines = reportDeadlinesForDay(date)
@@ -961,6 +1042,16 @@ export default function CalendarOfActivities() {
                       title={`${b.venues?.name || 'Venue'} blocked`}
                     >
                       <Ban size={11} /> {b.venues?.name || 'Venue'} blocked
+                    </button>
+                  ))}
+                  {dayShsClassroomBlocks.map((b) => (
+                    <button
+                      key={b.id}
+                      className="cal-chip cal-chip--blocked"
+                      onClick={() => setSelectedShsClassroomBlock(b)}
+                      title={`${b.shs_classrooms?.name || 'Classroom'} blocked`}
+                    >
+                      <Ban size={11} /> {b.shs_classrooms?.name || 'Classroom'} blocked
                     </button>
                   ))}
                   {dayShsVenueBookings.map((b) => (
@@ -1304,6 +1395,70 @@ export default function CalendarOfActivities() {
         </div>
       )}
 
+      {selectedShsClassroomBlock && (
+        <div className="cal-modal-backdrop" onClick={() => setSelectedShsClassroomBlock(null)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setSelectedShsClassroomBlock(null)}>
+              <X size={18} />
+            </button>
+            <span className="cal-status-badge cal-status-badge--blocked"><Ban size={12} /> Blocked</span>
+            <h3 className="cal-modal__title">{selectedShsClassroomBlock.shs_classrooms?.name || 'Classroom'}</h3>
+            <div className="cal-modal__details">
+              <div className="cal-modal__row"><CalendarDays size={14} /> {selectedShsClassroomBlock.block_date}</div>
+              {selectedShsClassroomBlock.reason && <p className="cal-modal__desc">{selectedShsClassroomBlock.reason}</p>}
+              {canManageShsClassroomBlocks && (
+                <div className="cal-modal__actions">
+                  <button className="cal-btn cal-btn--danger-outline" onClick={() => handleUnblockShsClassroom(selectedShsClassroomBlock.id)}>
+                    <Trash2 size={14} /> Unblock This Date
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showShsBlockModal && (
+        <div className="cal-modal-backdrop" onClick={() => setShowShsBlockModal(false)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setShowShsBlockModal(false)}>
+              <X size={18} />
+            </button>
+            <h3 className="cal-modal__title"><Ban size={16} /> Block an SHS Classroom Date</h3>
+            {shsBlockError && <div className="cal-error"><AlertCircle size={14} /> {shsBlockError}</div>}
+            <form className="cal-move-form" onSubmit={handleBlockShsClassroom}>
+              <label className="cal-move-form__field">
+                Classroom
+                <select value={shsBlockForm.classroom_id}
+                  onChange={(e) => setShsBlockForm({ ...shsBlockForm, classroom_id: e.target.value })} required>
+                  <option value="">— Select classroom —</option>
+                  {shsClassrooms.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+              <label className="cal-move-form__field">
+                Date
+                <input type="date" value={shsBlockForm.block_date}
+                  onChange={(e) => setShsBlockForm({ ...shsBlockForm, block_date: e.target.value })} required />
+              </label>
+              <label className="cal-move-form__field">
+                Reason <span className="acc-optional">(optional)</span>
+                <input type="text" value={shsBlockForm.reason}
+                  onChange={(e) => setShsBlockForm({ ...shsBlockForm, reason: e.target.value })}
+                  placeholder="e.g. Maintenance, SDAO-held event" />
+              </label>
+              <div className="cal-modal__actions">
+                <button className="cal-btn cal-btn--gold" type="submit" disabled={savingShsBlock}>
+                  {savingShsBlock ? <Loader2 size={14} className="spin" /> : 'Block Date'}
+                </button>
+                <button className="cal-btn cal-btn--outline" type="button" onClick={() => setShowShsBlockModal(false)} disabled={savingShsBlock}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {selectedReportDeadline && (
         <div className="cal-modal-backdrop" onClick={() => setSelectedReportDeadline(null)}>
           <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
@@ -1399,7 +1554,7 @@ export default function CalendarOfActivities() {
               {selectedPeriod.department && seesAllDepts && (
                 <p className="cal-modal__desc"><strong>{selectedPeriod.department === 'shs' ? 'SHS' : 'College'} exam period</strong></p>
               )}
-              {(canManageVenues || (shsReviewer && selectedPeriod.department === 'shs' && selectedPeriod.kind === 'exam_period')) && (
+              {(canManageVenues || (shsReviewer && selectedPeriod.department === 'shs')) && (
                 <div className="cal-modal__actions">
                   <button className="cal-btn cal-btn--danger-outline" onClick={() => handleUnschedulePeriod(selectedPeriod.id)}>
                     <Trash2 size={14} /> Unschedule This Period
@@ -1417,7 +1572,7 @@ export default function CalendarOfActivities() {
             <button className="cal-modal__close" onClick={() => setShowPeriodModal(false)}>
               <X size={18} />
             </button>
-            <h3 className="cal-modal__title"><PartyPopper size={16} /> {shsReviewer ? 'Schedule SHS Exam Period' : 'Schedule Holiday / Exam Period'}</h3>
+            <h3 className="cal-modal__title"><PartyPopper size={16} /> {shsReviewer ? 'Schedule SHS Holiday / Exam Period' : 'Schedule Holiday / Exam Period'}</h3>
             {periodError && <div className="cal-error"><AlertCircle size={14} /> {periodError}</div>}
             <form className="cal-move-form" onSubmit={handleSchedulePeriod}>
               <label className="cal-move-form__field">
@@ -1425,17 +1580,10 @@ export default function CalendarOfActivities() {
                 <select
                   value={periodForm.kind}
                   onChange={(e) => setPeriodForm({ ...periodForm, kind: e.target.value })}
-                  disabled={shsReviewer}
                   required
                 >
-                  {shsReviewer ? (
-                    <option value="exam_period">Exam Week (include the week before, if applicable)</option>
-                  ) : (
-                    <>
-                      <option value="holiday">Holiday</option>
-                      <option value="exam_period">Exam Week (include the week before, if applicable)</option>
-                    </>
-                  )}
+                  <option value="holiday">Holiday{shsReviewer ? ' (SHS)' : ''}</option>
+                  <option value="exam_period">Exam Week (include the week before, if applicable)</option>
                 </select>
               </label>
               <label className="cal-move-form__field">

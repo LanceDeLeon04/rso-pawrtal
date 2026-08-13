@@ -53,7 +53,7 @@ export default function AnalyticsSection() {
     setLoading(true)
     let result = null
     if (admin) {
-      result = await fetchAdminAnalytics({ orgId: orgFilter || null, startDate, endDate })
+      result = await fetchAdminAnalytics({ orgId: orgFilter || null, startDate, endDate, shsOnly })
     } else if (fmo) {
       result = await fetchFacilityAnalytics({ venueId: venueFilter || null, startDate, endDate })
     } else if (myOrgId) {
@@ -100,7 +100,7 @@ export default function AnalyticsSection() {
           <div>
             <h3>Data Analytics</h3>
             <span className="an-section__sub">
-              {admin ? 'Organization-wide analytics' : fmo ? 'Facility utilization analytics' : 'Your organization\'s analytics'}
+              {admin ? (shsOnly ? 'SHS organization analytics' : 'Organization-wide analytics') : fmo ? 'Facility utilization analytics' : 'Your organization\'s analytics'}
             </span>
           </div>
         </div>

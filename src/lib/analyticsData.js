@@ -66,11 +66,22 @@ function seriesFromBuckets(buckets, rows, dateField) {
 }
 
 // ---------- ADMIN / DIRECTOR / QMO: org-wide analytics ----------
-export async function fetchAdminAnalytics({ orgId = null, startDate = null, endDate = null, months = 6 } = {}) {
+// shsOnly: SDAO-SHS/SHS Principal get this same "admin" shape (see
+// AnalyticsSection), but events_select_all is `using (true)` (every role
+// sees every event, for venue-availability purposes — see 052b) and
+// organizations has no RLS restriction at all. submissions/clearances
+// are already RLS-scoped to SHS-only rows for these two roles (052b),
+// but events/organizations are NOT — so shsOnly filters those two
+// explicitly here, then re-derives which submissions/clearances rows
+// belong to an SHS org (harmless no-op given RLS already scoped them,
+// but keeps this function correct even if that RLS ever changes).
+export async function fetchAdminAnalytics({ orgId = null, startDate = null, endDate = null, months = 6, shsOnly = false } = {}) {
   let subQ = supabase.from('submissions').select('id, type, stage, org_id, submitted_at, projected_budget, organizations ( acronym, category )')
   let evQ = supabase.from('events').select('id, org_id, event_date, booking_status, venue_id, organizations ( acronym ), venues ( name )')
   let clQ = supabase.from('clearances').select('id, org_id, status, deadline, created_at, organizations ( acronym )')
   let orgQ = supabase.from('organizations').select('id, name, acronym, category, is_active, accreditation_status')
+
+  if (shsOnly) orgQ = orgQ.eq('department', 'shs')
 
   if (orgId) {
     subQ = subQ.eq('org_id', orgId)
@@ -83,7 +94,15 @@ export async function fetchAdminAnalytics({ orgId = null, startDate = null, endD
   const [{ data: submissions }, { data: events }, { data: clearances }, { data: orgs }] =
     await Promise.all([subQ, evQ, clQ, orgQ])
 
-  const S = submissions || [], E = events || [], C = clearances || [], O = orgs || []
+  let S = submissions || [], E = events || [], C = clearances || [], O = orgs || []
+
+  if (shsOnly) {
+    const shsOrgIds = new Set(O.map((o) => o.id))
+    E = E.filter((e) => shsOrgIds.has(e.org_id))
+    S = S.filter((s) => shsOrgIds.has(s.org_id))
+    C = C.filter((c) => shsOrgIds.has(c.org_id))
+  }
+
   const buckets = buildMonthBuckets(months)
 
   const submissionsByStage = Array.from(countBy(S, (r) => STAGE_LABELS[r.stage] || r.stage), ([name, value]) => ({ name, value }))
