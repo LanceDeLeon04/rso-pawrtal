@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider } from './context/AuthContext'
+import { AuthProvider, isSHSFacultyModerator } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -16,6 +16,7 @@ import Settings from './pages/Settings'
 import SystemInfo from './pages/SystemInfo'
 import ExternalApproval from './pages/ExternalApproval'
 import EventVerification from './pages/EventVerification'
+import VenueRequest from './pages/VenueRequest'
 
 export default function App() {
   return (
@@ -51,28 +52,31 @@ export default function App() {
                 gets the same trimmed shape as Executive Director — one
                 approval step, not a daily admin user. SDAO-SHS gets the
                 full College-admin-shaped nav (minus Accounts), scoped to
-                department = 'shs' server-side (migration 052). */}
+                department = 'shs' server-side (migration 052). SHS Faculty
+                (migration 054/055) is trimmed even further — Dashboard +
+                Calendar + Venue Request only, so it's excluded from every
+                route below too. */}
             <Route
               path="/submissions"
-              element={<ProtectedRoute excludeRoles={['fmo']}><SubmissionBin /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'shs_faculty']}><SubmissionBin /></ProtectedRoute>}
             />
             {/* SHS Principal DOES get Templates (unlike Clearance/Assignments) —
                 it can see and upload SHS Templates only, scoped server-side
                 (migration 053). */}
             <Route
               path="/templates"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director']}><Templates /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_faculty']}><Templates /></ProtectedRoute>}
             />
             <Route
               path="/clearance"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal']}><Clearance /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal', 'shs_faculty']}><Clearance /></ProtectedRoute>}
             />
             {/* No allowedRoles here on purpose — RSO Officers need this page too,
                 to see and act on tasks assigned to them. Assignments.jsx itself
                 already gates creation/review controls to admin-tier roles. */}
             <Route
               path="/assignments"
-              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal']}><Assignments /></ProtectedRoute>}
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal', 'shs_faculty']}><Assignments /></ProtectedRoute>}
             />
             <Route
               path="/accounts"
@@ -82,13 +86,28 @@ export default function App() {
                     'sdao_assistant', 'crso_chairperson', 'qmo',
                     'sdao_supervisor', 'academic_director', 'system_admin',
                     // SDAO-SHS and SHS Principal also get Accounts, but
-                    // strictly limited to SHS orgs + SHS RSO/Moderator
-                    // accounts — see the department gating in
+                    // strictly limited to SHS orgs + SHS RSO/Moderator +
+                    // SHS Faculty accounts — see the department gating in
                     // Accounts.jsx itself.
                     'sdao_shs', 'shs_principal',
                   ]}
                 >
                   <Accounts />
+                </ProtectedRoute>
+              }
+            />
+            {/* SHS Faculty submits Venue Requests here; SDAO-SHS and SHS
+                Principal work the approval queue from the same page (see
+                VenueRequest.jsx) — Faculty -> SDAO-SHS -> SHS Principal. */}
+            <Route
+              path="/venue-requests"
+              element={
+                // extraAllow lets an SHS Faculty-Moderator (role
+                // 'rso_officer' + Moderator org_membership on an SHS
+                // org) reach this Faculty route too — see
+                // isSHSFacultyModerator in AuthContext.jsx.
+                <ProtectedRoute allowedRoles={['shs_faculty', 'sdao_shs', 'shs_principal']} extraAllow={isSHSFacultyModerator}>
+                  <VenueRequest />
                 </ProtectedRoute>
               }
             />

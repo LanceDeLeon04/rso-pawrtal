@@ -20,6 +20,7 @@ const ROLE_LABELS = {
   executive_director: 'Executive Director',
   sdao_shs: 'SDAO - SHS',
   shs_principal: 'SHS Principal',
+  shs_faculty: 'SHS Faculty',
 }
 
 const ADMIN_ROLES = ['sdao_assistant', 'crso_chairperson', 'qmo', 'sdao_supervisor', 'academic_director', 'system_admin']
@@ -47,8 +48,20 @@ const COL_POSITIONS = ['President', 'Vice President', 'Secretary', 'Programs Hea
 // migration 052 / org_moderator approval-link role), and every SHS org
 // needs at least one Moderator ACCOUNT (unlike College's Adviser, which
 // is just a name + ad-hoc email on the approval link). "Moderator" is
-// listed first so it reads as required, not optional.
+// listed first so it reads as required, not optional. Kept here (and in
+// positionsForOrg below) so existing Moderator memberships still show up
+// as a normal "known position" — e.g. in the Org Details modal's
+// Executives list, and the Org Memberships & Tags tagging dropdown —
+// even though it's no longer offered when CREATING a new RSO account
+// (see SHS_RSO_CREATE_POSITIONS / CreateRSOAccountSection below).
 const SHS_POSITIONS = ['Moderator', 'President', 'VP Internal', 'VP External', 'PRO', 'Treasurer', 'Secretary', 'Auditor']
+// Moderator accounts are created from "Create SHS Faculty Account"
+// instead (checkbox + SHS org dropdown — see
+// CreateSHSFacultyAccountSection), never from "Create RSO Account", so
+// it's excluded from the position dropdown there specifically.
+// Moderators are still RSO officers underneath — same org_memberships
+// row shape — just a different account-creation path (migration 057).
+const SHS_RSO_CREATE_POSITIONS = SHS_POSITIONS.filter((p) => p !== 'Moderator')
 const positionsForOrg = (org) => {
   if (org?.department === 'shs') return SHS_POSITIONS
   return org?.category === 'COL' ? COL_POSITIONS : POSITIONS
@@ -126,6 +139,9 @@ export default function Accounts() {
   const shsMemberships = memberships.filter((m) => shsOrgIds.has(m.org_id))
   const shsProfileIds = new Set(shsMemberships.map((m) => m.profile_id))
   const shsProfiles = profiles.filter((p) => p.role === 'rso_officer' && shsProfileIds.has(p.id))
+  // SHS Faculty accounts (migration 054/055) — personal logins, not
+  // tied to an org membership, so filtered by role alone.
+  const shsFacultyProfiles = profiles.filter((p) => p.role === 'shs_faculty')
 
   return (
     <div className="acc-page">
@@ -133,7 +149,7 @@ export default function Accounts() {
         <h2 className="acc-header__title"><Users size={17} color="var(--nu-blue-700)" /> Accounts</h2>
         <p className="acc-header__sub">
           {shsReviewer
-            ? 'Create SHS RSO and Moderator logins, and manage SHS organizations.'
+            ? 'Create SHS Faculty, RSO, and Moderator logins, and manage SHS organizations.'
             : 'Create logins, manage organizations, and tag officers across orgs.'}
         </p>
       </div>
@@ -142,6 +158,15 @@ export default function Accounts() {
         <Loader2 size={20} className="spin" />
       ) : shsReviewer ? (
         <>
+          <CreateSHSFacultyAccountSection orgs={shsOrgs} onCreated={loadAll} />
+          <AdminAccountsSection
+            adminProfiles={shsFacultyProfiles}
+            currentProfileId={currentProfile?.id}
+            onChanged={loadAll}
+            title="SHS Faculty Accounts"
+            subtitle="Faculty logins — Calendar + Venue Request only."
+            emptyText="No SHS Faculty accounts yet."
+          />
           <CreateRSOAccountSection orgs={shsOrgs} onCreated={loadAll} />
           <OrganizationsSection orgs={shsOrgs} memberships={shsMemberships} bankDetails={bankDetails} onChanged={loadAll} lockDepartment="shs" />
           <MembershipsSection orgs={shsOrgs} profiles={shsProfiles} memberships={shsMemberships} onChanged={loadAll} />
@@ -316,8 +341,135 @@ function CreateAdminAccountSection({ onCreated }) {
   )
 }
 
+// ---------- SHS FACULTY (personal accounts, created by SDAO-SHS/SHS Principal) ----------
+// Same "personal account" flow as CreateAdminAccountSection above, but
+// role is fixed to 'shs_faculty' and there's no viewer-scope picker
+// (Faculty only ever gets Dashboard + Calendar + Venue Request — see
+// Layout.jsx/App.jsx). Only rendered inside the shsReviewer branch of
+// Accounts() — the create-account Edge Function additionally enforces
+// this server-side (migration 054/055 + SHS_REVIEWER_CREATABLE_ROLES).
+const EMPTY_FACULTY_FORM = { full_name: '', username: '', is_moderator: false, org_id: '' }
+
+function CreateSHSFacultyAccountSection({ orgs, onCreated }) {
+  const [form, setForm] = useState(EMPTY_FACULTY_FORM)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState(null)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setResult(null)
+
+    if (!form.full_name.trim() || !form.username.trim()) {
+      setError('Full name and username are required.')
+      return
+    }
+    if (form.username.includes('@')) {
+      setError('Username should not include "@" — it will automatically become username@pawrtal.local.')
+      return
+    }
+    if (form.is_moderator && !form.org_id) {
+      setError('Select which SHS RSO this faculty member moderates.')
+      return
+    }
+
+    setSaving(true)
+    const { data, error: err } = await invokeAccountFn('create-account', {
+      full_name: form.full_name.trim(),
+      username: form.username.trim(),
+      // A Faculty member who is also a Moderator is created as an
+      // 'rso_officer' (it's fundamentally the org's Moderator — see
+      // migration 057 / isSHSFacultyModerator), not as 'shs_faculty'.
+      // The edge function still gives it a personal username and also
+      // layers on Venue Request access, so functionally it behaves like
+      // both an SHS RSO Officer and Faculty.
+      role: form.is_moderator ? 'rso_officer' : 'shs_faculty',
+      ...(form.is_moderator ? { is_faculty_moderator: true, org_id: form.org_id } : {}),
+    })
+    setSaving(false)
+
+    if (err || data?.error) {
+      setError(data?.error || 'Could not create the account. Please try again.')
+      return
+    }
+
+    setResult(data)
+    setForm(EMPTY_FACULTY_FORM)
+    onCreated()
+  }
+
+  return (
+    <div className="acc-card">
+      <span className="acc-card__label"><Plus size={13} /> Create SHS Faculty Account</span>
+      <p className="acc-card__sub">
+        Personal login for an SHS Faculty member — lets them view the Calendar and submit Venue Requests
+        for SHS classrooms (Faculty → SDAO-SHS → SHS Principal). Check the box below if this Faculty
+        member is also an SHS RSO's Moderator — they'll get RSO Officer functionality (Submission Bin,
+        etc.) for that org on top of the usual Faculty access.
+      </p>
+
+      {result && <CreatedAccountResult result={result} onClose={() => setResult(null)} />}
+      {error && <div className="acc-error"><AlertCircle size={14} /> {error}</div>}
+
+      <form className="acc-form" onSubmit={handleSubmit}>
+        <div className="acc-field-row">
+          <label className="acc-field">
+            Full Name
+            <input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required />
+          </label>
+          <label className="acc-field">
+            Username
+            <input
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              placeholder="e.g. jdelacruz"
+              pattern="[^@]*"
+              title="Username only — no @ symbol"
+              required
+            />
+            <span className="acc-hint">Becomes {form.username || 'username'}@pawrtal.local. Don't enter a full email address.</span>
+          </label>
+        </div>
+
+        <label className="acc-checkbox">
+          <input
+            type="checkbox"
+            checked={form.is_moderator}
+            onChange={(e) => setForm({ ...form, is_moderator: e.target.checked, org_id: e.target.checked ? form.org_id : '' })}
+          />
+          Is this faculty member also a Moderator?
+        </label>
+
+        {form.is_moderator && (
+          <label className="acc-field">
+            SHS RSO
+            <select value={form.org_id} onChange={(e) => setForm({ ...form, org_id: e.target.value })} required>
+              <option value="">Select organization</option>
+              {orgs.map((o) => <option key={o.id} value={o.id}>{o.acronym}</option>)}
+            </select>
+            <span className="acc-hint">This account becomes that org's Moderator — RSO Officer functionality plus Faculty's Venue Request access.</span>
+          </label>
+        )}
+
+        <button className="acc-btn acc-btn--gold" type="submit" disabled={saving}>
+          {saving ? <Loader2 size={14} className="spin" /> : 'Create Account'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 // ---------- ADMINISTRATOR ACCOUNTS (list + delete + reset password) ----------
-function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
+// Reused as-is for the SHS Faculty accounts list (see
+// CreateSHSFacultyAccountSection below) — same "personal account"
+// reset/delete actions, just a different title/subtitle and profile set.
+function AdminAccountsSection({
+  adminProfiles, currentProfileId, onChanged,
+  title = 'Administrator Accounts',
+  subtitle = 'SDAO, Admins, Academic Directors, and Facilities (FMO) with a personal login.',
+  emptyText = 'No administrator accounts yet.',
+}) {
   const [error, setError] = useState('')
   const [confirmingId, setConfirmingId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
@@ -353,8 +505,8 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
 
   return (
     <div className="acc-card">
-      <span className="acc-card__label"><Users size={13} /> Administrator Accounts</span>
-      <p className="acc-card__sub">SDAO, Admins, Academic Directors, and Facilities (FMO) with a personal login.</p>
+      <span className="acc-card__label"><Users size={13} /> {title}</span>
+      <p className="acc-card__sub">{subtitle}</p>
 
       {resetResult && (
         <div className="acc-result">
@@ -373,7 +525,7 @@ function AdminAccountsSection({ adminProfiles, currentProfileId, onChanged }) {
         <thead><tr><th>Name</th><th>Username</th><th>Role</th><th /></tr></thead>
         <tbody>
           {adminProfiles.length === 0 ? (
-            <tr><td colSpan={4} className="acc-empty-row">No administrator accounts yet.</td></tr>
+            <tr><td colSpan={4} className="acc-empty-row">{emptyText}</td></tr>
           ) : (
             adminProfiles.map((p) => {
               const isSelf = p.id === currentProfileId
@@ -444,6 +596,10 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
   const [result, setResult] = useState(null)
 
   const org = orgs.find((o) => o.id === form.org_id)
+  // SHS orgs: Moderator is deliberately left out here — it's created
+  // from Create SHS Faculty Account's "Also a Moderator?" checkbox
+  // instead (see SHS_RSO_CREATE_POSITIONS / migration 057).
+  const positionOptions = org?.department === 'shs' ? SHS_RSO_CREATE_POSITIONS : positionsForOrg(org)
   const slug = (v) => v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   const usernamePreview = org && form.position.trim()
     ? `${slug(org.acronym)}.${slug(form.position)}`
@@ -520,7 +676,7 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
                 required
               >
                 <option value="">Select position</option>
-                {positionsForOrg(org).map((p) => <option key={p} value={p}>{p}</option>)}
+                {positionOptions.map((p) => <option key={p} value={p}>{p}</option>)}
                 <option value="__other__">Other (type in)…</option>
               </select>
             ) : (
@@ -541,7 +697,10 @@ function CreateRSOAccountSection({ orgs, onCreated }) {
                 </button>
               </div>
             )}
-            <span className="acc-hint">Also doubles as the cross-org tag (e.g. "all Treasurers").</span>
+            <span className="acc-hint">
+              Also doubles as the cross-org tag (e.g. "all Treasurers").
+              {org?.department === 'shs' && ' Need a Moderator instead? Create that from "Create SHS Faculty Account" below.'}
+            </span>
           </label>
         </div>
 

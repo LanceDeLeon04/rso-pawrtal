@@ -1,0 +1,38 @@
+-- ============================================================
+-- 054: SHS Faculty accounts + SHS classroom Venue Requests
+-- ============================================================
+-- Adds a third SHS-department role, 'shs_faculty', that sits BELOW
+-- SDAO-SHS/SHS Principal (migration 052) rather than being an
+-- org-owning account. A Faculty account:
+--   - is created by SDAO-SHS or SHS Principal (never self-registers,
+--     same "personal account" pattern as FMO/Executive Director — see
+--     Accounts.jsx / the create-account Edge Function)
+--   - can see the Calendar (read-only, like every other role)
+--   - can submit a Venue Request for one of a fixed list of SHS
+--     classrooms (never a College building/lab room — those go
+--     through Facilities Management Office directly, outside PAWrtal)
+--
+-- VENUE REQUEST APPROVAL CHAIN
+--   Faculty -> SDAO-SHS -> SHS Principal -> Approved
+--   Modeled as its own small state machine (shs_venue_requests.status)
+--   rather than reusing `submissions`/`submission_stage`, because this
+--   is a single-purpose two-step sign-off on a room + time slot, not a
+--   full event application with attachments/clearance/ACP forms.
+--
+-- CALENDAR BLOCKING — SHS ONLY
+--   Once a request reaches 'approved', that classroom+date+time is
+--   blocked from further overlapping bookings (enforced server-side in
+--   decide_shs_venue_request, not just client-side). Per spec, this
+--   block is visible ONLY to the SHS-context roles that work inside
+--   this sub-system (shs_faculty, sdao_shs, shs_principal) — it must
+--   NOT show up on the College calendar or the full-admin/Exec
+--   Director calendar. That's the opposite of migration 052's usual
+--   "full admin tier sees both departments" rule, so it's deliberately
+--   NOT wired through seesAllDepartments()/is_admin_tier() — see the
+--   narrow RLS select policies below and the matching client-side
+--   gate in CalendarOfActivities.jsx.
+-- ============================================================
+
+-- ---------- 1. New role ----------
+
+alter type user_role add value if not exists 'shs_faculty';

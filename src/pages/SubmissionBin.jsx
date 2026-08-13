@@ -11,6 +11,7 @@ import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments } from '../cont
 import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
+import { generateReplySlipPdf } from '../lib/replySlipPdf'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
@@ -20,6 +21,7 @@ import { SDG_OPTIONS } from '../lib/sdgOptions'
 import { COL_EVENT_OPTIONS, COL_EVENT_TAGGER_POSITIONS } from '../lib/colEventOptions'
 import { MERCHANDISE_TYPES } from '../lib/merchandiseOptions'
 import VenueMultiSelect from '../components/VenueMultiSelect'
+import SignaturePad from '../components/SignaturePad'
 import './SubmissionBin.css'
 
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
@@ -308,6 +310,45 @@ async function generateAndSetLink(submissionId, role, name, email, setApprovalLi
   setApprovalLinks((prev) => [...prev.filter((l) => l.role !== role), data])
 }
 
+// Self-sign path: used when the person logged into Submission Bin IS
+// the Moderator of the submitting SHS org. Skips the "send a link,
+// wait for them to open it externally" flow entirely — there's no one
+// else to send it to, they're right here. Silently generates the
+// org_moderator link behind the scenes (reusing the same
+// generate_approval_link RPC everyone else's link comes from, so the
+// approval chain/audit trail looks identical) then immediately submits
+// the decision against that token via submit_approval_decision, same
+// as the public /approve/:token page does.
+async function selfSignModeratorLink(submissionId, name, email, decision, comment, signature, setApprovalLinks, setError, setBusy) {
+  setError('')
+  if (decision === 'approved' && !signature) {
+    setError('Please sign above before approving.')
+    return false
+  }
+  setBusy('org_moderator')
+  const { data: link, error: genErr } = await generateApprovalLink(submissionId, 'org_moderator', name.trim(), email.trim())
+  if (genErr || !link) {
+    setBusy(null)
+    setError(genErr?.message || 'Could not record the Moderator sign-off. Please try again.')
+    return false
+  }
+  const { error: decErr } = await supabase.rpc('submit_approval_decision', {
+    p_token: link.token,
+    p_decision: decision,
+    p_comment: comment?.trim() || null,
+    p_signature: signature,
+    p_sdgs: null,
+  })
+  setBusy(null)
+  if (decErr) {
+    setError(decErr.message || 'Could not record the Moderator sign-off. Please try again.')
+    return false
+  }
+  const { data: refreshed } = await fetchApprovalLinks(submissionId)
+  setApprovalLinks(refreshed)
+  return true
+}
+
 // Returns a multi-day event's date entries sorted chronologically, so the
 // earliest entry can be used wherever a single event_date/start_time/end_time
 // is still expected (sorting, calendar placement, clearance deadlines, etc).
@@ -498,6 +539,7 @@ const EMPTY_APP_FORM = {
   wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
   night_before_ingress: false,
   col_event_tags: [], col_event_other: '',
+  requires_parent_letter: false, requires_reply_slip: false,
 }
 
 // Merchandise Proposal collects the same fields as an Event Application
@@ -527,6 +569,9 @@ export default function SubmissionBin() {
   const myOrgId = profile?.org_memberships?.[0]?.org_id
   const myMembershipRoot = profile?.org_memberships?.[0]
   const myOrgIsCOL = myMembershipRoot?.organizations?.category === 'COL'
+  // Drives the stage a returned submission resets to on resubmit — SDAO-SHS
+  // for SHS orgs, SDAO Assistant for College orgs (see submissions_resubmit_owner).
+  const myOrgIsSHS = myMembershipRoot?.organizations?.department === 'shs'
   const canTagCOLEvents = myOrgIsCOL && COL_EVENT_TAGGER_POSITIONS.includes(myMembershipRoot?.position)
   const location = useLocation()
   const navigate = useNavigate()
@@ -632,6 +677,10 @@ export default function SubmissionBin() {
   const [frfError, setFrfError] = useState('')
   const [linkError, setLinkError] = useState('')
   const [copiedRole, setCopiedRole] = useState(null)
+  // Self-sign state — used only when the logged-in user IS the
+  // Moderator of the submitting SHS org (see selfSignModeratorLink).
+  const [selfSignComment, setSelfSignComment] = useState('')
+  const [selfSignSignature, setSelfSignSignature] = useState(null)
 
   useEffect(() => {
     loadSubmissions()
@@ -1417,6 +1466,8 @@ export default function SubmissionBin() {
       term_label: sub.term_label || '',
       restricted_period_ack: !!sub.restricted_period_ack,
       restricted_period_justification: sub.restricted_period_justification || '',
+      requires_parent_letter: !!sub.requires_parent_letter,
+      requires_reply_slip: !!sub.requires_reply_slip,
       wants_additional_time: !!(sub.additional_ingress_time || sub.additional_egress_time),
       additional_ingress_time: sub.additional_ingress_time || '',
       additional_egress_time: sub.additional_egress_time || '',
@@ -1587,6 +1638,13 @@ export default function SubmissionBin() {
         return
       }
     }
+    if (appForm.requires_parent_letter && !(editingSubmissionId && !appFiles['Letter to Parent'])) {
+      const err = validateAttachmentEntry('Letter to Parent', appFiles['Letter to Parent'])
+      if (err) {
+        setFormError(err)
+        return
+      }
+    }
 
     setSaving(true)
     // Shared between create and edit — sdgs/sdg_representative/submitted_by
@@ -1655,6 +1713,8 @@ export default function SubmissionBin() {
       term_label: appForm.is_continuing && appForm.continuing_type === 'term' ? appForm.term_label.trim() : null,
       restricted_period_ack: !!activeRestrictedPeriod && appForm.restricted_period_ack,
       restricted_period_justification: activeRestrictedPeriod ? appForm.restricted_period_justification.trim() : null,
+      requires_parent_letter: appForm.requires_parent_letter,
+      requires_reply_slip: appForm.requires_parent_letter && appForm.requires_reply_slip,
       additional_ingress_time: appForm.wants_additional_time && appForm.additional_ingress_time ? appForm.additional_ingress_time : null,
       additional_egress_time: appForm.wants_additional_time && appForm.additional_egress_time ? appForm.additional_egress_time : null,
       night_before_ingress: nightBeforeEligible && !nightBeforeConflict && appForm.night_before_ingress,
@@ -1672,7 +1732,7 @@ export default function SubmissionBin() {
       // straight back into the review queue. RLS (submissions_resubmit_owner)
       // only allows this while the row's stage is still 'returned'.
       ;({ data: sub, error: err } = await supabase.from('submissions')
-        .update({ ...appPayload, stage: 'submitted', updated_at: new Date().toISOString() })
+        .update({ ...appPayload, stage: myOrgIsSHS ? 'shs_review' : 'submitted', updated_at: new Date().toISOString() })
         .eq('id', editingSubmissionId)
         .select().single())
     } else {
@@ -1824,6 +1884,40 @@ export default function SubmissionBin() {
       setFormError('Application submitted, but the ACP Form PDF could not be generated — you can attach one manually from the list.')
     }
 
+    // Auto-generate the Reply Slip PDF (parent/guardian consent for this
+    // specific event) when the org checked both "Requires Letter to
+    // Parent" and "Reply Slip Required" — reuses the date/time labels
+    // just computed above for the ACP Form.
+    if (appForm.requires_parent_letter && appForm.requires_reply_slip) {
+      try {
+        const subjectDateTimeLabel = [appForm.title, acpDateLabel, timeRange].filter(Boolean).join(' — ')
+        const replySlipBytes = await generateReplySlipPdf({
+          eventTitle: appForm.title,
+          subjectDateTimeLabel,
+        })
+        const replySlipFile = new File([replySlipBytes], `Reply-Slip-${sub.id}${editingSubmissionId ? '-revised' : ''}.pdf`, { type: 'application/pdf' })
+
+        if (editingSubmissionId) {
+          const { data: oldReplySlipRows } = await supabase
+            .from('submission_attachments')
+            .select('id, file_url')
+            .eq('submission_id', sub.id).eq('document_type', 'Reply Slip')
+          const { error: delErr } = await supabase.from('submission_attachments').delete()
+            .eq('submission_id', sub.id).eq('document_type', 'Reply Slip')
+          if (!delErr) {
+            for (const row of oldReplySlipRows || []) {
+              const path = extractStoragePath(row.file_url)
+              if (path) await supabase.storage.from('submission-attachments').remove([path])
+            }
+          }
+        }
+        await uploadAttachment(sub.id, 'Reply Slip', replySlipFile)
+      } catch (replySlipErr) {
+        console.error('Failed to auto-generate Reply Slip PDF', replySlipErr)
+        setFormError('Application submitted, but the Reply Slip PDF could not be generated — you can attach one manually from the list.')
+      }
+    }
+
     const failedDocs = []
     for (const doc of EVENT_APP_DOCS) {
       // Editing: only touches storage for docs the org actually picked a
@@ -1836,8 +1930,16 @@ export default function SubmissionBin() {
         failedDocs.push(doc)
       }
     }
+    if (appForm.requires_parent_letter && !(editingSubmissionId && !appFiles['Letter to Parent'])) {
+      try {
+        await uploadAttachment(sub.id, 'Letter to Parent', appFiles['Letter to Parent'])
+      } catch (uploadErr) {
+        console.error('Failed to upload Letter to Parent', uploadErr)
+        failedDocs.push('Letter to Parent')
+      }
+    }
     await supabase.from('submission_status_history').insert({
-      submission_id: sub.id, stage: 'submitted', action: editingSubmissionId ? 'resubmitted' : 'submitted', actor_id: profile.id,
+      submission_id: sub.id, stage: editingSubmissionId ? (myOrgIsSHS ? 'shs_review' : 'submitted') : 'submitted', action: editingSubmissionId ? 'resubmitted' : 'submitted', actor_id: profile.id,
     })
     if (failedDocs.length) {
       setFormError(`Application submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
@@ -2004,7 +2106,7 @@ export default function SubmissionBin() {
     let sub, err
     if (editingSubmissionId) {
       ;({ data: sub, error: err } = await supabase.from('submissions')
-        .update({ ...merchPayload, stage: 'submitted', updated_at: new Date().toISOString() })
+        .update({ ...merchPayload, stage: myOrgIsSHS ? 'shs_review' : 'submitted', updated_at: new Date().toISOString() })
         .eq('id', editingSubmissionId)
         .select().single())
     } else {
@@ -2079,7 +2181,7 @@ export default function SubmissionBin() {
       }
     }
     await supabase.from('submission_status_history').insert({
-      submission_id: sub.id, stage: 'submitted', action: editingSubmissionId ? 'resubmitted' : 'submitted', actor_id: profile.id,
+      submission_id: sub.id, stage: editingSubmissionId ? (myOrgIsSHS ? 'shs_review' : 'submitted') : 'submitted', action: editingSubmissionId ? 'resubmitted' : 'submitted', actor_id: profile.id,
     })
     if (failedDocs.length) {
       setFormError(`Proposal submitted, but ${failedDocs.join(', ')} failed to upload — reopen it from the list to re-attach.`)
@@ -2253,8 +2355,12 @@ export default function SubmissionBin() {
     if (!selected) return
     setResubmitting(true)
     setActionError('')
+    // A returned submission always resets to its department's first-line
+    // reviewer — SDAO-SHS for SHS orgs, SDAO Assistant for College orgs —
+    // never back into the external approval chain it already cleared.
+    const resubmitStage = selected.organizations?.department === 'shs' ? 'shs_review' : 'submitted'
     const { error } = await supabase.from('submissions')
-      .update({ stage: 'submitted', updated_at: new Date().toISOString() })
+      .update({ stage: resubmitStage, updated_at: new Date().toISOString() })
       .eq('id', selected.id)
     if (error) {
       setActionError('Could not resubmit. Please try again.')
@@ -2262,7 +2368,7 @@ export default function SubmissionBin() {
       return
     }
     await supabase.from('submission_status_history').insert({
-      submission_id: selected.id, stage: 'submitted', action: 'resubmitted',
+      submission_id: selected.id, stage: resubmitStage, action: 'resubmitted',
       actor_id: profile.id, comment: resubmitNote.trim() || null,
     })
 
@@ -3924,6 +4030,40 @@ export default function SubmissionBin() {
               The Activity Concept Paper (ACP Form) is generated automatically from the fields above and attached to this application — no need to upload it separately.
             </div>
 
+            <div className="sb-field">
+              <label className="sb-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={appForm.requires_parent_letter}
+                  onChange={(e) => setAppForm({
+                    ...appForm,
+                    requires_parent_letter: e.target.checked,
+                    // Reply Slip only ever makes sense alongside a Letter
+                    // to Parent — unchecking the letter clears it too.
+                    requires_reply_slip: e.target.checked ? appForm.requires_reply_slip : false,
+                  })}
+                />
+                Does this event require a Letter to Parent?
+              </label>
+              {appForm.requires_parent_letter && (
+                <label className="sb-checkbox-label sb-checkbox-label--nested">
+                  <input
+                    type="checkbox"
+                    checked={appForm.requires_reply_slip}
+                    onChange={(e) => setAppForm({ ...appForm, requires_reply_slip: e.target.checked })}
+                  />
+                  Is a Reply Slip required?
+                </label>
+              )}
+              {appForm.requires_parent_letter && appForm.requires_reply_slip && (
+                <div className="sb-form-notice">
+                  <FileText size={14} />
+                  A Reply Slip PDF for parents/guardians to sign will be generated automatically from this
+                  application's title, date, and time, and attached alongside the Letter to Parent.
+                </div>
+              )}
+            </div>
+
             <div className="sb-attach-group">
               <span className="sb-attach-group__label">Attachments</span>
               {EVENT_APP_DOCS.map((doc) => (
@@ -3937,6 +4077,16 @@ export default function SubmissionBin() {
                   formatHint={formatHintFor(doc)}
                 />
               ))}
+              {appForm.requires_parent_letter && (
+                <AttachmentRow
+                  label="Letter to Parent"
+                  entry={appFiles['Letter to Parent']}
+                  onChange={(v) => setAppFiles({ ...appFiles, 'Letter to Parent': v })}
+                  template={templateFor('Letter to Parent')}
+                  accept={acceptAttrFor('Letter to Parent')}
+                  formatHint={formatHintFor('Letter to Parent')}
+                />
+              )}
             </div>
 
             <button
@@ -4439,6 +4589,13 @@ export default function SubmissionBin() {
                     const { chain } = state
                     const linkByRole = state.byRole
                     const canManage = (isOwnerOrg || admin) && selected.stage === 'submitted'
+                    // Self-sign: the person viewing this IS the org's Moderator
+                    // (their own login's position in this org is "Moderator" —
+                    // see Accounts.jsx, where Moderator is created as an RSO
+                    // position/account). No point generating a link and sending
+                    // it to themselves — they can sign right here instead.
+                    const myMembershipHere = profile?.org_memberships?.find((m) => m.org_id === selected.org_id)
+                    const isModeratorSelf = department === 'shs' && isOwnerOrg && myMembershipHere?.position === 'Moderator'
 
                     function badgeFor(link) {
                       if (!link) return <span className="sb-badge sb-badge--muted">Not sent yet</span>
@@ -4459,6 +4616,79 @@ export default function SubmissionBin() {
                           const prevRole = chain[idx - 1]
                           const locked = idx > 0 && linkByRole[prevRole]?.status !== 'approved'
                           const url = link && link.status !== 'rejected' ? approvalLinkUrl(link.token) : null
+                          const selfSign = role === 'org_moderator' && isModeratorSelf
+
+                          // ---- Self-sign row: Moderator signing their own org's
+                          // submission. No link/URL is ever shown for this role —
+                          // there's nobody external to send it to.
+                          if (selfSign) {
+                            const isDone = link && (link.status === 'approved' || link.status === 'rejected')
+                            return (
+                              <div key={role} className="sb-approval-row">
+                                <div className="sb-approval-row__head">
+                                  <strong>{ROLE_LABELS[role]}</strong>
+                                  {isDone
+                                    ? badgeFor(link)
+                                    : <span className="sb-badge sb-badge--muted">Sign right here — no need to generate a link</span>}
+                                </div>
+                                {locked && <p className="sb-empty-note">Unlocks once the {ROLE_LABELS[prevRole]} approves.</p>}
+                                {!locked && isDone && (
+                                  <>
+                                    {link.comment && <p className="sb-history-list__comment">"{link.comment}"</p>}
+                                    {link.signature_data && (
+                                      <div className="sb-signature-view">
+                                        <span className="sb-signature-view__label">Signature</span>
+                                        <img src={link.signature_data} alt="Moderator signature" className="sb-signature-view__img" />
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                                {!locked && !isDone && canManage && (
+                                  <div className="sb-approval-row__form sb-approval-row__form--self-sign">
+                                    <SignaturePad onChange={setSelfSignSignature} />
+                                    <textarea
+                                      className="sb-textarea"
+                                      rows={2}
+                                      placeholder="Comment (optional)"
+                                      value={selfSignComment}
+                                      onChange={(e) => setSelfSignComment(e.target.value)}
+                                    />
+                                    <div className="sb-review-actions__row">
+                                      <button
+                                        type="button"
+                                        className="sb-btn sb-btn--outline"
+                                        disabled={generatingLinkRole === role}
+                                        onClick={async () => {
+                                          const ok = await selfSignModeratorLink(
+                                            selected.id, profile.full_name, profile.email || '', 'rejected',
+                                            selfSignComment, null, setApprovalLinks, setLinkError, setGeneratingLinkRole,
+                                          )
+                                          if (ok) { setSelfSignComment(''); setSelfSignSignature(null) }
+                                        }}
+                                      >
+                                        Reject
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="sb-btn sb-btn--gold"
+                                        disabled={generatingLinkRole === role}
+                                        onClick={async () => {
+                                          const ok = await selfSignModeratorLink(
+                                            selected.id, profile.full_name, profile.email || '', 'approved',
+                                            selfSignComment, selfSignSignature, setApprovalLinks, setLinkError, setGeneratingLinkRole,
+                                          )
+                                          if (ok) { setSelfSignComment(''); setSelfSignSignature(null) }
+                                        }}
+                                      >
+                                        {generatingLinkRole === role ? <Loader2 size={14} className="spin" /> : 'Sign & Approve'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          }
+
                           return (
                             <div key={role} className="sb-approval-row">
                               <div className="sb-approval-row__head">

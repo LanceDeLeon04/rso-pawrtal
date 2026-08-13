@@ -385,6 +385,14 @@
   gap: 4px;
 }
 
+.cal-chip--shs-venue-booked {
+  background: #5a3a8a;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .cal-chip--holiday {
   background: #f4c7ce;
   color: #7a1f2b;

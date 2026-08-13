@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 import {
   useAuth, isAdminTier, isFMO, isExecutiveDirector,
-  isSHSReviewer, seesAllDepartments, DEPARTMENT_LABELS,
+  isSHSReviewer, isSHSFaculty, isSHSVenueRequestParty, isSHSFacultyModerator,
+  seesAllDepartments, DEPARTMENT_LABELS,
 } from '../context/AuthContext'
 import './Layout.css'
 
@@ -25,11 +26,15 @@ import './Layout.css'
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/calendar', label: 'Calendar of Activities', icon: CalendarDays },
-  { to: '/submissions', label: 'Submission Bin', icon: Inbox, hideForFMO: true },
-  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true, hideForED: true },
-  { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
-  { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true, hideForED: true, hideForShsPrincipal: true },
-  { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true, hideForED: true },
+  { to: '/submissions', label: 'Submission Bin', icon: Inbox, hideForFMO: true, hideForShsFaculty: true },
+  { to: '/templates', label: 'Templates', icon: FileText, hideForFMO: true, hideForED: true, hideForShsFaculty: true },
+  { to: '/clearance', label: 'Clearance', icon: ShieldCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true },
+  { to: '/assignments', label: 'Assignments', icon: ClipboardList, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true },
+  { to: '/accounts', label: 'Accounts', icon: Users, adminOnly: true, hideForFMO: true, hideForED: true, hideForShsFaculty: true },
+  // SHS Faculty -> SDAO-SHS -> SHS Principal room-booking chain
+  // (migration 054/055). Faculty submits from here; SDAO-SHS/Principal
+  // work the approval queue from the same page.
+  { to: '/venue-requests', label: 'Venue Request', icon: Building2, shsVenuePartyOnly: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/about', label: 'About the System', icon: Info },
 ]
@@ -52,6 +57,7 @@ const ROLE_LABELS = {
   executive_director: 'Executive Director',
   sdao_shs: 'SDAO - SHS',
   shs_principal: 'SHS Principal',
+  shs_faculty: 'SHS Faculty',
 }
 
 function initialsOf(name) {
@@ -72,6 +78,10 @@ export default function Layout() {
   const ed = isExecutiveDirector(profile?.role)
   const shsPrincipal = profile?.role === 'shs_principal'
   const shsReviewer = isSHSReviewer(profile?.role)
+  const shsFaculty = isSHSFaculty(profile?.role)
+  // isSHSVenueRequestParty only checks role, so it misses a Faculty-
+  // Moderator (role stays 'rso_officer' — see isSHSFacultyModerator).
+  const shsVenueParty = isSHSVenueRequestParty(profile?.role) || isSHSFacultyModerator(profile)
   const seesAllDepts = seesAllDepartments(profile?.role)
   const visibleNav = NAV_ITEMS.filter((item) =>
     // Accounts is admin-only, PLUS SDAO-SHS/SHS Principal, who get a
@@ -80,15 +90,22 @@ export default function Layout() {
     (!item.adminOnly || admin || shsReviewer)
     && (!fmo || !item.hideForFMO)
     && (!ed || !item.hideForED)
-    && (!shsPrincipal || !item.hideForShsPrincipal))
+    && (!shsPrincipal || !item.hideForShsPrincipal)
+    && (!shsFaculty || !item.hideForShsFaculty)
+    // Venue Request only ever shows for the three roles inside that
+    // chain — Faculty, SDAO-SHS, SHS Principal — never for full admins,
+    // FMO, or College roles.
+    && (!item.shsVenuePartyOnly || shsVenueParty))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
   const org = profile?.org_memberships?.[0]?.organizations
   const orgLabel = org?.acronym
   const orgName = org?.name || org?.acronym
   const isCOLOrg = org?.category === 'COL'
-  const roleLabel = profile?.role === 'rso_officer' && isCOLOrg
-    ? 'COL Officer'
-    : (ROLE_LABELS[profile?.role] || profile?.role)
+  const roleLabel = isSHSFacultyModerator(profile)
+    ? 'SHS Faculty / Moderator'
+    : profile?.role === 'rso_officer' && isCOLOrg
+      ? 'COL Officer'
+      : (ROLE_LABELS[profile?.role] || profile?.role)
 
   return (
     <div className="shell">

@@ -25,14 +25,15 @@ npm run dev
 
 **Do NOT run `supabase/schema.sql`** — it's a Phase‑1 snapshot from very
 early in the project and is missing almost everything added since
-(roles like `fmo`/`executive_director`/`sdg_rep`/`sdao_shs`/`shs_principal`,
-the SHS sub-system, multi-venue support, clearance-gate fixes, email
-notifications, etc.). It's kept only for historical reference and will be
-removed. For a fresh project, run every file in `supabase/migrations/` in
-filename order (001, 002, 003, ... 052a, 052b) — via `supabase db push`
-if you have the CLI linked, or by pasting each file into the SQL editor
-in order. This is also how to get an existing project fully up to date:
-just run whichever numbered migrations haven't been applied yet.
+(roles like `fmo`/`executive_director`/`sdg_rep`/`sdao_shs`/`shs_principal`/
+`shs_faculty`, the SHS sub-system, SHS Venue Requests, multi-venue support,
+clearance-gate fixes, email notifications, etc.). It's kept only for
+historical reference and will be removed. For a fresh project, run every
+file in `supabase/migrations/` in filename order (001, 002, 003, ...
+052a, 052b, ... 054, 055) — via `supabase db push` if you have the CLI
+linked, or by pasting each file into the SQL editor in order. This is
+also how to get an existing project fully up to date: just run whichever
+numbered migrations haven't been applied yet.
 
 ### Assets to add
 

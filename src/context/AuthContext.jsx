@@ -197,6 +197,41 @@ export function isSHSReviewer(role) {
   return SHS_REVIEWER_ROLES.includes(role)
 }
 
+// SHS Faculty (migration 054/055) — created by SDAO-SHS/SHS Principal,
+// NOT an org-owning account. Limited to Dashboard + Calendar + Venue
+// Request (see Layout.jsx / App.jsx). Kept distinct from
+// SHS_REVIEWER_ROLES since Faculty submits requests but never decides
+// on them.
+export function isSHSFaculty(role) {
+  return role === 'shs_faculty'
+}
+
+// Any role that lives inside the SHS Venue Request flow at all —
+// Faculty (submits) or the two reviewers (decide). Used to gate the
+// Venue Request nav item/route and the SHS-only calendar blocking
+// (see the header note in migration 055 — this is intentionally NOT
+// the same set as seesAllDepartments()).
+export function isSHSVenueRequestParty(role) {
+  return isSHSFaculty(role) || isSHSReviewer(role)
+}
+
+// SHS Faculty-Moderator — a Faculty member who is ALSO the Moderator of
+// an SHS RSO. Per product decision, this account is created through the
+// Create SHS Faculty Account form (personal username, not org+position),
+// but its role stays 'rso_officer' — the account is fundamentally the
+// org's Moderator (org_memberships row with position = 'Moderator' on
+// an org whose department = 'shs'), and it additionally gets Venue
+// Request access layered on top (see isSHSVenueRequestParty above,
+// which only checks role and can't see this). Needs the full profile
+// (with org_memberships), not just role, so it's a separate helper
+// rather than folded into isSHSVenueRequestParty.
+export function isSHSFacultyModerator(profile) {
+  return profile?.role === 'rso_officer'
+    && (profile.org_memberships || []).some(
+      (m) => m.position === 'Moderator' && m.organizations?.department === 'shs'
+    )
+}
+
 // Roles that need to see BOTH departments tagged, everywhere, per the
 // product requirement: "SDAO Assistant, SDAO Supervisor, QMO, Academic
 // Director, Executive Director and Admins can still see ALL EVENTS

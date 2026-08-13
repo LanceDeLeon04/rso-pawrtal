@@ -11,6 +11,8 @@ const ADMIN_ROLES = [
   'sdao_assistant', 'crso_chairperson', 'qmo',
   'sdao_supervisor', 'academic_director', 'system_admin',
 ]
+const SHS_REVIEWER_ROLES = ['sdao_shs', 'shs_principal']
+const SHS_REVIEWER_MANAGEABLE_ROLES = ['rso_officer', 'shs_faculty']
 
 const DEFAULT_PASSWORD = 'password123'
 
@@ -43,15 +45,21 @@ Deno.serve(async (req) => {
     if (userErr || !user) return json({ error: 'Invalid or expired session.' }, 401)
 
     const { data: caller } = await admin.from('profiles').select('role, is_active').eq('id', user.id).single()
-    if (!caller || !caller.is_active || !ADMIN_ROLES.includes(caller.role)) {
+    const callerIsAdmin = caller?.is_active && ADMIN_ROLES.includes(caller.role)
+    const callerIsShsReviewer = caller?.is_active && SHS_REVIEWER_ROLES.includes(caller.role)
+    if (!callerIsAdmin && !callerIsShsReviewer) {
       return json({ error: 'Only admin-tier accounts can reset passwords.' }, 403)
     }
 
     const { profile_id } = await req.json()
     if (!profile_id) return json({ error: 'profile_id is required.' }, 400)
 
-    const { data: target } = await admin.from('profiles').select('id, email').eq('id', profile_id).single()
+    const { data: target } = await admin.from('profiles').select('id, email, role').eq('id', profile_id).single()
     if (!target) return json({ error: 'Account not found.' }, 404)
+
+    if (callerIsShsReviewer && !SHS_REVIEWER_MANAGEABLE_ROLES.includes(target.role)) {
+      return json({ error: 'SDAO-SHS and the SHS Principal can only manage SHS RSO/Moderator or SHS Faculty accounts.' }, 403)
+    }
 
     const { error: updateErr } = await admin.auth.admin.updateUserById(profile_id, {
       password: DEFAULT_PASSWORD,

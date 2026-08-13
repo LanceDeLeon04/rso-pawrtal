@@ -6,7 +6,7 @@ import {
   Ban, Move, PartyPopper, GraduationCap, FileClock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
-import { useAuth, isAdminTier, isFMO, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
+import { useAuth, isAdminTier, isFMO, isSHSReviewer, isSHSFaculty, isSHSVenueRequestParty, isSHSFacultyModerator, seesAllDepartments } from '../context/AuthContext'
 import {
   MONTH_NAMES, WEEKDAY_LABELS, toISODate, buildMonthGrid, formatTime, MEDIUM_LABELS, addDaysISO,
 } from '../lib/dateUtils'
@@ -32,6 +32,15 @@ export default function CalendarOfActivities() {
   const admin = isAdminTier(profile?.role)
   const fmo = isFMO(profile?.role)
   const shsReviewer = isSHSReviewer(profile?.role)
+  const shsFaculty = isSHSFaculty(profile?.role)
+  // Per spec, the SHS classroom booking block is visible ONLY to the
+  // three roles that work inside the Venue Request flow (migration
+  // 054/055) — NOT the College calendar, and NOT full admin tier even
+  // though admins otherwise see both departments everywhere else on
+  // this page (seesAllDepts). Deliberately separate from that flag.
+  // isSHSVenueRequestParty only checks role, so it misses a Faculty-
+  // Moderator (role stays 'rso_officer' — see isSHSFacultyModerator).
+  const seesShsVenueBookings = isSHSVenueRequestParty(profile?.role) || isSHSFacultyModerator(profile)
   const seesAllDepts = seesAllDepartments(profile?.role)
   const canManageVenues = admin || fmo // block dates + reschedule bookings
   // SDAO-SHS can schedule/remove only its own department's exam
@@ -74,6 +83,13 @@ export default function CalendarOfActivities() {
   const [savingPeriod, setSavingPeriod] = useState(false)
   const [selectedPeriod, setSelectedPeriod] = useState(null)
   const [periodError, setPeriodError] = useState('')
+
+  // ---------- SHS classroom bookings (migration 054/055) ----------
+  // Only ever fetched/shown for Faculty/SDAO-SHS/SHS Principal — see
+  // seesShsVenueBookings above. Approved Venue Requests block their
+  // classroom+date+time on THIS calendar only.
+  const [shsVenueBookings, setShsVenueBookings] = useState([])
+  const [selectedShsBooking, setSelectedShsBooking] = useState(null)
 
   // ---------- Org report deadlines (org-only, never admin/FMO) ----------
   // Pulled from `clearances` — the same rows the org's Clearance page
@@ -223,6 +239,7 @@ export default function CalendarOfActivities() {
     loadEvents()
     loadBlocks()
     loadRestrictedPeriods()
+    loadShsVenueBookings()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor, venueFilter, viewingAcademicYear])
 
@@ -292,6 +309,27 @@ export default function CalendarOfActivities() {
 
     const { data } = await query
     setBlocks(data || [])
+  }
+
+  // SHS-only: approved classroom bookings that block the calendar (see
+  // header note above and migration 055). Never fetched for College
+  // roles or full admin tier, per spec.
+  async function loadShsVenueBookings() {
+    if (!seesShsVenueBookings) {
+      setShsVenueBookings([])
+      return
+    }
+    const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
+    const rangeEnd = toISODate(new Date(cursor.year, cursor.month + 1, 0))
+
+    const { data } = await supabase
+      .from('shs_venue_requests')
+      .select('id, classroom_id, request_date, start_time, end_time, purpose, shs_classrooms ( name )')
+      .eq('status', 'approved')
+      .gte('request_date', rangeStart)
+      .lte('request_date', rangeEnd)
+
+    setShsVenueBookings(data || [])
   }
 
   async function loadEvents() {
@@ -391,6 +429,11 @@ export default function CalendarOfActivities() {
   function blocksForDay(date) {
     const iso = toISODate(date)
     return blocks.filter((b) => b.block_date === iso)
+  }
+
+  function shsVenueBookingsForDay(date) {
+    const iso = toISODate(date)
+    return shsVenueBookings.filter((b) => b.request_date === iso)
   }
 
   function periodsForDay(date) {
@@ -864,6 +907,7 @@ export default function CalendarOfActivities() {
           {grid.map(({ date, inMonth }) => {
             const dayEvents = eventsForDay(date)
             const dayBlocks = blocksForDay(date)
+            const dayShsVenueBookings = shsVenueBookingsForDay(date)
             const dayPeriods = periodsForDay(date)
             const dayTermBreaks = termBreaksForDay(date)
             const dayReportDeadlines = reportDeadlinesForDay(date)
@@ -917,6 +961,16 @@ export default function CalendarOfActivities() {
                       title={`${b.venues?.name || 'Venue'} blocked`}
                     >
                       <Ban size={11} /> {b.venues?.name || 'Venue'} blocked
+                    </button>
+                  ))}
+                  {dayShsVenueBookings.map((b) => (
+                    <button
+                      key={b.id}
+                      className="cal-chip cal-chip--shs-venue-booked"
+                      onClick={() => setSelectedShsBooking(b)}
+                      title={`${b.shs_classrooms?.name || 'Classroom'} booked`}
+                    >
+                      <Building2 size={11} /> {b.shs_classrooms?.name || 'Classroom'} booked
                     </button>
                   ))}
                   {dayEvents.slice(0, 3).map((ev) => (
@@ -1228,6 +1282,23 @@ export default function CalendarOfActivities() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedShsBooking && (
+        <div className="cal-modal-backdrop" onClick={() => setSelectedShsBooking(null)}>
+          <div className="cal-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="cal-modal__close" onClick={() => setSelectedShsBooking(null)}>
+              <X size={18} />
+            </button>
+            <span className="cal-status-badge cal-status-badge--blocked"><Building2 size={12} /> Booked</span>
+            <h3 className="cal-modal__title">{selectedShsBooking.shs_classrooms?.name || 'Classroom'}</h3>
+            <div className="cal-modal__details">
+              <div className="cal-modal__row"><CalendarDays size={14} /> {selectedShsBooking.request_date}</div>
+              <div className="cal-modal__row"><Clock size={14} /> {formatTime(selectedShsBooking.start_time)}–{formatTime(selectedShsBooking.end_time)}</div>
+              {selectedShsBooking.purpose && <p className="cal-modal__desc">{selectedShsBooking.purpose}</p>}
             </div>
           </div>
         </div>

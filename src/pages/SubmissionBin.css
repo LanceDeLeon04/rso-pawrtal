@@ -431,6 +431,7 @@
 .sb-checkbox-label input { width: auto; }
 .sb-checkbox-label:has(input:disabled) { opacity: 0.5; }
 .sb-checkbox-label + .sb-checkbox-label { margin-top: 6px; }
+.sb-checkbox-label--nested { margin-left: 22px; font-weight: 500; color: var(--muted); }
 
 .sb-multiday-row {
   align-items: flex-end;
@@ -1255,4 +1256,17 @@
 
 .sb-approval-row__form button {
   white-space: nowrap;
+}
+
+.sb-approval-row__form--self-sign {
+  gap: 10px;
+}
+
+.sb-approval-row__form--self-sign .sb-textarea {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  resize: vertical;
 }
