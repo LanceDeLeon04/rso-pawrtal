@@ -8,7 +8,7 @@ import {
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isFMO, isSHSReviewer, isSHSFaculty, isSHSVenueRequestParty, isSHSFacultyModerator, seesAllDepartments } from '../context/AuthContext'
 import {
-  MONTH_NAMES, WEEKDAY_LABELS, toISODate, buildMonthGrid, formatTime, MEDIUM_LABELS, addDaysISO,
+  MONTH_NAMES, WEEKDAY_LABELS, toISODate, buildMonthGrid, formatTime, MEDIUM_LABELS, addDaysISO, examPreWeekRange,
 } from '../lib/dateUtils'
 import './CalendarOfActivities.css'
 
@@ -484,9 +484,29 @@ export default function CalendarOfActivities() {
     return shsClassroomBlocks.filter((b) => b.block_date === iso)
   }
 
+  // Returns every restricted-period "chip" touching this day — the
+  // stored range itself (_phase: 'main'; darker shade for exam weeks),
+  // PLUS, for exam_period rows only, a synthetic entry for the
+  // auto-detected week immediately before it (_phase: 'pre'; lighter
+  // shade). The pre-week is never stored — see examPreWeekRange — so
+  // admins only ever schedule the exam week itself. A day already
+  // covered by the stored range is never double-counted as "pre" too
+  // (relevant for older rows scheduled before this auto-detection
+  // existed, where the admin manually included the week before).
   function periodsForDay(date) {
     const iso = toISODate(date)
-    return restrictedPeriods.filter((p) => p.start_date <= iso && p.end_date >= iso)
+    const main = restrictedPeriods
+      .filter((p) => p.start_date <= iso && p.end_date >= iso)
+      .map((p) => ({ ...p, _phase: 'main' }))
+    const pre = restrictedPeriods
+      .filter((p) => p.kind === 'exam_period')
+      .flatMap((p) => {
+        const [preStart, preEnd] = examPreWeekRange(p)
+        if (preStart > iso || iso > preEnd) return []
+        if (p.start_date <= iso && p.end_date >= iso) return [] // already "main" above
+        return [{ ...p, _phase: 'pre', _preStart: preStart, _preEnd: preEnd }]
+      })
+    return [...main, ...pre]
   }
 
   function termBreaksForDay(date) {
@@ -959,7 +979,8 @@ export default function CalendarOfActivities() {
           <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (needs revision)</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
-          <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam period</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period" /> Exam week</span>
+          <span className="cal-legend__item"><i className="cal-dot cal-dot--exam_period_pre" /> Week before exam (auto)</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--term_break" /> Term break</span>
           {!admin && !fmo && myOrgId && (
             <span className="cal-legend__item"><i className="cal-dot cal-dot--report_deadline" /> Report due (your org)</span>
@@ -997,20 +1018,21 @@ export default function CalendarOfActivities() {
             return (
               <div
                 key={date.toISOString()}
-                className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''} ${dayPeriods.length ? `cal-cell--${dayPeriods[0].kind}` : (dayTermBreaks.length ? 'cal-cell--term_break' : '')}`}
+                className={`cal-cell ${inMonth ? '' : 'cal-cell--dim'} ${isToday ? 'cal-cell--today' : ''} ${dayPeriods.length ? `cal-cell--${dayPeriods[0]._phase === 'pre' ? 'exam_period_pre' : dayPeriods[0].kind}` : (dayTermBreaks.length ? 'cal-cell--term_break' : '')}`}
               >
                 <div className="cal-cell__head">
                   <span className="cal-cell__num">{date.getDate()}</span>
                 </div>
                 <div className="cal-cell__events">
-                  {dayPeriods.filter((p) => p.start_date === iso).map((p) => (
+                  {dayPeriods.filter((p) => (p._phase === 'pre' ? p._preStart === iso : p.start_date === iso)).map((p) => (
                     <button
-                      key={p.id}
-                      className={`cal-chip cal-chip--${p.kind}`}
+                      key={`${p.id}-${p._phase}`}
+                      className={`cal-chip cal-chip--${p._phase === 'pre' ? 'exam_period_pre' : p.kind}`}
                       onClick={() => setSelectedPeriod(p)}
-                      title={p.label}
+                      title={p._phase === 'pre' ? `Week before ${p.label}` : p.label}
                     >
-                      {p.kind === 'exam_period' ? <GraduationCap size={11} /> : <PartyPopper size={11} />} {p.label}
+                      {p.kind === 'exam_period' ? <GraduationCap size={11} /> : <PartyPopper size={11} />}
+                      {p._phase === 'pre' ? `Week before: ${p.label}` : p.label}
                     </button>
                   ))}
                   {dayTermBreaks.filter((b) => b.start_date === iso).map((b) => (
@@ -1536,25 +1558,38 @@ export default function CalendarOfActivities() {
             <button className="cal-modal__close" onClick={() => setSelectedPeriod(null)}>
               <X size={18} />
             </button>
-            <span className={`cal-status-badge cal-status-badge--${selectedPeriod.kind}`}>
+            <span className={`cal-status-badge cal-status-badge--${selectedPeriod._phase === 'pre' ? 'exam_period_pre' : selectedPeriod.kind}`}>
               {selectedPeriod.kind === 'exam_period' ? <GraduationCap size={12} /> : <PartyPopper size={12} />}
-              {selectedPeriod.kind === 'exam_period' ? 'Exam Period' : 'Holiday'}
+              {selectedPeriod._phase === 'pre' ? 'Week Before Exam Period' : (selectedPeriod.kind === 'exam_period' ? 'Exam Period' : 'Holiday')}
             </span>
             <h3 className="cal-modal__title">{selectedPeriod.label}</h3>
             <div className="cal-modal__details">
               <div className="cal-modal__row">
-                <CalendarDays size={14} /> {selectedPeriod.start_date}
-                {selectedPeriod.end_date !== selectedPeriod.start_date && ` – ${selectedPeriod.end_date}`}
+                <CalendarDays size={14} />
+                {selectedPeriod._phase === 'pre' ? (
+                  <>{selectedPeriod._preStart}{selectedPeriod._preEnd !== selectedPeriod._preStart && ` – ${selectedPeriod._preEnd}`}</>
+                ) : (
+                  <>{selectedPeriod.start_date}{selectedPeriod.end_date !== selectedPeriod.start_date && ` – ${selectedPeriod.end_date}`}</>
+                )}
               </div>
-              <p className="cal-modal__desc">
-                <AlertCircle size={13} /> Booking activities on these dates is not recommended and is only
-                allowed under extraordinary circumstances.
-              </p>
+              {selectedPeriod._phase === 'pre' ? (
+                <p className="cal-modal__desc">
+                  <AlertCircle size={13} /> Auto-detected as the week leading into "{selectedPeriod.label}". Booking
+                  activities during this week is not recommended (caution only — submission isn't blocked).
+                </p>
+              ) : (
+                <p className="cal-modal__desc">
+                  <AlertCircle size={13} />
+                  {selectedPeriod.kind === 'exam_period' && selectedPeriod.department === 'college'
+                    ? ' RSOs (except the organization\'s Moderator) cannot submit Event Applications for dates inside this exam week.'
+                    : ' Booking activities on these dates is not recommended and is only allowed under extraordinary circumstances.'}
+                </p>
+              )}
               {selectedPeriod.note && <p className="cal-modal__desc">{selectedPeriod.note}</p>}
               {selectedPeriod.department && seesAllDepts && (
                 <p className="cal-modal__desc"><strong>{selectedPeriod.department === 'shs' ? 'SHS' : 'College'} exam period</strong></p>
               )}
-              {(canManageVenues || (shsReviewer && selectedPeriod.department === 'shs')) && (
+              {selectedPeriod._phase !== 'pre' && (canManageVenues || (shsReviewer && selectedPeriod.department === 'shs')) && (
                 <div className="cal-modal__actions">
                   <button className="cal-btn cal-btn--danger-outline" onClick={() => handleUnschedulePeriod(selectedPeriod.id)}>
                     <Trash2 size={14} /> Unschedule This Period
@@ -1583,14 +1618,14 @@ export default function CalendarOfActivities() {
                   required
                 >
                   <option value="holiday">Holiday{shsReviewer ? ' (SHS)' : ''}</option>
-                  <option value="exam_period">Exam Week (include the week before, if applicable)</option>
+                  <option value="exam_period">Exam Week (week before is added automatically)</option>
                 </select>
               </label>
               <label className="cal-move-form__field">
                 Label
                 <input type="text" value={periodForm.label}
                   onChange={(e) => setPeriodForm({ ...periodForm, label: e.target.value })}
-                  placeholder={periodForm.kind === 'exam_period' ? 'e.g. Midterm Exams (incl. pre-exam week)' : 'e.g. National Heroes Day'}
+                  placeholder={periodForm.kind === 'exam_period' ? 'e.g. Midterm Exams' : 'e.g. National Heroes Day'}
                   required />
               </label>
               <div className="cal-move-form__row">
@@ -1611,10 +1646,18 @@ export default function CalendarOfActivities() {
                   onChange={(e) => setPeriodForm({ ...periodForm, note: e.target.value })}
                   placeholder="Shown to applicants on the notice" />
               </label>
-              <p className="cal-empty-note">
-                This doesn't block submissions — it flags the dates as discouraged for new activities and
-                shows a notice on the Event Application form and here on the calendar.
-              </p>
+              {periodForm.kind === 'exam_period' ? (
+                <p className="cal-empty-note">
+                  Enter the exam week itself only — the calendar auto-shades the 7 days right before it as a
+                  lighter "week before" advisory, no need to enter it manually.
+                  {!shsReviewer && ' For College, the exam week itself blocks new Event Application submissions for RSOs (except the org\'s Moderator); the week before stays a caution-only notice.'}
+                </p>
+              ) : (
+                <p className="cal-empty-note">
+                  This doesn't block submissions — it flags the dates as discouraged for new activities and
+                  shows a notice on the Event Application form and here on the calendar.
+                </p>
+              )}
               <div className="cal-modal__actions">
                 <button className="cal-btn cal-btn--gold" type="submit" disabled={savingPeriod}>
                   {savingPeriod ? <Loader2 size={14} className="spin" /> : 'Schedule Period'}

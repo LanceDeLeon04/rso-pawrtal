@@ -68,9 +68,15 @@ export default function ExternalApproval() {
     }
     setPayload(data)
     setMessages(data.messages || [])
-    // Pre-fill with whatever was previously marked (re-issued link, or
-    // navigating back after a partial fill) so nothing is lost.
-    setSdgSelections(data.link?.sdg_selections || [])
+    // Pre-fill with whatever's already marked: the rep's own prior edit
+    // if they've saved one before (re-issued link, navigating back after
+    // a partial fill), otherwise the submitter's original ticks — the
+    // rep reviews those and can edit them before signing off.
+    setSdgSelections(
+      (data.link?.sdg_selections && data.link.sdg_selections.length > 0)
+        ? data.link.sdg_selections
+        : (data.submission?.sdgs || [])
+    )
   }
 
   async function sendMessage() {
@@ -268,7 +274,15 @@ export default function ExternalApproval() {
               <>
                 {link.role === 'sdg_rep' && (
                   <div className="xap-sdg">
-                    <label>Sustainable Development Goals <span className="xap-muted">(mark all that this activity counts toward)</span></label>
+                    <label>Sustainable Development Goals <span className="xap-muted">(review the submitter's ticks below and edit as needed)</span></label>
+                    <a
+                      href="https://sdgs.un.org/goals"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="xap-sdg-guide-link"
+                    >
+                      <ExternalLink size={13} /> Guide: How to identify SDGs (UN)
+                    </a>
                     <div className="xap-sdg-grid">
                       {SDG_OPTIONS.map((optLabel, i) => {
                         const val = String(i + 1)

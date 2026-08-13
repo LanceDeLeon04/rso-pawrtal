@@ -4,11 +4,11 @@ import {
   Inbox, Plus, X, Loader2, AlertCircle, FileText, ClipboardList,
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
-  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag, Pencil,
+  Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag, Pencil, ExternalLink,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
-import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates } from '../lib/dateUtils'
+import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates, examPreWeekRange } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
 import { generateReplySlipPdf } from '../lib/replySlipPdf'
@@ -20,6 +20,7 @@ import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import { SDG_OPTIONS } from '../lib/sdgOptions'
 import { COL_EVENT_OPTIONS, COL_EVENT_TAGGER_POSITIONS } from '../lib/colEventOptions'
 import { MERCHANDISE_TYPES } from '../lib/merchandiseOptions'
+import { exportTableToExcel, exportTableToPDF } from '../lib/analyticsExport'
 import VenueMultiSelect from '../components/VenueMultiSelect'
 import SignaturePad from '../components/SignaturePad'
 import './SubmissionBin.css'
@@ -535,6 +536,7 @@ const EMPTY_APP_FORM = {
     wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
   }],
   is_continuing: false, continuing_type: 'year_round', term_label: '',
+  sdgs: [],
   restricted_period_ack: false, restricted_period_justification: '',
   wants_additional_time: false, additional_ingress_time: '', additional_egress_time: '',
   night_before_ingress: false,
@@ -565,6 +567,11 @@ export default function SubmissionBin() {
   // scopes every submissions/approval_links/etc. query to
   // department = 'shs' rows only for these two roles.
   const admin = isAdminTier(profile?.role) || isSHSReviewer(profile?.role)
+  // Activities List (all activities + implementing org + status + report
+  // submission, across every org) is scoped to exactly Admin/QMO/SDAO per
+  // product ask — the broader `admin` flag above also covers SDAO-SHS/SHS
+  // Principal, which is intentionally excluded here.
+  const canViewActivitiesList = isAdminTier(profile?.role)
   const canReview = REVIEWER_ROLES.includes(profile?.role)
   const myOrgId = profile?.org_memberships?.[0]?.org_id
   const myMembershipRoot = profile?.org_memberships?.[0]
@@ -591,6 +598,12 @@ export default function SubmissionBin() {
   const [venueLabs, setVenueLabs] = useState([])
   const [templates, setTemplates] = useState([])
   const [openClearances, setOpenClearances] = useState([])
+
+  // Activities List modal (Admin/QMO/SDAO) — see canViewActivitiesList.
+  const [showActivitiesList, setShowActivitiesList] = useState(false)
+  const [activitiesListLoading, setActivitiesListLoading] = useState(false)
+  const [activitiesListError, setActivitiesListError] = useState('')
+  const [activitiesListRows, setActivitiesListRows] = useState([])
 
   const [showAppModal, setShowAppModal] = useState(false)
   // Set instead of null while editing a 'returned' submission (opened via
@@ -836,7 +849,7 @@ export default function SubmissionBin() {
       const [{ data: v }, { data: t }, { data: rp }, { data: rooms }, { data: labs }] = await Promise.all([
         supabase.from('venues').select('id, name').eq('is_active', true).order('name'),
         supabase.from('templates').select('id, name, category, file_url'),
-        supabase.from('restricted_periods').select('id, kind, label, start_date, end_date, note'),
+        supabase.from('restricted_periods').select('id, kind, label, start_date, end_date, note, department'),
         supabase.from('venue_rooms').select('id, building, floor, room_number').order('building').order('floor').order('sort_order'),
         supabase.from('venue_labs').select('id, name, care_of, location').order('sort_order'),
       ])
@@ -882,6 +895,110 @@ export default function SubmissionBin() {
     const { data, error } = await q
     setSubmissions(error ? [] : data || [])
     setLoading(false)
+  }
+
+  // Builds the Admin/QMO/SDAO "Activities List" — every event application
+  // and merchandise proposal (i.e. every "activity"), across ALL
+  // organizations, independent of the on-page filters above, alongside
+  // whether its closing Report has been submitted yet.
+  async function loadActivitiesList() {
+    setActivitiesListLoading(true)
+    setActivitiesListError('')
+    try {
+      const [{ data: activities, error: actErr }, { data: reports, error: repErr }] = await Promise.all([
+        supabase
+          .from('submissions')
+          .select(`
+            id, type, org_id, event_id, title, event_date, is_continuing, continuing_type,
+            term_label, report_submission_date, stage, submitted_at,
+            organizations ( name, acronym )
+          `)
+          .in('type', ['event_application', 'merchandise'])
+          .order('submitted_at', { ascending: false }),
+        supabase
+          .from('submissions')
+          .select('id, event_id, org_id, stage, submitted_at')
+          .eq('type', 'report'),
+      ])
+      if (actErr) throw actErr
+      if (repErr) throw repErr
+
+      // A report can only ever be tied back to its activity via event_id
+      // (reports link to the `events` row materialized on approval), so
+      // activities without an event_id yet (not approved) have no way to
+      // have a matching report.
+      const reportByEventId = new Map()
+      ;(reports || []).forEach((r) => {
+        if (!r.event_id) return
+        const existing = reportByEventId.get(r.event_id)
+        // Keep the most recently submitted report if more than one exists.
+        if (!existing || new Date(r.submitted_at) > new Date(existing.submitted_at)) {
+          reportByEventId.set(r.event_id, r)
+        }
+      })
+
+      const rows = (activities || []).map((a) => {
+        const report = a.event_id ? reportByEventId.get(a.event_id) : null
+        const stageMeta = STAGE_META[a.stage]
+        const reportStageMeta = report ? STAGE_META[report.stage] : null
+        return {
+          id: a.id,
+          title: a.title,
+          org: a.organizations?.acronym || a.organizations?.name || '—',
+          type: a.type === 'merchandise' ? 'Merchandise Proposal' : 'Event Application',
+          status: stageMeta?.label || a.stage,
+          eventDate: a.is_continuing
+            ? (a.continuing_type === 'term' ? `Term ${a.term_label || ''}`.trim() : 'Year-Round')
+            : (a.event_date ? new Date(a.event_date).toLocaleDateString('en-PH') : '—'),
+          reportSubmission: report
+            ? `Submitted — ${reportStageMeta?.label || report.stage}`
+            : (a.stage === 'approved' ? 'Not yet submitted' : 'N/A (not yet approved)'),
+          reportSubmittedAt: report?.submitted_at ? new Date(report.submitted_at).toLocaleDateString('en-PH') : '—',
+        }
+      })
+      setActivitiesListRows(rows)
+    } catch (err) {
+      console.error('Failed to load activities list', err)
+      setActivitiesListError('Something went wrong loading the activities list. Please try again.')
+      setActivitiesListRows([])
+    } finally {
+      setActivitiesListLoading(false)
+    }
+  }
+
+  function openActivitiesList() {
+    setShowActivitiesList(true)
+    loadActivitiesList()
+  }
+
+  const ACTIVITIES_LIST_COLUMNS = [
+    { key: 'title', header: 'Activity' },
+    { key: 'org', header: 'Implementing Org' },
+    { key: 'type', header: 'Type' },
+    { key: 'status', header: 'Status' },
+    { key: 'eventDate', header: 'Event Date' },
+    { key: 'reportSubmission', header: 'Report Submission' },
+    { key: 'reportSubmittedAt', header: 'Report Submitted On' },
+  ]
+
+  function exportActivitiesListExcel() {
+    exportTableToExcel({
+      filename: `Activities-List-${toISODate(new Date())}`,
+      title: 'Activities List',
+      generatedFor: `All organizations — generated by ${profile?.full_name || 'Admin'}`,
+      columns: ACTIVITIES_LIST_COLUMNS,
+      rows: activitiesListRows,
+    })
+  }
+
+  function exportActivitiesListPDF() {
+    exportTableToPDF({
+      filename: `Activities-List-${toISODate(new Date())}`,
+      title: 'Activities List',
+      generatedFor: `All organizations — generated by ${profile?.full_name || 'Admin'}`,
+      columns: ACTIVITIES_LIST_COLUMNS,
+      rows: activitiesListRows,
+    })
   }
 
   async function loadOpenClearances() {
@@ -1131,14 +1248,41 @@ export default function SubmissionBin() {
     return null
   }
 
-  // Holiday / exam-week (+ the week before) advisory: unlike the venue
-  // conflict check above, this never blocks submission — it's flagged
-  // by admin/SDAO/QMO/FMO on the Calendar as a date range where new
+  // Holiday / exam-week advisory: unlike the venue conflict check
+  // above, this never blocks submission by itself — it's flagged by
+  // admin/SDAO/QMO/FMO on the Calendar as a date range where new
   // activities are discouraged. The applicant just has to acknowledge
   // it, and may add a justification if the case is extraordinary.
+  //
+  // Matches either a stored restricted_periods row, or — for a College
+  // exam_period row only — the week immediately before its stored
+  // start_date. That "week before" is auto-detected here (see
+  // examPreWeekRange) rather than stored, so admins only ever schedule
+  // the exam week itself on the Calendar. The actual College exam week
+  // is additionally a HARD block for non-Moderator RSOs — see
+  // collegeExamWeekBlockFor below — this function still matches those
+  // dates too so the notice/ack still shows for whoever is exempt from
+  // that hard block (admins, the org's Moderator).
   function restrictedPeriodFor(date) {
     if (!date) return null
-    return restrictedPeriods.find((p) => p.start_date <= date && p.end_date >= date) || null
+    const direct = restrictedPeriods.find((p) => p.start_date <= date && p.end_date >= date)
+    if (direct) return direct
+    for (const p of restrictedPeriods.filter((p) => p.kind === 'exam_period' && p.department === 'college')) {
+      const [preStart, preEnd] = examPreWeekRange(p)
+      if (preStart <= date && date <= preEnd) return { ...p, _preWeek: true }
+    }
+    return null
+  }
+
+  // College-only hard block (this feature): the exam week ITSELF (the
+  // exact range scheduled on the Calendar, never the auto-detected week
+  // before) can't be submitted into by an RSO — no acknowledge-and-
+  // justify escape hatch like the advisory above. The org's own
+  // Moderator is exempt. SHS runs a separate exam calendar and isn't
+  // affected by this at all.
+  function collegeExamWeekBlockFor(date) {
+    if (!date) return null
+    return restrictedPeriods.find((p) => p.kind === 'exam_period' && p.department === 'college' && p.start_date <= date && p.end_date >= date) || null
   }
 
   function templateFor(docName) {
@@ -1294,6 +1438,25 @@ export default function SubmissionBin() {
   const clearanceBlocked = blockingClearances.length > 0
 
   const activeRestrictedPeriod = !appForm.is_continuing ? restrictedPeriodFor(appForm.event_date) : null
+
+  // Every date the current draft actually books — the single event_date
+  // for a one-day activity, or every day row for a multi-day one — so
+  // the College exam-week hard block below catches a multi-day activity
+  // that only overlaps the exam week on one of its days, not just its
+  // first day.
+  const draftEventDates = appForm.is_continuing
+    ? []
+    : appForm.is_multi_day
+      ? (appForm.event_dates || []).map((d) => d.event_date).filter(Boolean)
+      : (appForm.event_date ? [appForm.event_date] : [])
+  const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+  const isMyOrgModerator = myMembership?.position === 'Moderator'
+  // Blocking exam-week period, if any of the draft's dates lands inside
+  // one — null for SHS orgs and for the org's own Moderator, both of
+  // which bypass this hard block entirely (see collegeExamWeekBlockFor).
+  const blockingExamWeek = (!myOrgIsSHS && !isMyOrgModerator)
+    ? draftEventDates.map((d) => collegeExamWeekBlockFor(d)).find(Boolean) || null
+    : null
   // Every activity auto-gets a 2-hour ingress buffer before its start and
   // a 2-hour egress buffer after its end, but the venue can only be
   // entered from 6:00 AM and must be cleared by 9:00 PM — so an event
@@ -1474,6 +1637,7 @@ export default function SubmissionBin() {
       night_before_ingress: !!sub.night_before_ingress,
       col_event_tags: otherTag ? [...knownTags, 'Others'] : knownTags,
       col_event_other: otherTag || '',
+      sdgs: sub.sdgs || [],
     })
     setAppFiles({})
     setVenueConflict(null)
@@ -1567,6 +1731,10 @@ export default function SubmissionBin() {
     }
     if (appForm.is_continuing && appForm.continuing_type === 'term' && !appForm.term_label.trim()) {
       setFormError('Please specify the term (e.g. "1st Term, SY 2026-2027").')
+      return
+    }
+    if (blockingExamWeek) {
+      setFormError(`Submissions are closed during ${blockingExamWeek.label} (${blockingExamWeek.start_date} – ${blockingExamWeek.end_date}) — only your organization's Moderator can submit during the exam week itself.`)
       return
     }
     if (activeRestrictedPeriod) {
@@ -1713,6 +1881,11 @@ export default function SubmissionBin() {
       term_label: appForm.is_continuing && appForm.continuing_type === 'term' ? appForm.term_label.trim() : null,
       restricted_period_ack: !!activeRestrictedPeriod && appForm.restricted_period_ack,
       restricted_period_justification: activeRestrictedPeriod ? appForm.restricted_period_justification.trim() : null,
+      // Submitter can still adjust their SDG ticks on an edit-resubmit —
+      // a 'returned' submission always resets back to the first review
+      // stage, well before the SDG Representative's step, so there's no
+      // rep sign-off to clobber here.
+      sdgs: appForm.sdgs || [],
       requires_parent_letter: appForm.requires_parent_letter,
       requires_reply_slip: appForm.requires_parent_letter && appForm.requires_reply_slip,
       additional_ingress_time: appForm.wants_additional_time && appForm.additional_ingress_time ? appForm.additional_ingress_time : null,
@@ -1741,11 +1914,8 @@ export default function SubmissionBin() {
           type: 'event_application',
           org_id: myOrgId,
           submitted_by: profile.id,
-          // SDGs are no longer self-declared by the student — they're left
-          // blank here and marked externally by the SDG Representative
-          // (see the sdg_rep approval-link step), which also fills in
-          // sdg_representative once they've signed off.
-          sdgs: [],
+          // sdg_representative fills in once the SDG Representative signs
+          // off; the submitter's own SDG ticks now come from appPayload.
           sdg_representative: null,
           ...appPayload,
         })
@@ -1850,12 +2020,13 @@ export default function SubmissionBin() {
         timeRange,
         projectedBudget: appForm.projected_budget,
         budgetSource: appForm.budget_source,
-        // Blank at first submission — no marks yet. The ACP is
-        // regenerated with marks once the SDG Representative signs off.
+        // Submitter's own ticks show immediately now; the ACP is
+        // regenerated once the SDG Representative reviews/edits and
+        // signs off (see the sdg_marked_acp_generated swap below).
         // On an edit-resubmit, reuse whatever marks/rep were already on
         // the submission rather than blanking out an already-approved
         // SDG sign-off.
-        sdgs: editingSubmissionId ? (sub.sdgs || []) : [],
+        sdgs: editingSubmissionId ? (sub.sdgs || []) : (appForm.sdgs || []),
         sdgRepresentative: editingSubmissionId ? (sub.sdg_representative || null) : null,
         learningGoals: [appForm.learning_goal_1, appForm.learning_goal_2, appForm.learning_goal_3],
         description: appForm.description,
@@ -2935,6 +3106,14 @@ export default function SubmissionBin() {
           )}
         </div>
 
+        {canViewActivitiesList && (
+          <div className="sb-toolbar__actions">
+            <button className="sb-btn sb-btn--outline" onClick={openActivitiesList}>
+              <ListChecks size={15} /> Activities List
+            </button>
+          </div>
+        )}
+
         {!admin && (
           <div className="sb-toolbar__actions">
             <button className="sb-btn sb-btn--outline" onClick={() => openReportModal()}>
@@ -3831,16 +4010,27 @@ export default function SubmissionBin() {
               <div className="sb-form-notice"><AlertCircle size={14} /> {venueAdvisory}</div>
             )}
 
-            {activeRestrictedPeriod && (
+            {blockingExamWeek && (
+              <div className="sb-form-error">
+                <Ban size={14} /> Submissions are closed during {blockingExamWeek.label} ({blockingExamWeek.start_date}
+                {blockingExamWeek.end_date !== blockingExamWeek.start_date && ` – ${blockingExamWeek.end_date}`}) — only
+                your organization's Moderator can submit during the exam week itself. Please choose a different date.
+              </div>
+            )}
+
+            {!blockingExamWeek && activeRestrictedPeriod && (
               <div className="sb-restricted-notice">
                 <PartyPopper size={15} />
                 <div className="sb-restricted-notice__body">
                   <strong>
-                    {activeRestrictedPeriod.kind === 'exam_period' ? 'Exam period' : 'Holiday'}: {activeRestrictedPeriod.label}
+                    {activeRestrictedPeriod.kind === 'exam_period'
+                      ? (activeRestrictedPeriod._preWeek ? 'Week before exam period' : 'Exam period')
+                      : 'Holiday'}: {activeRestrictedPeriod.label}
                   </strong>
                   <span>
-                    Booking activities on this date is not recommended and is only allowed under
-                    extraordinary circumstances.
+                    {activeRestrictedPeriod._preWeek
+                      ? 'This date is in the week leading up to the exam period. Booking activities here is not recommended.'
+                      : 'Booking activities on this date is not recommended and is only allowed under extraordinary circumstances.'}
                     {activeRestrictedPeriod.note && ` ${activeRestrictedPeriod.note}`}
                   </span>
                   <label className="sb-checkbox-label">
@@ -3991,13 +4181,45 @@ export default function SubmissionBin() {
               </div>
             )}
 
+            <div className="sb-field">
+              <span>Sustainable Development Goals <span className="sb-field__hint">(mark all that this activity counts toward)</span></span>
+              <a
+                href="https://sdgs.un.org/goals"
+                target="_blank"
+                rel="noreferrer"
+                className="sb-sdg-guide-link"
+              >
+                <ExternalLink size={13} /> Guide: How to identify your activity's SDGs (UN)
+              </a>
+              <div className="sb-col-event-grid">
+                {SDG_OPTIONS.map((opt, i) => {
+                  const val = String(i + 1)
+                  return (
+                    <label key={val} className="sb-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={appForm.sdgs.includes(val)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...appForm.sdgs, val]
+                            : appForm.sdgs.filter((v) => v !== val)
+                          setAppForm({ ...appForm, sdgs: next })
+                        }}
+                      />
+                      {opt}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
             <div className="sb-form-notice">
               <ShieldAlert size={14} />
               <span>
-                Sustainable Development Goals aren't marked here — {myOrgIsCOL
-                  ? 'the SDG Representative reviews this application directly and marks'
-                  : "after your Adviser (and Dean, if applicable) approve, the SDG Representative reviews this application and marks"}
-                {' '}which SDGs it counts toward. You'll see it reflected
+                {myOrgIsCOL
+                  ? 'The SDG Representative will review this application directly and may adjust'
+                  : "After your Adviser (and Dean, if applicable) approve, the SDG Representative will review this application and may adjust"}
+                {' '}your SDG selections above before signing off. You'll see the final marks reflected
                 on the ACP Form once they've signed off.
               </span>
             </div>
@@ -4094,9 +4316,14 @@ export default function SubmissionBin() {
               className="sb-btn sb-btn--gold sb-btn--full"
               disabled={
                 saving || !!venueConflict || checkingVenue || clearanceBlocked || anyVenueUnavailable ||
-                (!!activeRestrictedPeriod && (!appForm.restricted_period_ack || !appForm.restricted_period_justification.trim()))
+                !!blockingExamWeek ||
+                (!blockingExamWeek && !!activeRestrictedPeriod && (!appForm.restricted_period_ack || !appForm.restricted_period_justification.trim()))
               }
-              title={clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.' : undefined}
+              title={
+                clearanceBlocked ? 'Settle your organization\'s overdue clearance before submitting.'
+                  : blockingExamWeek ? 'Submissions are closed during the exam week itself for your organization.'
+                  : undefined
+              }
             >
               {saving ? <Loader2 size={15} className="spin" /> : (editingSubmissionId ? 'Save & Resubmit' : 'Submit Application')}
             </button>
@@ -5159,6 +5386,68 @@ export default function SubmissionBin() {
           </div>
         )
       })()}
+
+      {showActivitiesList && (
+        <div className="sb-modal-backdrop" onClick={() => setShowActivitiesList(false)}>
+          <div className="sb-modal sb-modal--form" style={{ maxWidth: 960 }} onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="sb-modal__close" onClick={() => setShowActivitiesList(false)}><X size={18} /></button>
+            <h3 className="sb-modal__title">Activities List</h3>
+            <p style={{ marginTop: -8, marginBottom: 14, color: 'var(--ink-500, #64748b)', fontSize: 13 }}>
+              All activities and their implementing organization, across every org, with current Status and Report Submission.
+            </p>
+
+            {activitiesListError && (
+              <div className="sb-form-error"><AlertCircle size={14} /> {activitiesListError}</div>
+            )}
+
+            {activitiesListLoading ? (
+              <div className="sb-loading"><Loader2 size={22} className="spin" /></div>
+            ) : (
+              <>
+                <div className="sb-toolbar__actions" style={{ marginBottom: 12 }}>
+                  <button
+                    type="button"
+                    className="sb-btn sb-btn--outline"
+                    onClick={exportActivitiesListExcel}
+                    disabled={!activitiesListRows.length}
+                  >
+                    <Download size={14} /> Export Excel
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-btn sb-btn--outline"
+                    onClick={exportActivitiesListPDF}
+                    disabled={!activitiesListRows.length}
+                  >
+                    <Download size={14} /> Export PDF
+                  </button>
+                </div>
+
+                <div style={{ maxHeight: '55vh', overflow: 'auto' }}>
+                  <table className="sb-table">
+                    <thead>
+                      <tr>
+                        {ACTIVITIES_LIST_COLUMNS.map((c) => <th key={c.key}>{c.header}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activitiesListRows.length === 0 ? (
+                        <tr><td colSpan={ACTIVITIES_LIST_COLUMNS.length} style={{ textAlign: 'center', padding: 20 }}>No activities found.</td></tr>
+                      ) : (
+                        activitiesListRows.map((row) => (
+                          <tr key={row.id}>
+                            {ACTIVITIES_LIST_COLUMNS.map((c) => <td key={c.key}>{row[c.key]}</td>)}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

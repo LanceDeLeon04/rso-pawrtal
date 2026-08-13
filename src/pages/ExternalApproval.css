@@ -306,6 +306,17 @@
   padding: 10px 12px;
 }
 
+.xap-sdg-guide-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  color: var(--nu-blue-700, #16408c);
+  text-decoration: none;
+}
+.xap-sdg-guide-link:hover { text-decoration: underline; }
+
 .xap-sdg-item {
   display: flex;
   align-items: center;

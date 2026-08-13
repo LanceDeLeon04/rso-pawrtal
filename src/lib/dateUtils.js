@@ -23,6 +23,17 @@ export function addDaysISO(isoDate, n) {
   return toISODate(d)
 }
 
+// Given a restricted_periods row (kind: 'exam_period'), returns the ISO
+// [start, end] of the week immediately before its stored start_date —
+// 7 calendar days, auto-detected, never itself stored in the database.
+// Admins/QMO/FMO/SDAO-SHS only ever schedule the exam week itself on
+// the Calendar; both the Calendar (lighter shade) and Submission Bin
+// (soft advisory, never a hard block) derive this range from that one
+// stored start_date so the two stay in sync automatically.
+export function examPreWeekRange(period) {
+  return [addDaysISO(period.start_date, -7), addDaysISO(period.start_date, -1)]
+}
+
 export function startOfMonth(year, month) {
   return new Date(year, month, 1)
 }

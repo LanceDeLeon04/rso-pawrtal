@@ -214,7 +214,9 @@
 .cal-dot--cancelled { background: var(--line); }
 .cal-dot--returned { background: #b3b3b3; border: 1.5px dashed #8c8c8c; }
 .cal-dot--holiday { background: #f4c7ce; border: 1px solid #7a1f2b; }
-.cal-dot--exam_period { background: #c9d2f0; border: 1px solid var(--nu-blue-700); }
+/* Exam week itself: darker blue shade. Auto-detected week before: lighter blue shade. */
+.cal-dot--exam_period { background: var(--nu-blue-700); border: 1px solid var(--nu-blue-900); }
+.cal-dot--exam_period_pre { background: #c9d2f0; border: 1px solid var(--nu-blue-700); }
 .cal-dot--term_break { background: #ded4f7; border: 1px solid #5b3fa0; }
 .cal-dot--report_deadline { background: #fdf3d9; border: 1px solid var(--nu-gold-600); }
 
@@ -310,7 +312,13 @@
   background: #fdeef0;
 }
 
+/* Exam week itself: darker blue shade. */
 .cal-cell--exam_period {
+  background: #ccd6f2;
+}
+
+/* Auto-detected week before the exam week: lighter blue shade. */
+.cal-cell--exam_period_pre {
   background: #eef1fb;
 }
 
@@ -320,6 +328,7 @@
 
 .cal-cell--today.cal-cell--holiday,
 .cal-cell--today.cal-cell--exam_period,
+.cal-cell--today.cal-cell--exam_period_pre,
 .cal-cell--today.cal-cell--term_break {
   background: #fff9ea;
 }
@@ -401,7 +410,17 @@
   gap: 4px;
 }
 
+/* Exam week itself: darker blue shade. */
 .cal-chip--exam_period {
+  background: var(--nu-blue-700);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Auto-detected week before the exam week: lighter blue shade. */
+.cal-chip--exam_period_pre {
   background: #c9d2f0;
   color: var(--nu-blue-700);
   display: flex;
@@ -419,7 +438,8 @@
 
 .cal-status-badge--blocked { background: #3a3a3a; color: #fff; }
 .cal-status-badge--holiday { background: #f4c7ce; color: #7a1f2b; display: flex; align-items: center; gap: 4px; }
-.cal-status-badge--exam_period { background: #c9d2f0; color: var(--nu-blue-700); display: flex; align-items: center; gap: 4px; }
+.cal-status-badge--exam_period { background: var(--nu-blue-700); color: #fff; display: flex; align-items: center; gap: 4px; }
+.cal-status-badge--exam_period_pre { background: #c9d2f0; color: var(--nu-blue-700); display: flex; align-items: center; gap: 4px; }
 .cal-status-badge--term_break { background: #ded4f7; color: #5b3fa0; display: flex; align-items: center; gap: 4px; }
 
 /* Org report deadlines — mirrors the status colors used on Clearance */
