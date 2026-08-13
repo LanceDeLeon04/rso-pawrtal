@@ -127,21 +127,37 @@ export default function Accounts() {
     setLoading(false)
   }
 
-  // Admin-tier roles plus other "personal account" roles created through the
-  // same form (currently just FMO) — all of them need to show up here so
-  // their password can be reset / account deleted. Filtering to ADMIN_ROLES
-  // alone silently hid FMO from this list even though it's a real profile.
-  const adminProfiles = profiles.filter((p) => [...ADMIN_ROLES, ...OTHER_CREATABLE_ROLES].includes(p.role))
-
   // SHS-scoped views used by SDAO-SHS/SHS Principal below.
   const shsOrgs = orgs.filter((o) => o.department === 'shs')
   const shsOrgIds = new Set(shsOrgs.map((o) => o.id))
   const shsMemberships = memberships.filter((m) => shsOrgIds.has(m.org_id))
   const shsProfileIds = new Set(shsMemberships.map((m) => m.profile_id))
   const shsProfiles = profiles.filter((p) => p.role === 'rso_officer' && shsProfileIds.has(p.id))
+  // Faculty-Moderator accounts (migration 057): role stays 'rso_officer'
+  // under the hood (see is_shs_faculty_moderator()) — a plain role-based
+  // filter never catches these, so identify them the same way the
+  // backend does: an rso_officer profile with a Moderator membership on
+  // an SHS-department org.
+  const facultyModeratorIds = new Set(
+    shsMemberships.filter((m) => m.position === 'Moderator').map((m) => m.profile_id)
+  )
+  const isFacultyOrModerator = (p) => p.role === 'shs_faculty' || facultyModeratorIds.has(p.id)
   // SHS Faculty accounts (migration 054/055) — personal logins, not
-  // tied to an org membership, so filtered by role alone.
-  const shsFacultyProfiles = profiles.filter((p) => p.role === 'shs_faculty')
+  // tied to an org membership, so filtered by role alone — plus
+  // Faculty-Moderators, who must appear here too even though their role
+  // is 'rso_officer'.
+  const shsFacultyProfiles = profiles.filter(isFacultyOrModerator)
+
+  // Admin-tier roles plus other "personal account" roles created through the
+  // same form (currently just FMO) — all of them need to show up here so
+  // their password can be reset / account deleted. Filtering to ADMIN_ROLES
+  // alone silently hid FMO from this list even though it's a real profile.
+  // SHS Faculty (and Faculty-Moderator) accounts must also show up here —
+  // full admin-tier and SDAO need to be able to reset/deactivate them from
+  // the general Administrator Accounts list, not just the SHS-scoped one.
+  const adminProfiles = profiles.filter(
+    (p) => [...ADMIN_ROLES, ...OTHER_CREATABLE_ROLES].includes(p.role) || isFacultyOrModerator(p)
+  )
 
   return (
     <div className="acc-page">
