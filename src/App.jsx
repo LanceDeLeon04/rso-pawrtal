@@ -17,6 +17,7 @@ import SystemInfo from './pages/SystemInfo'
 import ExternalApproval from './pages/ExternalApproval'
 import EventVerification from './pages/EventVerification'
 import VenueRequest from './pages/VenueRequest'
+import RescheduleRequests from './pages/RescheduleRequests'
 
 export default function App() {
   return (
@@ -110,6 +111,14 @@ export default function App() {
                   <VenueRequest />
                 </ProtectedRoute>
               }
+            />
+            {/* Reschedule chain: org (rso_officer) -> SDAO Assistant ->
+                SDAO Supervisor -> Academic Director, separate routing
+                from the original ACP approval chain (migration 062).
+                Same exclusions as Submission Bin/Clearance/Assignments. */}
+            <Route
+              path="/reschedule-requests"
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal', 'shs_faculty']}><RescheduleRequests /></ProtectedRoute>}
             />
             <Route
               path="/settings"

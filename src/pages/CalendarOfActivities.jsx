@@ -1172,6 +1172,20 @@ export default function CalendarOfActivities() {
                   </div>
                 )}
 
+                {/* Org-initiated reschedule (migration 062) — separate from
+                    FMO/admin's direct Move Schedule above. Goes through its
+                    own Assistant -> Supervisor -> Director approval chain,
+                    so it's a link to the Reschedule Requests page rather
+                    than an inline instant edit. Only the owning org, and
+                    only once the booking is fully approved ('reserved'). */}
+                {!canManageVenues && profile?.role === 'rso_officer' && isOwnOrgEvent && selectedEvent.booking_status === 'reserved' && (
+                  <div className="cal-modal__actions">
+                    <Link to={`/reschedule-requests?event=${selectedEvent.id}`} className="cal-btn cal-btn--outline">
+                      <Move size={14} /> Request Reschedule
+                    </Link>
+                  </div>
+                )}
+
                 {moving && (
                   <form className="cal-move-form" onSubmit={handleSaveMove}>
                     <label className="cal-move-form__field">

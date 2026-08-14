@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, CalendarDays, Inbox, FileText, ShieldCheck,
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
-  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info,
+  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info, CalendarClock,
 } from 'lucide-react'
 import {
   useAuth, isAdminTier, isFMO, isExecutiveDirector,
@@ -35,6 +35,10 @@ const NAV_ITEMS = [
   // (migration 054/055). Faculty submits from here; SDAO-SHS/Principal
   // work the approval queue from the same page.
   { to: '/venue-requests', label: 'Venue Request', icon: Building2, shsVenuePartyOnly: true },
+  // Org (rso_officer) submits; SDAO Assistant/Supervisor/Academic
+  // Director work the queue — same shape as Submission Bin's audience
+  // (migration 062). Not for FMO/ED/SHS Principal/SHS Faculty.
+  { to: '/reschedule-requests', label: 'Reschedule Requests', icon: CalendarClock, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/about', label: 'About the System', icon: Info },
 ]

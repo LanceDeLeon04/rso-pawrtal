@@ -55,3 +55,28 @@ instead of one:
 Both fields are required. The form tells submitters both addresses will get
 every status update, and that they can also check status anytime inside
 Submission Bin.
+
+## Approver notifications (who acts next)
+
+Migration `061` adds the other direction: whoever's turn it is to act gets
+emailed too, not just the submitter.
+
+- **Internal reviewers** — when a submission lands on `assistant_review`,
+  `supervisor_endorsement`, `director_approval`, or the SHS equivalents,
+  every active account with the matching role (SDAO Assistant, SDAO
+  Supervisor, Academic Director, SDAO-SHS, SHS Principal, Executive
+  Director) gets an email pointing to Submission Bin.
+- **External approvers** — when an Adviser/Dean/SDG Rep/Marketing
+  Rep/Org President/Org Moderator link is generated or reissued,
+  that person is emailed their `/approve/:token` link directly (no more
+  relying on someone forwarding it manually).
+
+Same one-time setup as above (`app_config.functions_base_url` /
+`email_webhook_secret`) covers this too — just also run:
+```
+supabase functions deploy notify-approver-email
+```
+Same `GMAIL_USER` / `GMAIL_APP_PASSWORD` / `EMAIL_WEBHOOK_SECRET` / `SITE_URL`
+secrets are reused; no separate secrets needed. Delivery failures here are
+swallowed the same way as `049` — a broken email pipeline never blocks an
+approval, endorsement, return, or link generation.
