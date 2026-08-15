@@ -2,9 +2,13 @@ import { useEffect, useState } from 'react'
 import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
   Loader2, AlertCircle, CheckCircle2, UserCheck, UserX, Building2, FlaskConical, Plus, Trash2,
+  Bell, BellOff, BellRing,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
+import {
+  isPushSupported, getPermissionState, isSubscribed, subscribeToPush, unsubscribeFromPush,
+} from '../lib/pushNotifications'
 import './Settings.css'
 
 // Rooms/labs can be maintained by SDAO, Facilities (FMO), and Admin —
@@ -30,10 +34,80 @@ export default function Settings() {
       </div>
 
       <ProfileSection profile={profile} refreshProfile={refreshProfile} />
+      <NotificationsSection profileId={profile?.id} />
       <PasswordSection completePasswordChange={completePasswordChange} />
       {canManageFeatureFlags && <FeatureFlagsSection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
+    </div>
+  )
+}
+
+function NotificationsSection({ profileId }) {
+  const supported = isPushSupported()
+  const [permission, setPermission] = useState(getPermissionState())
+  const [subscribed, setSubscribed] = useState(false)
+  const [checking, setChecking] = useState(true)
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!supported) { setChecking(false); return }
+    isSubscribed().then((v) => { setSubscribed(v); setChecking(false) })
+  }, [])
+
+  async function handleEnable() {
+    setError('')
+    setWorking(true)
+    const res = await subscribeToPush(profileId)
+    setWorking(false)
+    setPermission(getPermissionState())
+    if (res.ok) {
+      setSubscribed(true)
+    } else if (res.reason === 'denied') {
+      setError('Notifications are blocked for this site in your browser. Enable them in your browser\'s site settings, then try again.')
+    } else if (res.reason === 'not-configured') {
+      setError('Push notifications aren\'t configured for this deployment yet.')
+    } else {
+      setError('Could not enable notifications. Please try again.')
+    }
+  }
+
+  async function handleDisable() {
+    setError('')
+    setWorking(true)
+    await unsubscribeFromPush()
+    setWorking(false)
+    setSubscribed(false)
+  }
+
+  return (
+    <div className="set-card">
+      <span className="set-card__label"><Bell size={13} /> Desktop &amp; Phone Notifications</span>
+      <div className="set-toggle-row">
+        <div>
+          <strong>Push Notifications</strong>
+          <p className="set-toggle-row__hint">
+            {subscribed
+              ? 'Enabled on this browser/device — you\'ll get a popup notification here the moment a submission needs your action or its status changes, even if RSO Pawrtal isn\'t open. Email notifications keep sending too.'
+              : 'Get a real popup notification on this browser/device — desktop or phone — the moment a submission needs your action or its status changes, in addition to email. You\'ll need to allow notifications when your browser asks.'}
+          </p>
+        </div>
+        {!supported ? (
+          <span className="set-toggle-row__hint"><BellOff size={13} /> Not supported in this browser</span>
+        ) : checking ? (
+          <Loader2 size={16} className="spin" />
+        ) : subscribed ? (
+          <button type="button" className="set-btn set-btn--outline" onClick={handleDisable} disabled={working}>
+            {working ? <Loader2 size={13} className="spin" /> : <BellOff size={13} />} Turn off
+          </button>
+        ) : (
+          <button type="button" className="set-btn set-btn--gold" onClick={handleEnable} disabled={working || permission === 'denied'}>
+            {working ? <Loader2 size={13} className="spin" /> : <BellRing size={13} />} Enable
+          </button>
+        )}
+      </div>
+      {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
     </div>
   )
 }
