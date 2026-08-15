@@ -571,3 +571,114 @@
 .install-banner__close:hover {
   opacity: 1;
 }
+
+/* ---------- Portrait / narrow-screen support ---------- */
+/* The sidebar is desktop-first by default (see .shell/.sidebar above).
+   Below this breakpoint — which also covers phones held in portrait —
+   it becomes an off-canvas drawer instead of a permanent column, and
+   a hamburger button in the topbar opens/closes it. Nothing here
+   blocks the app from rendering; it just reflows. */
+
+.sidebar__backdrop {
+  display: none;
+}
+
+.topbar__hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.topbar__hamburger:hover {
+  background: var(--paper);
+}
+
+.sidebar__mobile-close {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #b9c3dc;
+  cursor: pointer;
+  padding: 4px;
+  margin-left: auto;
+}
+
+@media (max-width: 880px) {
+  .topbar__hamburger {
+    display: flex;
+  }
+
+  .topbar__title h1 {
+    font-size: 15px;
+  }
+
+  .topbar {
+    padding: 0 14px;
+  }
+
+  .content {
+    padding: 14px;
+  }
+
+  /* Sidebar becomes a fixed off-canvas drawer instead of taking up
+     permanent horizontal space. Collapsed state (desktop-only) is
+     ignored here — the drawer always opens at full width so nav
+     labels stay readable on a phone. */
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 1001;
+    width: 250px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.25);
+  }
+
+  .sidebar--collapsed {
+    width: 250px;
+    padding: 18px 14px;
+  }
+
+  .sidebar--mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar__mobile-close {
+    display: block;
+  }
+
+  .sidebar__collapse-btn {
+    display: none;
+  }
+
+  .sidebar__backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(10, 28, 61, 0.45);
+  }
+
+  /* Org switcher name/role text can crowd a narrow topbar — trim to
+     avatar + chevron only; the tooltip/menu still carries full info. */
+  .topbar__user-meta {
+    display: none;
+  }
+
+  .topbar__org-chip {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .topbar__title h1 {
+    display: none;
+  }
+}

@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, CalendarDays, Inbox, FileText, ShieldCheck,
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
-  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info, CalendarClock,
+  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info, CalendarClock, Menu,
 } from 'lucide-react'
 import {
   useAuth, isAdminTier, isFMO, isExecutiveDirector,
@@ -77,6 +77,12 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [orgModalOpen, setOrgModalOpen] = useState(false)
+  // Off-canvas drawer state for narrow/portrait viewports — the
+  // desktop sidebar (collapsed/expanded, above) is a separate concern
+  // from whether the drawer itself is open on small screens.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
+  useEffect(() => { setMobileNavOpen(false) }, [location.pathname])
 
   const admin = isAdminTier(profile?.role)
   const fmo = isFMO(profile?.role)
@@ -114,7 +120,11 @@ export default function Layout() {
 
   return (
     <div className="shell">
-      <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}>
+      {/* Tap-out backdrop for the off-canvas drawer on narrow/portrait
+          screens. Invisible and inert on wide screens (CSS-gated). */}
+      {mobileNavOpen && <div className="sidebar__backdrop" onClick={() => setMobileNavOpen(false)} />}
+
+      <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''} ${mobileNavOpen ? 'sidebar--mobile-open' : ''}`}>
         <div className="sidebar__brand">
           {collapsed ? (
             <img src="/icon.png" alt="RSO PAWrtal" className="sidebar__mark sidebar__mark--collapsed" />
@@ -124,6 +134,14 @@ export default function Layout() {
               <img src="/pawrtal-logo.png" alt="RSO PAWrtal" className="sidebar__pawrtal-mark" />
             </>
           )}
+          <button
+            type="button"
+            className="sidebar__mobile-close"
+            onClick={() => setMobileNavOpen(false)}
+            aria-label="Close menu"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <nav className="sidebar__nav">
@@ -133,6 +151,7 @@ export default function Layout() {
               to={to}
               className={({ isActive }) => `sidebar__link ${isActive ? 'sidebar__link--active' : ''}`}
               title={collapsed ? label : undefined}
+              onClick={() => setMobileNavOpen(false)}
             >
               <Icon size={18} strokeWidth={2} />
               {!collapsed && <span>{label}</span>}
@@ -152,6 +171,14 @@ export default function Layout() {
       <div className="main">
         <header className="topbar">
           <div className="topbar__title">
+            <button
+              type="button"
+              className="topbar__hamburger"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu size={20} />
+            </button>
             <h1>{activeItem?.label || 'RSO PAWrtal'}</h1>
             {orgLabel && <span className="topbar__org-chip">{orgLabel}</span>}
             {isSHSReviewer(profile?.role) && (
