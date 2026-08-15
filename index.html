@@ -5,6 +5,16 @@
     <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RSO PAWrtal — NU Laguna SDAO</title>
+
+    <!-- PWA: installable app, standalone window, custom icon -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#111827" />
+
+    <!-- iOS doesn't read the manifest for these — needs its own tags -->
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="RSO PAWrtal" />
   </head>
   <body>
     <div id="root"></div>

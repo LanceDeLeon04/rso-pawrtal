@@ -10,6 +10,7 @@ import {
   isSHSReviewer, isSHSFaculty, isSHSVenueRequestParty, isSHSFacultyModerator,
   seesAllDepartments, DEPARTMENT_LABELS,
 } from '../context/AuthContext'
+import InstallAppBanner from './InstallAppBanner'
 import './Layout.css'
 
 // Executive Director is admin-tier (full Dashboard analytics) but, like
@@ -212,6 +213,8 @@ export default function Layout() {
             </div>
           </div>
         </header>
+
+        <InstallAppBanner />
 
         <main className="content">
           <Outlet />

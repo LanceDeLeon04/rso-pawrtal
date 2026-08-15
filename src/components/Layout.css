@@ -514,3 +514,60 @@
 .footer__sep {
   color: var(--line);
 }
+
+.install-banner {
+  flex-shrink: 0;
+  background: #111827;
+  color: #fff;
+  padding: 8px 20px;
+}
+
+.install-banner__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 980px;
+  margin: 0 auto;
+  font-size: 12.5px;
+}
+
+.install-banner__row svg {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.install-banner__row span {
+  flex: 1;
+}
+
+.install-banner__cta {
+  flex-shrink: 0;
+  background: var(--nu-gold-500, #f0b429);
+  color: #111827;
+  border: none;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.install-banner__cta:hover {
+  filter: brightness(0.95);
+}
+
+.install-banner__close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  opacity: 0.7;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+
+.install-banner__close:hover {
+  opacity: 1;
+}
