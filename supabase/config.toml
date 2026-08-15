@@ -22,3 +22,9 @@ verify_jwt = false
 # x-webhook-secret header, checked inside the function itself.
 [functions.notify-status-email]
 verify_jwt = false
+
+[functions.notify-approver-email]
+verify_jwt = false
+
+[functions.send-push]
+verify_jwt = false
