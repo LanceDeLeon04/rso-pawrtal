@@ -16,6 +16,14 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim())
 })
 
+// A no-op fetch handler (network passthrough, no caching). Not used for
+// offline support — RSO Pawrtal needs a live connection anyway — but
+// some browsers (notably older Chromium/Firefox installability checks)
+// require an active fetch handler before they'll treat the site as an
+// installable PWA.
+self.addEventListener('fetch', () => {})
+
+
 self.addEventListener('push', (event) => {
   let data = { title: 'RSO Pawrtal', body: 'You have a new notification.', url: '/' }
   try {
