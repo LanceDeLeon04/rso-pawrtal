@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { User, Lock, Eye, EyeOff, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import './Login.css'
@@ -83,9 +83,9 @@ export default function Login() {
           <div className="field">
             <div className="field-label-row">
               <label htmlFor="password">Password</label>
-              <button type="button" className="forgot-link">
+              <Link to="/forgot-password" className="forgot-link">
                 Forgot password?
-              </button>
+              </Link>
             </div>
             <div className="field-input">
               <Lock size={17} />

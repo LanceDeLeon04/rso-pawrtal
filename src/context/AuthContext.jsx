@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase
       .from('profiles')
       .select(`
-        id, full_name, email, role, photo_url, must_change_password, is_active,
+        id, full_name, email, recovery_email, role, photo_url, must_change_password, is_active,
         org_memberships:org_memberships ( org_id, position, is_primary, organizations ( name, acronym, category, department, logo_url, adviser_name, accreditation_status, contact_email, contact_number, is_active ) ),
         admin_viewer_scopes ( scope )
       `)
@@ -141,7 +141,24 @@ export function AuthProvider({ children }) {
     if (session?.user) await loadProfile(session.user.id)
   }
 
-  const value = { session, profile, loading, signIn, signOut, completePasswordChange, refreshProfile }
+  // Used by both Settings (optional, anytime) and the mandatory
+  // first-login AddRecoveryEmail gate — see ProtectedRoute.jsx, which
+  // redirects here whenever profile.recovery_email is empty.
+  async function updateRecoveryEmail(recoveryEmail) {
+    if (!session?.user) return { error: { message: 'Not signed in.' } }
+    const { error } = await supabase
+      .from('profiles')
+      .update({ recovery_email: recoveryEmail.trim().toLowerCase() })
+      .eq('id', session.user.id)
+    if (error) return { error }
+    await loadProfile(session.user.id)
+    return { success: true }
+  }
+
+  const value = {
+    session, profile, loading, signIn, signOut, completePasswordChange, refreshProfile,
+    updateRecoveryEmail,
+  }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

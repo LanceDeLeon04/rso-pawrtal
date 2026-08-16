@@ -28,3 +28,13 @@ verify_jwt = false
 
 [functions.send-push]
 verify_jwt = false
+
+# Gmail-based password reset — called by someone who is, by definition,
+# not logged in (that's why they're resetting their password), so there
+# is no user JWT to verify. Both functions look the account up by
+# username themselves and never reveal whether it exists.
+[functions.send-password-reset-otp]
+verify_jwt = false
+
+[functions.verify-password-reset-otp]
+verify_jwt = false

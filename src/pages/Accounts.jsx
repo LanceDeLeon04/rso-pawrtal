@@ -114,9 +114,9 @@ export default function Accounts() {
       supabase.from('organizations')
         .select('id, name, acronym, category, adviser_name, department, logo_url, accreditation_status, contact_email, contact_number, is_active')
         .order('acronym'),
-      supabase.from('profiles').select('id, full_name, email, role, is_active').order('full_name'),
+      supabase.from('profiles').select('id, full_name, email, recovery_email, role, is_active').order('full_name'),
       supabase.from('org_memberships')
-        .select('id, profile_id, org_id, position, is_primary, profiles ( full_name ), organizations ( acronym )')
+        .select('id, profile_id, org_id, position, is_primary, profiles ( full_name, recovery_email ), organizations ( acronym )')
         .order('created_at', { ascending: false }),
       supabase.from('organization_bank_details').select('org_id, bank_name, account_name, account_number'),
     ])
@@ -538,10 +538,10 @@ function AdminAccountsSection({
 
       <div className="table-scroll">
       <table className="acc-table">
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th /></tr></thead>
+        <thead><tr><th>Name</th><th>Username</th><th>Gmail</th><th>Role</th><th /></tr></thead>
         <tbody>
           {adminProfiles.length === 0 ? (
-            <tr><td colSpan={4} className="acc-empty-row">{emptyText}</td></tr>
+            <tr><td colSpan={5} className="acc-empty-row">{emptyText}</td></tr>
           ) : (
             adminProfiles.map((p) => {
               const isSelf = p.id === currentProfileId
@@ -550,6 +550,11 @@ function AdminAccountsSection({
                 <tr key={p.id}>
                   <td>{p.full_name}{!p.is_active && <span className="acc-optional"> (deactivated)</span>}</td>
                   <td>{p.email}</td>
+                  <td>
+                    {p.recovery_email
+                      ? p.recovery_email
+                      : <span className="acc-optional" title="This account can't self-serve a password reset until a Gmail is added.">No Gmail on file</span>}
+                  </td>
                   <td>{ROLE_LABELS[p.role]}</td>
                   <td>
                     {isConfirming ? (
@@ -1450,10 +1455,10 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
 
       <div className="table-scroll">
       <table className="acc-table">
-        <thead><tr><th>Current Holder</th><th>Org</th><th>Position / Tag</th><th /></tr></thead>
+        <thead><tr><th>Current Holder</th><th>Org</th><th>Position / Tag</th><th>Gmail</th><th /></tr></thead>
         <tbody>
           {memberships.length === 0 ? (
-            <tr><td colSpan={4} className="acc-empty-row">No memberships yet.</td></tr>
+            <tr><td colSpan={5} className="acc-empty-row">No memberships yet.</td></tr>
           ) : (
             memberships.map((m) => (
               <tr key={m.id}>
@@ -1471,6 +1476,11 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
                 </td>
                 <td>{m.organizations?.acronym}</td>
                 <td><span className="acc-tag-chip">{m.position}</span></td>
+                <td>
+                  {m.profiles?.recovery_email
+                    ? m.profiles.recovery_email
+                    : <span className="acc-optional" title="This account can't self-serve a password reset until a Gmail is added.">No Gmail on file</span>}
+                </td>
                 <td>
                   {renamingId === m.id ? (
                     <div className="acc-edit-actions">

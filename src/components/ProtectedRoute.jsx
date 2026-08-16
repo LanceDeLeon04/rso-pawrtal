@@ -13,6 +13,15 @@ export default function ProtectedRoute({ children, allowedRoles, excludeRoles, e
     return <Navigate to="/change-password" replace />
   }
 
+  // Mandatory Gmail-on-file gate (password reset via OTP depends on
+  // this) — every account must add one before reaching any other page.
+  // Checked after must_change_password (set the real password first)
+  // but before the privacy notice, since profile is already loaded by
+  // this point either way.
+  if (profile && !profile.recovery_email) {
+    return <Navigate to="/add-recovery-email" replace />
+  }
+
   // Data Privacy Notice must be re-acknowledged on every login before
   // any other page is reachable — see src/pages/PrivacyNotice.jsx.
   if (!hasAcknowledgedPrivacy(session.user.id)) {

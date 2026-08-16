@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
   Loader2, AlertCircle, CheckCircle2, UserCheck, UserX, Building2, FlaskConical, Plus, Trash2,
-  Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star,
+  Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star, Mail,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -23,7 +23,7 @@ const VENUE_MANAGER_ROLES = [
 const SDAO_ADMIN_ROLES = ['sdao_assistant', 'sdao_supervisor', 'system_admin']
 
 export default function Settings() {
-  const { profile, completePasswordChange, refreshProfile } = useAuth()
+  const { profile, completePasswordChange, refreshProfile, updateRecoveryEmail } = useAuth()
   const admin = isAdminTier(profile?.role)
   const canManageVenues = VENUE_MANAGER_ROLES.includes(profile?.role)
   const canManageFeatureFlags = SDAO_ADMIN_ROLES.includes(profile?.role)
@@ -35,6 +35,7 @@ export default function Settings() {
       </div>
 
       <ProfileSection profile={profile} refreshProfile={refreshProfile} />
+      <RecoveryEmailSection profile={profile} updateRecoveryEmail={updateRecoveryEmail} refreshProfile={refreshProfile} />
       <NotificationsSection profileId={profile?.id} />
       <PasswordSection completePasswordChange={completePasswordChange} />
       {canManageFeatureFlags && <FeatureFlagsSection />}
@@ -42,6 +43,88 @@ export default function Settings() {
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
       <FeedbackSection profile={profile} />
       {admin && <AdminFeedbackSection />}
+    </div>
+  )
+}
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
+// Lets a signed-in user set/update the Gmail address that receives their
+// password-reset OTP codes (see send-password-reset-otp Edge Function).
+// Also the same field the mandatory first-login gate
+// (AddRecoveryEmail.jsx) writes to — this just lets it be changed later.
+function RecoveryEmailSection({ profile, updateRecoveryEmail, refreshProfile }) {
+  const [email, setEmail] = useState(profile?.recovery_email || '')
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => { setEmail(profile?.recovery_email || '') }, [profile?.recovery_email])
+
+  async function handleSave(e) {
+    e.preventDefault()
+    setMsg('')
+    if (!EMAIL_RE.test(email.trim())) {
+      setMsg('error')
+      return
+    }
+    setSaving(true)
+    const { error } = await updateRecoveryEmail(email.trim())
+    setSaving(false)
+    if (error) {
+      setMsg('error')
+      return
+    }
+    setMsg('ok')
+    setEditing(false)
+    await refreshProfile()
+  }
+
+  return (
+    <div className="set-card">
+      <span className="set-card__label"><Mail size={13} /> Recovery Gmail</span>
+      <p className="set-card__sub" style={{ marginTop: -4, marginBottom: 12, color: 'var(--nu-gray-500, #64748b)', fontSize: 13 }}>
+        Used to send you a verification code if you ever need to reset your password yourself, from the Sign in screen.
+      </p>
+
+      {!editing ? (
+        <div className="set-photo-row" style={{ justifyContent: 'space-between' }}>
+          <span className="set-photo-row__email">
+            {profile?.recovery_email || 'No Gmail on file'}
+          </span>
+          <button type="button" className="set-icon-btn" onClick={() => setEditing(true)} title="Edit">
+            <Pencil size={14} />
+          </button>
+        </div>
+      ) : (
+        <form className="set-name-form" onSubmit={handleSave}>
+          <label className="set-field">
+            Gmail address
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="yourname@gmail.com"
+              required
+            />
+          </label>
+          <div className="set-row-actions">
+            <button className="set-btn set-btn--gold" type="submit" disabled={saving}>
+              {saving ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save
+            </button>
+            <button
+              type="button"
+              className="set-btn set-btn--outline"
+              onClick={() => { setEditing(false); setEmail(profile?.recovery_email || ''); setMsg('') }}
+            >
+              <X size={14} /> Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {msg === 'ok' && <div className="set-success"><CheckCircle2 size={13} /> Saved.</div>}
+      {msg === 'error' && <div className="set-error"><AlertCircle size={13} /> Enter a valid email address.</div>}
     </div>
   )
 }

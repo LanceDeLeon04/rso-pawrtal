@@ -3,7 +3,9 @@ import { AuthProvider, isSHSFacultyModerator } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
 import ChangePassword from './pages/ChangePassword'
+import AddRecoveryEmail from './pages/AddRecoveryEmail'
 import PrivacyNotice from './pages/PrivacyNotice'
 import Dashboard from './pages/Dashboard'
 import CalendarOfActivities from './pages/CalendarOfActivities'
@@ -25,7 +27,12 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/change-password" element={<ChangePassword />} />
+          {/* Mandatory first-login gate — see ProtectedRoute.jsx. Every
+              account must have a recovery Gmail on file before it can
+              reach any other page. */}
+          <Route path="/add-recovery-email" element={<AddRecoveryEmail />} />
           <Route path="/privacy-notice" element={<PrivacyNotice />} />
           {/* Public — no login. Advisers/Deans open this from a
               time-limited link sent by the submitting org; see
