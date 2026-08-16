@@ -108,3 +108,23 @@ export async function isSubscribed() {
   const subscription = await registration.pushManager.getSubscription()
   return !!subscription
 }
+
+// Plays public/sounds/notif.mp3 when the service worker signals a push
+// arrived (see public/sw.js). Only fires while this tab/window is open
+// — browsers give web push no way to set a custom sound for the OS
+// popup itself when the app is fully closed, so that case always
+// falls back to the browser/OS's own default sound instead.
+export function listenForPushSound() {
+  if (!('serviceWorker' in navigator)) return
+
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data?.type !== 'PLAY_NOTIFICATION_SOUND') return
+    const audio = new Audio('/sounds/notif.mp3')
+    audio.volume = 0.85
+    // Autoplay can be blocked by the browser if the user hasn't
+    // interacted with the page yet in this tab — fail silently rather
+    // than throwing, since the OS popup + its default sound still
+    // happened regardless.
+    audio.play().catch(() => {})
+  })
+}
