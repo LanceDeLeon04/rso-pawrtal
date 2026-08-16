@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
   Loader2, AlertCircle, CheckCircle2, UserCheck, UserX, Building2, FlaskConical, Plus, Trash2,
-  Bell, BellOff, BellRing,
+  Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
+import ImageCropModal from '../components/ImageCropModal'
 import {
   isPushSupported, getPermissionState, isSubscribed, subscribeToPush, unsubscribeFromPush,
 } from '../lib/pushNotifications'
@@ -39,6 +40,8 @@ export default function Settings() {
       {canManageFeatureFlags && <FeatureFlagsSection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
+      <FeedbackSection profile={profile} />
+      {admin && <AdminFeedbackSection />}
     </div>
   )
 }
@@ -171,6 +174,7 @@ function ProfileSection({ profile, refreshProfile }) {
 
   const [uploading, setUploading] = useState(false)
   const [photoError, setPhotoError] = useState('')
+  const [pendingPhotoFile, setPendingPhotoFile] = useState(null)
 
   useEffect(() => { setName(profile?.full_name || '') }, [profile?.full_name])
 
@@ -189,24 +193,31 @@ function ProfileSection({ profile, refreshProfile }) {
     }
   }
 
-  async function handlePhotoChange(e) {
+  function handlePhotoPick(e) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
     setPhotoError('')
-    setUploading(true)
+    // Don't upload yet — let the person zoom/reposition first.
+    setPendingPhotoFile(file)
+  }
 
-    const ext = file.name.split('.').pop()
+  async function handlePhotoConfirm(croppedFile) {
+    setUploading(true)
+    const ext = croppedFile.name.split('.').pop()
     const path = `${profile.id}/${Date.now()}.${ext}`
-    const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true })
+    const { error: upErr } = await supabase.storage.from('avatars').upload(path, croppedFile, { upsert: true })
     if (upErr) {
       setUploading(false)
       setPhotoError('Could not upload photo. Please try again.')
+      setPendingPhotoFile(null)
       return
     }
     const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path)
     const { error: dbErr } = await supabase.from('profiles').update({ photo_url: pub.publicUrl }).eq('id', profile.id)
 
     setUploading(false)
+    setPendingPhotoFile(null)
     if (dbErr) {
       setPhotoError('Photo uploaded, but saving it to your profile failed.')
       return
@@ -222,8 +233,8 @@ function ProfileSection({ profile, refreshProfile }) {
         <div className="set-avatar">
           {profile?.photo_url ? <img src={profile.photo_url} alt="" /> : <User size={26} />}
           <label className="set-avatar__edit">
-            {uploading ? <Loader2 size={13} className="spin" /> : <Camera size={13} />}
-            <input type="file" accept="image/*" onChange={handlePhotoChange} hidden disabled={uploading} />
+            <Camera size={13} />
+            <input type="file" accept="image/*" onChange={handlePhotoPick} hidden />
           </label>
         </div>
         <div>
@@ -231,6 +242,15 @@ function ProfileSection({ profile, refreshProfile }) {
           <span className="set-photo-row__email">{profile?.email}</span>
         </div>
       </div>
+
+      {pendingPhotoFile && (
+        <ImageCropModal
+          file={pendingPhotoFile}
+          uploading={uploading}
+          onCancel={() => setPendingPhotoFile(null)}
+          onConfirm={handlePhotoConfirm}
+        />
+      )}
 
       {photoError && <div className="set-error"><AlertCircle size={13} /> {photoError}</div>}
 
@@ -431,7 +451,7 @@ function VenueRoomsAndLabsSection() {
   }
 
   return (
-    <div className="set-card">
+    <div className="set-card set-card--wide">
       <span className="set-card__label"><Building2 size={13} /> Rooms &amp; Laboratories</span>
       <p className="set-card__sub">
         Manage the Building → Floor → Room and Laboratory picklists applicants choose from on the Event Application form.
@@ -631,7 +651,7 @@ function UserManagementSection({ currentProfileId }) {
   }
 
   return (
-    <div className="set-card">
+    <div className="set-card set-card--wide">
       <span className="set-card__label"><Users size={13} /> Manage User Accounts</span>
       <p className="set-card__sub">
         Correct any account's display name, or deactivate one to immediately block that person from signing in.
@@ -699,5 +719,130 @@ function UserManagementSection({ currentProfileId }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ============================================================
+// FeedbackSection — any logged-in user can submit general feedback
+// about the portal here. Own submissions only (RLS: feedback_insert /
+// feedback_select in migration 067).
+// ============================================================
+function FeedbackSection({ profile }) {
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [sent, setSent] = useState(false)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!message.trim()) return
+    setSaving(true)
+    setError('')
+    const orgId = profile?.org_memberships?.[0]?.org_id || null
+    const { error: err } = await supabase.from('feedback').insert({
+      profile_id: profile.id,
+      org_id: orgId,
+      message: message.trim(),
+      page_context: 'Settings',
+    })
+    setSaving(false)
+    if (err) {
+      setError('Could not send your feedback. Please try again.')
+      return
+    }
+    setMessage('')
+    setSent(true)
+    setTimeout(() => setSent(false), 4000)
+  }
+
+  return (
+    <section className="set-section">
+      <div className="set-card">
+        <span className="set-card__label"><MessageSquarePlus size={13} /> Feedback</span>
+        <p className="set-toggle-row__hint">
+          Found a bug, or have a suggestion for RSO PAWrtal? Let us know here.
+        </p>
+        <form className="set-name-form" onSubmit={handleSubmit}>
+          <label className="set-field" style={{ flex: 1 }}>
+            Your feedback
+            <textarea
+              rows={4}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Tell us what's working, what's not, or what you'd like to see..."
+              required
+            />
+          </label>
+          <button className="set-btn set-btn--gold" type="submit" disabled={saving || !message.trim()}>
+            {saving ? <Loader2 size={14} className="spin" /> : 'Send Feedback'}
+          </button>
+        </form>
+        {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
+        {sent && <div className="set-success"><CheckCircle2 size={13} /> Thanks — your feedback was sent.</div>}
+      </div>
+    </section>
+  )
+}
+
+// ============================================================
+// AdminFeedbackSection — admin-tier roles only. Lists all submitted
+// feedback newest-first, with who sent it and when, and lets an admin
+// mark an entry as reviewed.
+// ============================================================
+function AdminFeedbackSection() {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [updatingId, setUpdatingId] = useState(null)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('feedback')
+      .select('id, message, status, created_at, page_context, profiles ( full_name ), organizations ( acronym )')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setItems(data || [])
+    setLoading(false)
+  }
+
+  async function markReviewed(id) {
+    setUpdatingId(id)
+    const { error } = await supabase.from('feedback').update({ status: 'reviewed' }).eq('id', id)
+    setUpdatingId(null)
+    if (!error) setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: 'reviewed' } : it)))
+  }
+
+  return (
+    <section className="set-section set-section--full">
+      <div className="set-card">
+        <span className="set-card__label"><MessageSquare size={13} /> Submitted Feedback</span>
+        {loading ? (
+          <div className="set-toggle-row__hint"><Loader2 size={13} className="spin" /> Loading...</div>
+        ) : items.length === 0 ? (
+          <p className="set-toggle-row__hint">No feedback has been submitted yet.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {items.map((it) => (
+              <div key={it.id} className="set-toggle-row" style={{ alignItems: 'flex-start' }}>
+                <div>
+                  <strong>{it.profiles?.full_name || 'Unknown user'}{it.organizations?.acronym ? ` · ${it.organizations.acronym}` : ''}</strong>
+                  <p className="set-toggle-row__hint" style={{ whiteSpace: 'pre-wrap' }}>{it.message}</p>
+                  <span className="set-photo-row__email">{new Date(it.created_at).toLocaleString()}</span>
+                </div>
+                {it.status === 'reviewed' ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--nu-blue-700)', fontWeight: 600 }}><Check size={11} /> Reviewed</span>
+                ) : (
+                  <button className="set-btn set-btn--outline" onClick={() => markReviewed(it.id)} disabled={updatingId === it.id}>
+                    {updatingId === it.id ? <Loader2 size={13} className="spin" /> : 'Mark reviewed'}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   )
 }

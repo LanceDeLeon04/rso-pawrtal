@@ -5,6 +5,7 @@ import {
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
   Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag, Pencil, ExternalLink,
+  Star,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
@@ -650,6 +651,13 @@ export default function SubmissionBin() {
   const [restrictedPeriods, setRestrictedPeriods] = useState([])
 
   const [showReportModal, setShowReportModal] = useState(false)
+  // Mandatory 5-star rating shown right after an Activity Report
+  // submits successfully — must be rated before this closes.
+  const [ratingSubmissionId, setRatingSubmissionId] = useState(null)
+  const [ratingValue, setRatingValue] = useState(0)
+  const [ratingComment, setRatingComment] = useState('')
+  const [ratingSaving, setRatingSaving] = useState(false)
+  const [ratingError, setRatingError] = useState('')
   const [reportClearanceId, setReportClearanceId] = useState('')
   const [reportFiles, setReportFiles] = useState({})
 
@@ -1547,9 +1555,19 @@ export default function SubmissionBin() {
     // the UI up front instead of letting the org fill out the whole
     // form first.
     if (clearanceBlocked) return
-    const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
-    setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '' })
-    setAppFiles({})
+    // Don't clear appForm here — if the org closed the modal earlier
+    // without submitting, their in-progress draft should still be here.
+    // appForm is only reset back to EMPTY_APP_FORM after a successful
+    // submit (see handleSubmitApp) or when opening a returned submission
+    // for editing (see openEditReturned, which sets its own values).
+    // Exception: if the form currently holds a returned submission's
+    // data (editingSubmissionId was set), start a fresh blank draft
+    // instead of continuing to edit that submission.
+    if (editingSubmissionId) {
+      const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+      setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '' })
+      setAppFiles({})
+    }
     setFormError('')
     setVenueConflict(null)
     setVenueAdvisory(null)
@@ -1559,20 +1577,29 @@ export default function SubmissionBin() {
 
   async function openReportModal(preselectEventId) {
     const data = await loadOpenClearances()
-    const preselect = preselectEventId ? data.find((c) => c.event_id === preselectEventId) : null
-    setReportClearanceId(preselect?.id || '')
-    setReportFiles({})
+    // Only override the draft with a preselected clearance / blank files
+    // when one is explicitly requested (e.g. "submit report" from a
+    // specific event). Otherwise leave whatever the org already had
+    // picked/attached from an earlier close-without-submitting.
+    if (preselectEventId) {
+      const preselect = data.find((c) => c.event_id === preselectEventId)
+      setReportClearanceId(preselect?.id || '')
+      setReportFiles({})
+    }
     setFormError('')
     setShowReportModal(true)
   }
 
   function openMerchModal() {
     if (!allowMerchandise) return
-    const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
-    setMerchForm({ ...EMPTY_MERCH_FORM, position: myMembership?.position || '' })
-    setMerchTypes([])
-    setMerchOtherText('')
-    setMerchFiles({})
+    // Same draft-retention behavior as openAppModal — see comment there.
+    if (editingSubmissionId) {
+      const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+      setMerchForm({ ...EMPTY_MERCH_FORM, position: myMembership?.position || '' })
+      setMerchTypes([])
+      setMerchOtherText('')
+      setMerchFiles({})
+    }
     setFormError('')
     setEditingSubmissionId(null)
     setShowMerchModal(true)
@@ -2143,6 +2170,10 @@ export default function SubmissionBin() {
       setShowAppModal(false)
       setEditingSubmissionId(null)
       setSelected(null)
+      // Clear the draft only now that it's actually been submitted.
+      const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+      setAppForm({ ...EMPTY_APP_FORM, position: myMembership?.position || '' })
+      setAppFiles({})
     }
     loadSubmissions()
   }
@@ -2205,8 +2236,42 @@ export default function SubmissionBin() {
     }
 
     setSaving(false)
-    if (!failedDocs.length) setShowReportModal(false)
+    if (!failedDocs.length) {
+      setShowReportModal(false)
+      // Clear the draft only now that it's actually been submitted.
+      setReportClearanceId('')
+      setReportFiles({})
+      // Prompt the mandatory 5-star rating for this report submission.
+      setRatingSubmissionId(sub.id)
+      setRatingValue(0)
+      setRatingComment('')
+      setRatingError('')
+    }
     loadSubmissions()
+  }
+
+  async function handleSubmitRating(e) {
+    e.preventDefault()
+    if (!ratingValue) {
+      setRatingError('Please select a star rating before continuing.')
+      return
+    }
+    setRatingSaving(true)
+    setRatingError('')
+    const { error: err } = await supabase.from('report_ratings').insert({
+      submission_id: ratingSubmissionId,
+      org_id: myOrgId,
+      profile_id: profile.id,
+      rating: ratingValue,
+      comment: ratingComment.trim() || null,
+    })
+    setRatingSaving(false)
+    if (err) {
+      console.error('Failed to save report rating', err)
+      setRatingError('Could not save your rating — please try again.')
+      return
+    }
+    setRatingSubmissionId(null)
   }
 
   async function handleSubmitMerch(e) {
@@ -2385,6 +2450,12 @@ export default function SubmissionBin() {
       setShowMerchModal(false)
       setEditingSubmissionId(null)
       setSelected(null)
+      // Clear the draft only now that it's actually been submitted.
+      const myMembership = profile?.org_memberships?.find((m) => m.org_id === myOrgId)
+      setMerchForm({ ...EMPTY_MERCH_FORM, position: myMembership?.position || '' })
+      setMerchTypes([])
+      setMerchOtherText('')
+      setMerchFiles({})
     }
     loadSubmissions()
   }
@@ -4460,6 +4531,53 @@ export default function SubmissionBin() {
                 </button>
               </>
             )}
+          </form>
+        </div>
+      )}
+
+      {/* ---------- Post-Report-Submission Rating (mandatory) ---------- */}
+      {ratingSubmissionId && (
+        <div className="sb-modal-backdrop">
+          <form className="sb-modal sb-modal--form" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmitRating}>
+            {/* Deliberately no close (X) button and no backdrop-click
+                dismissal here — the rating is required before this
+                closes, per the report-submission feedback flow. */}
+            <h3 className="sb-modal__title">Rate your submission experience</h3>
+            <p className="sb-empty-note">Your Activity Report was submitted. Before you continue, please rate how the submission process went.</p>
+
+            {ratingError && <div className="sb-form-error"><AlertCircle size={14} /> {ratingError}</div>}
+
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', margin: '12px 0' }}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setRatingValue(n)}
+                  aria-label={`${n} star${n > 1 ? 's' : ''}`}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}
+                >
+                  <Star
+                    size={32}
+                    color="var(--nu-gold, #d4af37)"
+                    fill={n <= ratingValue ? 'var(--nu-gold, #d4af37)' : 'none'}
+                  />
+                </button>
+              ))}
+            </div>
+
+            <label className="sb-field">
+              Comments (optional)
+              <textarea
+                rows={3}
+                value={ratingComment}
+                onChange={(e) => setRatingComment(e.target.value)}
+                placeholder="Anything that went well or could be improved?"
+              />
+            </label>
+
+            <button type="submit" className="sb-btn sb-btn--gold sb-btn--full" disabled={ratingSaving}>
+              {ratingSaving ? <Loader2 size={15} className="spin" /> : 'Submit Rating'}
+            </button>
           </form>
         </div>
       )}

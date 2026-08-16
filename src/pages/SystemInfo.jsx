@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import ImageCropModal from '../components/ImageCropModal'
 import './SystemInfo.css'
 
 export default function SystemInfo() {
@@ -168,6 +169,7 @@ function DeveloperSection({ info, canEdit, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [pendingPhotoFile, setPendingPhotoFile] = useState(null)
 
   function startEdit() {
     setName(info?.developer_name || '')
@@ -196,15 +198,21 @@ function DeveloperSection({ info, canEdit, onSaved }) {
     setEditing(false)
   }
 
-  async function handlePhotoChange(e) {
+  function handlePhotoPick(e) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
+    setError('')
+    setPendingPhotoFile(file)
+  }
+
+  async function handlePhotoConfirm(croppedFile) {
     setUploading(true)
     setError('')
-    const ext = file.name.split('.').pop()
+    const ext = croppedFile.name.split('.').pop()
     const path = `developer/${Date.now()}.${ext}`
-    const { error: upErr } = await supabase.storage.from('system-admins').upload(path, file, { upsert: true })
-    if (upErr) { setError('Could not upload photo.'); setUploading(false); return }
+    const { error: upErr } = await supabase.storage.from('system-admins').upload(path, croppedFile, { upsert: true })
+    if (upErr) { setError('Could not upload photo.'); setUploading(false); setPendingPhotoFile(null); return }
     const { data: pub } = supabase.storage.from('system-admins').getPublicUrl(path)
     const { data, error: dbErr } = await supabase.from('system_info')
       .update({ developer_photo_url: pub.publicUrl, updated_at: new Date().toISOString() })
@@ -212,6 +220,7 @@ function DeveloperSection({ info, canEdit, onSaved }) {
       .select('*')
       .single()
     setUploading(false)
+    setPendingPhotoFile(null)
     if (dbErr) { setError('Could not save photo.'); return }
     onSaved(data)
   }
@@ -229,6 +238,15 @@ function DeveloperSection({ info, canEdit, onSaved }) {
 
       {error && <div className="sys-error"><AlertCircle size={13} /> {error}</div>}
 
+      {pendingPhotoFile && (
+        <ImageCropModal
+          file={pendingPhotoFile}
+          uploading={uploading}
+          onCancel={() => setPendingPhotoFile(null)}
+          onConfirm={handlePhotoConfirm}
+        />
+      )}
+
       {!editing ? (
         <div className="sys-dev">
           <div className="sys-dev__avatar">
@@ -239,8 +257,8 @@ function DeveloperSection({ info, canEdit, onSaved }) {
             )}
             {canEdit && (
               <label className="sys-dev__avatar-edit" title="Change photo">
-                {uploading ? <Loader2 size={13} className="spin" /> : <Camera size={13} />}
-                <input type="file" accept="image/*" onChange={handlePhotoChange} hidden disabled={uploading} />
+                <Camera size={13} />
+                <input type="file" accept="image/*" onChange={handlePhotoPick} hidden />
               </label>
             )}
           </div>
@@ -431,23 +449,38 @@ function AdminCard({ admin, editing, onPhotoChange, onFieldSave, onRemove }) {
   const [name, setName] = useState(admin.full_name)
   const [title, setTitle] = useState(admin.title)
   const [uploading, setUploading] = useState(false)
+  const [pendingPhotoFile, setPendingPhotoFile] = useState(null)
 
-  async function handleFile(e) {
+  function handleFilePick(e) {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
+    setPendingPhotoFile(file)
+  }
+
+  async function handlePhotoConfirm(croppedFile) {
     setUploading(true)
-    await onPhotoChange(file)
+    await onPhotoChange(croppedFile)
     setUploading(false)
+    setPendingPhotoFile(null)
   }
 
   return (
     <div className="sys-admin-card">
+      {pendingPhotoFile && (
+        <ImageCropModal
+          file={pendingPhotoFile}
+          uploading={uploading}
+          onCancel={() => setPendingPhotoFile(null)}
+          onConfirm={handlePhotoConfirm}
+        />
+      )}
       <div className="sys-admin-card__avatar">
         {admin.photo_url ? <img src={admin.photo_url} alt="" /> : <Users size={22} />}
         {editing && (
           <label className="sys-admin-card__edit">
             {uploading ? <Loader2 size={12} className="spin" /> : <Camera size={12} />}
-            <input type="file" accept="image/*" onChange={handleFile} hidden disabled={uploading} />
+            <input type="file" accept="image/*" onChange={handleFilePick} hidden disabled={uploading} />
           </label>
         )}
       </div>

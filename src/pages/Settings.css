@@ -1,8 +1,19 @@
 .set-page {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  align-items: start;
   gap: 16px;
-  max-width: 720px;
+  max-width: 1180px;
+}
+
+.set-header {
+  grid-column: 1 / -1;
+}
+
+/* Sections that hold wide content (tables, lists) should always take
+   the full row instead of being squeezed into one grid column. */
+.set-section--full {
+  grid-column: 1 / -1;
 }
 
 .set-header__title {
@@ -23,6 +34,16 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.set-card--wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 720px) {
+  .set-page {
+    grid-template-columns: 1fr;
+  }
 }
 
 .set-card__label {
