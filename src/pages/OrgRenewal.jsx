@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   RefreshCw, Loader2, AlertCircle, X, Check, Upload, FileText, CheckCircle2,
-  MessageSquare, User, ClipboardCheck,
+  MessageSquare, User, ClipboardCheck, ShieldCheck,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -58,6 +58,7 @@ export default function OrgRenewal() {
   const isPresident = role === 'rso_officer' && myPosition === 'President'
   const reviewStage = REVIEW_STAGE_BY_ROLE[role] || null
   const isReviewer = !!reviewStage || role === 'system_admin'
+  const isSystemAdmin = role === 'system_admin'
 
   const [ay, setAy] = useState(null)
   const [settings, setSettings] = useState(null)
@@ -144,6 +145,7 @@ export default function OrgRenewal() {
             <RenewalsList
               renewals={tab === 'queue' ? queueRenewals : renewals}
               reviewStage={reviewStage}
+              isSystemAdmin={isSystemAdmin}
               onReview={(r) => setReviewing(r)}
             />
           )}
@@ -154,6 +156,7 @@ export default function OrgRenewal() {
         <ReviewModal
           renewal={reviewing}
           reviewStage={reviewStage}
+          isSystemAdmin={isSystemAdmin}
           onClose={() => setReviewing(null)}
           onDone={() => { setReviewing(null); loadAll() }}
         />
@@ -257,6 +260,12 @@ function MyRenewalCard({ ay, settings, renewal, onChanged }) {
 
       {renewal.stage !== 'draft' && <Tracker stage={renewal.stage} />}
 
+      {renewal.stage === 'approved' && (
+        <div className="rn-form-error" style={{ background: '#e5f6ec', color: '#1f8a4c', border: '1px solid #bfe3cd' }}>
+          <CheckCircle2 size={13} /> Renewal approved — your org's accreditation status is now Accredited.
+        </div>
+      )}
+
       {renewal.stage === 'returned' && (
         <div className="rn-form-error"><AlertCircle size={13} /> Returned for revision — see comments below, update your documents, and resubmit.</div>
       )}
@@ -325,7 +334,7 @@ function MyRenewalCard({ ay, settings, renewal, onChanged }) {
   )
 }
 
-function RenewalsList({ renewals, reviewStage, onReview }) {
+function RenewalsList({ renewals, reviewStage, isSystemAdmin, onReview }) {
   if (renewals.length === 0) {
     return <div className="rn-empty">No renewals here yet.</div>
   }
@@ -334,6 +343,7 @@ function RenewalsList({ renewals, reviewStage, onReview }) {
       {renewals.map((r) => {
         const meta = STAGE_META[r.stage] || { label: r.stage, tone: 'muted' }
         const canDecide = r.stage === reviewStage
+        const canOverride = isSystemAdmin && r.stage !== 'approved'
         return (
           <div key={r.id} className="rn-row">
             <div className="rn-row__main">
@@ -348,7 +358,7 @@ function RenewalsList({ renewals, reviewStage, onReview }) {
             </div>
             <div className="rn-row__actions">
               <button className="rn-btn rn-btn--outline rn-btn--small" onClick={() => onReview(r)}>
-                {canDecide ? 'Review' : 'View'}
+                {canDecide || canOverride ? 'Review' : 'View'}
               </button>
             </div>
           </div>
@@ -358,11 +368,12 @@ function RenewalsList({ renewals, reviewStage, onReview }) {
   )
 }
 
-function ReviewModal({ renewal, reviewStage, onClose, onDone }) {
+function ReviewModal({ renewal, reviewStage, isSystemAdmin, onClose, onDone }) {
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const canDecide = renewal.stage === reviewStage
+  const canOverride = isSystemAdmin && renewal.stage !== 'approved'
 
   async function decide(action) {
     setError('')
@@ -374,6 +385,18 @@ function ReviewModal({ renewal, reviewStage, onClose, onDone }) {
     })
     setBusy(false)
     if (err) { setError(err.message || 'Could not record that decision.'); return }
+    onDone()
+  }
+
+  async function handleOverride() {
+    setError('')
+    setBusy(true)
+    const { error: err } = await supabase.rpc('override_approve_org_renewal', {
+      p_renewal_id: renewal.id,
+      p_comment: comment || null,
+    })
+    setBusy(false)
+    if (err) { setError(err.message || 'Could not override-approve this renewal.'); return }
     onDone()
   }
 
@@ -405,15 +428,21 @@ function ReviewModal({ renewal, reviewStage, onClose, onDone }) {
           })}
         </div>
 
-        {(renewal.org_renewal_history || []).filter((h) => h.comment).length > 0 && (
+        {(renewal.org_renewal_history || []).filter((h) => h.comment || h.action === 'override_approved').length > 0 && (
           <div className="rn-row__history">
-            {renewal.org_renewal_history.filter((h) => h.comment).map((h) => (
-              <p key={h.id}><MessageSquare size={11} /> {h.profiles?.full_name || h.action}: {h.comment}</p>
-            ))}
+            {renewal.org_renewal_history
+              .filter((h) => h.comment || h.action === 'override_approved')
+              .map((h) => (
+                <p key={h.id}>
+                  <MessageSquare size={11} />{' '}
+                  {h.profiles?.full_name || 'System Admin'}
+                  {h.action === 'override_approved' ? ' overrode and marked this renewal Approved (org accredited)' : `: ${h.comment}`}
+                </p>
+              ))}
           </div>
         )}
 
-        {canDecide && (
+        {(canDecide || canOverride) && (
           <>
             <textarea
               className="rn-textarea"
@@ -423,12 +452,22 @@ function ReviewModal({ renewal, reviewStage, onClose, onDone }) {
             />
             {error && <div className="rn-form-error"><AlertCircle size={13} /> {error}</div>}
             <div className="rn-modal__actions">
-              <button className="rn-btn rn-btn--danger" disabled={busy} onClick={() => decide('return')}>
-                {busy ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Return for Revision
-              </button>
-              <button className="rn-btn rn-btn--gold" disabled={busy} onClick={() => decide('advance')}>
-                {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Approve &amp; Advance
-              </button>
+              {canDecide && (
+                <>
+                  <button className="rn-btn rn-btn--danger" disabled={busy} onClick={() => decide('return')}>
+                    {busy ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Return for Revision
+                  </button>
+                  <button className="rn-btn rn-btn--gold" disabled={busy} onClick={() => decide('advance')}>
+                    {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Approve &amp; Advance
+                  </button>
+                </>
+              )}
+              {canOverride && (
+                <button className="rn-btn rn-btn--outline" disabled={busy} onClick={handleOverride}
+                  title="Mark this RSO renewed regardless of stage — accredits the org immediately">
+                  {busy ? <Loader2 size={14} className="spin" /> : <ShieldCheck size={14} />} Override: Mark Renewed &amp; Accredit
+                </button>
+              )}
             </div>
           </>
         )}
