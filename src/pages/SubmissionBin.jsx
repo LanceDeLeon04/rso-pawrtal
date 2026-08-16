@@ -142,7 +142,10 @@ const STAGE_META = {
   shs_supervisor_endorsement: { label: 'With SDAO Supervisor', tone: 'warn' },
   shs_principal_approval: { label: 'With SHS Principal', tone: 'warn' },
   shs_director_approval: { label: 'With Academic Director', tone: 'warn' },
-  shs_executive_approval: { label: 'With Executive Director', tone: 'warn' },
+  // Legacy stage — no longer reached by the normal chain (Academic
+  // Director is now final for SHS), kept only so any submission still
+  // parked here from before this change still renders a sensible label.
+  shs_executive_approval: { label: 'With Executive Director (legacy)', tone: 'warn' },
 }
 
 const STEPS_EVENT_APP = [
@@ -153,17 +156,17 @@ const STEPS_EVENT_APP = [
   { key: 'approved', label: 'Approved' },
 ]
 
-// SHS's chain is longer: President -> Moderator -> SDG Rep (external,
-// bundled into the same "Pre-Approval" step) -> SDAO-SHS -> SDAO
-// Supervisor -> SHS Principal -> Academic Director -> Executive
-// Director -> Approved.
+// SHS's chain: President -> Moderator -> SDG Rep (external, bundled
+// into the same "Pre-Approval" step) -> SDAO-SHS -> SDAO Supervisor ->
+// SHS Principal -> Academic Director -> Approved. Executive Director
+// sign-off is no longer a required SHS stage — Academic Director is
+// the final internal approver, same as it always was for College.
 const STEPS_EVENT_APP_SHS = [
   { key: 'pre_approval', label: 'Pre-Approval' },
   { key: 'shs_review', label: 'SDAO-SHS' },
   { key: 'shs_supervisor_endorsement', label: 'SDAO Supervisor' },
   { key: 'shs_principal_approval', label: 'SHS Principal' },
   { key: 'shs_director_approval', label: 'Academic Director' },
-  { key: 'shs_executive_approval', label: 'Executive Director' },
   { key: 'approved', label: 'Approved' },
 ]
 
@@ -241,6 +244,12 @@ function nextActionFor(role, stage, type, isSHS) {
   // SHS submissions — ED sits at the very end of the SHS chain too, so
   // the bypass is the same "skip ahead" shortcut there as well.
   if (role === 'executive_director') {
+    // Executive Director keeps the universal cross-department bypass
+    // (approve from any stage, any type, with a mandatory justification
+    // — see edBypass below), but is no longer a mandatory stop in the
+    // SHS chain. A submission still parked at the legacy
+    // shs_executive_approval stage from before this change can still be
+    // waved through here.
     if (isSHS && stage === 'shs_executive_approval') {
       return { to: 'approved', action: 'approved', label: 'Approve' }
     }
@@ -261,14 +270,17 @@ function nextActionFor(role, stage, type, isSHS) {
       if (shsAssistantTurn) return { to: 'shs_supervisor_endorsement', action: 'checked', label: 'Check & Forward' }
       if (stage === 'shs_supervisor_endorsement') return { to: 'shs_principal_approval', action: 'endorsed', label: 'Endorse & Forward' }
       if (stage === 'shs_principal_approval') return { to: 'shs_director_approval', action: 'approved', label: 'Approve & Forward' }
-      if (stage === 'shs_director_approval') return { to: 'shs_executive_approval', action: 'approved', label: 'Approve & Forward' }
+      if (stage === 'shs_director_approval') return { to: 'approved', action: 'approved', label: 'Approve' }
+      // Legacy stage from before this change — still resolvable.
       if (stage === 'shs_executive_approval') return { to: 'approved', action: 'approved', label: 'Approve' }
       return null
     }
     if (role === 'sdao_shs' && shsAssistantTurn) return { to: 'shs_supervisor_endorsement', action: 'checked', label: 'Check & Forward' }
     if (role === 'sdao_supervisor' && stage === 'shs_supervisor_endorsement') return { to: 'shs_principal_approval', action: 'endorsed', label: 'Endorse & Forward' }
     if (role === 'shs_principal' && stage === 'shs_principal_approval') return { to: 'shs_director_approval', action: 'approved', label: 'Approve & Forward' }
-    if (role === 'academic_director' && stage === 'shs_director_approval') return { to: 'shs_executive_approval', action: 'approved', label: 'Approve & Forward' }
+    // Academic Director is now the FINAL internal approver for SHS —
+    // this used to forward to shs_executive_approval.
+    if (role === 'academic_director' && stage === 'shs_director_approval') return { to: 'approved', action: 'approved', label: 'Approve' }
     return null
   }
 

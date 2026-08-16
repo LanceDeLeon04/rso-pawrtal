@@ -33,12 +33,32 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/icon.png',
-      badge: '/icon.png',
-      data: { url: data.url || '/' },
-    })
+    (async () => {
+      // Show the OS-level popup. `silent: false` uses the browser/OS's
+      // own default notification sound — browsers don't support a
+      // custom `sound` option here, no matter what file we pass, so
+      // this line alone can never play nu-notif.mp3.
+      const showPromise = self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: '/icon.png',
+        badge: '/icon.png',
+        data: { url: data.url || '/' },
+        silent: false,
+      })
+
+      // Instead: tell every open tab/window of the app (foreground or
+      // background, including the installed PWA) to play our actual
+      // custom sound file itself via normal <audio> playback. This is
+      // the only way to get a custom sound in a web push flow, and it
+      // only works while the app is open somewhere — a fully closed
+      // browser will only ever get the OS default sound above.
+      const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      for (const client of clientsList) {
+        client.postMessage({ type: 'PLAY_NOTIFICATION_SOUND' })
+      }
+
+      await showPromise
+    })()
   )
 })
 

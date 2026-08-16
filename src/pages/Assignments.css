@@ -332,6 +332,10 @@
 
 .asg-target-tab {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   border: 1px solid var(--line);
   background: #fff;
   color: var(--muted);
@@ -346,6 +350,50 @@
   background: var(--nu-blue-700);
   color: #fff;
   border-color: var(--nu-blue-700);
+}
+
+.asg-inline-toggle {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  color: var(--nu-blue-700);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.asg-clearance-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #fdf3d9;
+  border: 1px solid #f0dca4;
+  color: #8a6408;
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.asg-clearance-chip {
+  display: inline-block;
+  margin: 3px 6px 0 0;
+  padding: 2px 7px;
+  background: #fff;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.asg-undo-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
 }
 
 /* ---------- Detail ---------- */

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   ClipboardList, Plus, X, Loader2, AlertCircle, Building2, User, Tag,
   CalendarClock, Undo2, CheckCircle2, Download, FileText, ArrowRight,
-  Link2, Trash2, Check,
+  Link2, Trash2, Check, ShieldAlert, RotateCcw, Paperclip,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isSHSReviewer } from '../context/AuthContext'
@@ -20,7 +20,8 @@ const STATUS_META = {
 
 const EMPTY_FORM = {
   title: '', description: '', targetType: 'user', assigned_to: '',
-  assigned_tag: '', assigned_org_id: '', submission_id: '', event_id: '', due_date: '',
+  assigned_tag: '', assigned_tag_custom: false, assigned_org_id: '',
+  submission_id: '', event_id: '', due_date: '',
 }
 
 export default function Assignments() {
@@ -67,10 +68,13 @@ export default function Assignments() {
   const [deliverableEntry, setDeliverableEntry] = useState(null) // File | { type: 'link', url }
   const [deliverableNote, setDeliverableNote] = useState('')
   const [submittingDeliverable, setSubmittingDeliverable] = useState(false)
+  const [deliverableError, setDeliverableError] = useState('')
+  const [undoing, setUndoing] = useState(false)
   const [reviewMode, setReviewMode] = useState(null)
   const [reviewComment, setReviewComment] = useState('')
   const [reviewing, setReviewing] = useState(false)
   const [reviewError, setReviewError] = useState('')
+  const [clearanceInfo, setClearanceInfo] = useState([])
 
   useEffect(() => {
     loadAssignments()
@@ -89,7 +93,7 @@ export default function Assignments() {
         supabase.from('events').select('id, title, event_date').order('event_date', { ascending: false }).limit(50),
       ])
       setPeople(p || [])
-      setPositions([...new Set((m || []).map((r) => r.position))])
+      setPositions([...new Set((m || []).map((r) => r.position).filter(Boolean))].sort())
       setPendingSubmissions(s || [])
       setEvents(e || [])
     }
@@ -274,16 +278,24 @@ export default function Assignments() {
     setSelected(a)
     setDeliverableEntry(null)
     setDeliverableNote('')
+    setDeliverableError('')
     setReviewMode(null)
     setReviewComment('')
     setReviewError('')
+    setClearanceInfo([])
     setDetailLoading(true)
-    const { data } = await supabase
-      .from('assignment_deliverables')
-      .select('*, uploader:profiles ( full_name )')
-      .eq('assignment_id', a.id)
-      .order('uploaded_at', { ascending: true })
+    const [{ data }, { data: clr }] = await Promise.all([
+      supabase
+        .from('assignment_deliverables')
+        .select('*, uploader:profiles ( full_name )')
+        .eq('assignment_id', a.id)
+        .order('uploaded_at', { ascending: true }),
+      admin
+        ? supabase.from('clearances').select('id, org_id, status, deadline, reason, organizations ( acronym )').eq('assignment_id', a.id)
+        : Promise.resolve({ data: [] }),
+    ])
     setDeliverables(data || [])
+    setClearanceInfo(clr || [])
     setDetailLoading(false)
   }
 
@@ -307,68 +319,127 @@ export default function Assignments() {
 
   async function handleSubmitDeliverable(e) {
     e.preventDefault()
-    if (!deliverableEntry) return
+    setDeliverableError('')
+    if (!deliverableEntry) {
+      setDeliverableError('Attach a file or paste a link before turning this in.')
+      return
+    }
     setSubmittingDeliverable(true)
 
     if (deliverableEntry.type === 'link') {
-      if (!/^https?:\/\/\S+$/i.test((deliverableEntry.url || '').trim())) {
+      const url = (deliverableEntry.url || '').trim()
+      if (!/^https?:\/\/\S+$/i.test(url)) {
         setSubmittingDeliverable(false)
+        setDeliverableError('That link doesn\'t look valid — it should start with http:// or https://')
         return
       }
-      await supabase.from('assignment_deliverables').insert({
+      const { error: insErr } = await supabase.from('assignment_deliverables').insert({
         assignment_id: selected.id,
-        file_url: deliverableEntry.url.trim(),
+        file_url: url,
         note: deliverableNote || null,
         uploaded_by: profile.id,
       })
+      if (insErr) {
+        setSubmittingDeliverable(false)
+        setDeliverableError(`Could not save the link: ${insErr.message}`)
+        return
+      }
     } else {
       const file = deliverableEntry
       const ext = file.name.split('.').pop()
-      const path = `${selected.id}/${Date.now()}.${ext}`
+      const path = `${selected.id}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
       const { error: upErr } = await supabase.storage.from('assignment-deliverables').upload(path, file)
       if (upErr) {
         setSubmittingDeliverable(false)
+        setDeliverableError(`Upload failed: ${upErr.message}. Ask a system admin to confirm the "assignment-deliverables" storage bucket exists.`)
         return
       }
-      const { data: signed } = await supabase.storage
+      const { data: signed, error: signErr } = await supabase.storage
         .from('assignment-deliverables')
         .createSignedUrl(path, 60 * 60 * 24 * 365 * 5)
 
-      await supabase.from('assignment_deliverables').insert({
+      const { error: insErr } = await supabase.from('assignment_deliverables').insert({
         assignment_id: selected.id,
         file_url: signed?.signedUrl || path,
         note: deliverableNote || null,
         uploaded_by: profile.id,
       })
+      if (signErr) console.warn('Could not sign deliverable URL, stored raw path instead:', signErr)
+      if (insErr) {
+        setSubmittingDeliverable(false)
+        setDeliverableError(`Uploaded, but could not record the deliverable: ${insErr.message}`)
+        return
+      }
     }
 
-    await supabase.from('assignments')
+    const { error: statusErr } = await supabase.from('assignments')
       .update({ status: 'submitted', updated_at: new Date().toISOString() })
       .eq('id', selected.id)
 
     setSubmittingDeliverable(false)
+    if (statusErr) {
+      setDeliverableError(`Deliverable saved, but the status update failed: ${statusErr.message}`)
+      // Refresh the deliverables list in place instead of closing, so the
+      // person can see their file went through even though status is stale.
+      const { data } = await supabase
+        .from('assignment_deliverables')
+        .select('*, uploader:profiles ( full_name )')
+        .eq('assignment_id', selected.id)
+        .order('uploaded_at', { ascending: true })
+      setDeliverables(data || [])
+      setDeliverableEntry(null)
+      setDeliverableNote('')
+      return
+    }
+
     setSelected(null)
     loadAssignments()
   }
 
+  // MS Teams-style "Undo turn in": while a submission is still awaiting
+  // review, the assignee can pull it back to Pending to attach more
+  // files or fix a mistake, without needing the reviewer to Return it.
+  async function handleUndoTurnIn() {
+    setUndoing(true)
+    setDeliverableError('')
+    const { error: err } = await supabase.from('assignments')
+      .update({ status: 'pending', updated_at: new Date().toISOString() })
+      .eq('id', selected.id)
+    setUndoing(false)
+    if (err) {
+      setDeliverableError(`Could not undo turn-in: ${err.message}`)
+      return
+    }
+    setSelected((s) => (s ? { ...s, status: 'pending' } : s))
+    loadAssignments()
+  }
+
   async function handleReview(kind) {
+    setReviewError('')
     if (kind === 'return' && !reviewComment.trim()) {
       setReviewError('Please provide a short reason.')
       return
     }
     setReviewing(true)
-    await supabase.from('assignments').update({
+    const { error: updErr } = await supabase.from('assignments').update({
       status: kind === 'approve' ? 'approved' : 'returned',
       review_comment: reviewComment || null,
       updated_at: new Date().toISOString(),
     }).eq('id', selected.id)
 
+    if (updErr) {
+      setReviewing(false)
+      setReviewError(`Could not ${kind === 'approve' ? 'approve' : 'return'} this task: ${updErr.message}`)
+      return
+    }
+
     if (kind === 'approve') {
       // Clear any clearance issue this overdue, non-event assignment opened.
-      await supabase.from('clearances')
+      const { error: clrErr } = await supabase.from('clearances')
         .update({ status: 'cleared', cleared_by: profile.id, cleared_at: new Date().toISOString() })
         .eq('assignment_id', selected.id)
         .neq('status', 'cleared')
+      if (clrErr) console.warn('Assignment approved, but clearing linked clearance issue failed:', clrErr)
     }
 
     setReviewing(false)
@@ -580,24 +651,56 @@ export default function Assignments() {
                 User
                 <select value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })} required>
                   <option value="">Select person</option>
-                  {people.map((p) => <option key={p.id} value={p.id}>{p.full_name} ({p.role.replace('_', ' ')})</option>)}
+                  {shsReviewer ? (
+                    <>
+                      <optgroup label="SHS Faculty">
+                        {people.filter((p) => p.role === 'shs_faculty').map((p) => (
+                          <option key={p.id} value={p.id}>{p.full_name}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="RSO Officers">
+                        {people.filter((p) => p.role !== 'shs_faculty').map((p) => (
+                          <option key={p.id} value={p.id}>{p.full_name} ({p.role.replace('_', ' ')})</option>
+                        ))}
+                      </optgroup>
+                    </>
+                  ) : (
+                    people.map((p) => <option key={p.id} value={p.id}>{p.full_name} ({p.role.replace('_', ' ')})</option>)
+                  )}
                 </select>
+                {shsReviewer && <span className="asg-hint">Includes SHS Faculty and officers of any SHS-department org.</span>}
               </label>
             )}
 
             {form.targetType === 'tag' && (
               <label className="asg-field">
                 Position Tag
-                <input
-                  list="asg-positions"
-                  placeholder="e.g. Treasurer"
-                  value={form.assigned_tag}
-                  onChange={(e) => setForm({ ...form, assigned_tag: e.target.value })}
-                  required
-                />
-                <datalist id="asg-positions">
-                  {positions.map((p) => <option key={p} value={p} />)}
-                </datalist>
+                {form.assigned_tag_custom || positions.length === 0 ? (
+                  <input
+                    placeholder="e.g. Treasurer"
+                    value={form.assigned_tag}
+                    onChange={(e) => setForm({ ...form, assigned_tag: e.target.value })}
+                    required
+                  />
+                ) : (
+                  <select
+                    value={form.assigned_tag}
+                    onChange={(e) => setForm({ ...form, assigned_tag: e.target.value })}
+                    required
+                  >
+                    <option value="">Select a position</option>
+                    {positions.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+                {positions.length > 0 && (
+                  <button
+                    type="button"
+                    className="asg-inline-toggle"
+                    onClick={() => setForm({ ...form, assigned_tag_custom: !form.assigned_tag_custom, assigned_tag: '' })}
+                  >
+                    {form.assigned_tag_custom ? 'Choose from existing positions instead' : "Position not listed? Type it manually"}
+                  </button>
+                )}
                 <span className="asg-hint">Reaches everyone holding this position, across all orgs.</span>
               </label>
             )}
@@ -672,6 +775,24 @@ export default function Assignments() {
               <div className="asg-review-note">"{selected.review_comment}"</div>
             )}
 
+            {admin && clearanceInfo.length > 0 && (
+              <div className="asg-clearance-note">
+                <ShieldAlert size={14} />
+                <div>
+                  <strong>Clearance issue attached.</strong>{' '}
+                  {clearanceInfo.map((c) => (
+                    <span key={c.id} className="asg-clearance-chip">
+                      {c.organizations?.acronym || 'Org'} — {c.status}
+                      {c.deadline && ` (was due ${c.deadline})`}
+                    </span>
+                  ))}
+                  <button type="button" className="asg-inline-toggle" onClick={() => navigate('/clearance')}>
+                    View in Clearance <ArrowRight size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="asg-detail-section">
               <span className="asg-detail-section__label">Deliverables</span>
               {detailLoading ? (
@@ -691,6 +812,16 @@ export default function Assignments() {
               )}
             </div>
 
+            {isMyAssignment(selected) && selected.status === 'submitted' && !selected.auto_generated && (
+              <div className="asg-undo-row">
+                <p className="asg-hint">Turned in. You can still fix or add something before it's reviewed.</p>
+                <button type="button" className="asg-btn asg-btn--outline" onClick={handleUndoTurnIn} disabled={undoing}>
+                  {undoing ? <Loader2 size={15} className="spin" /> : <><RotateCcw size={14} /> Undo Turn-in</>}
+                </button>
+                {deliverableError && <div className="asg-form-error"><AlertCircle size={14} /> {deliverableError}</div>}
+              </div>
+            )}
+
             {isMyAssignment(selected) && ['pending', 'returned', 'conditional_approved'].includes(selected.status) && (
               selected.auto_generated && selected.event_id ? (
                 <button className="asg-btn asg-btn--gold asg-btn--full" onClick={goSubmitReport}>
@@ -698,20 +829,21 @@ export default function Assignments() {
                 </button>
               ) : (
                 <form className="asg-deliverable-form" onSubmit={handleSubmitDeliverable}>
+                  {deliverableError && <div className="asg-form-error"><AlertCircle size={14} /> {deliverableError}</div>}
                   <div className="asg-target-tabs">
                     <button
                       type="button"
                       className={`asg-target-tab ${deliverableEntry?.type !== 'link' ? 'asg-target-tab--active' : ''}`}
-                      onClick={() => setDeliverableEntry(null)}
+                      onClick={() => { setDeliverableEntry(null); setDeliverableError('') }}
                     >
-                      Upload File
+                      <Paperclip size={13} /> Upload File
                     </button>
                     <button
                       type="button"
                       className={`asg-target-tab ${deliverableEntry?.type === 'link' ? 'asg-target-tab--active' : ''}`}
-                      onClick={() => setDeliverableEntry({ type: 'link', url: '' })}
+                      onClick={() => { setDeliverableEntry({ type: 'link', url: '' }); setDeliverableError('') }}
                     >
-                      Paste Link
+                      <Link2 size={13} /> Paste Link
                     </button>
                   </div>
 
