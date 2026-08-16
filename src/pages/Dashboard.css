@@ -209,6 +209,22 @@
   color: #1f8a4c;
 }
 
+.dash-alert--link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.dash-alert--link:hover {
+  filter: brightness(0.96);
+}
+
+.dash-alert__chevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
+}
+
 @media (max-width: 1100px) {
   .dash-cards { grid-template-columns: repeat(2, 1fr); }
   .dash-columns { grid-template-columns: 1fr; }

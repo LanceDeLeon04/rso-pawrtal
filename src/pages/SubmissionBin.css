@@ -5,6 +5,95 @@
   height: 100%;
 }
 
+/* ---------- Overview metrics ---------- */
+.sb-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sb-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+.sb-metric-card__value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--nu-navy);
+  line-height: 1.2;
+}
+
+.sb-metric-card__label {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.sb-metric-card--warn .sb-metric-card__value { color: #8a6408; }
+.sb-metric-card--ok .sb-metric-card__value { color: #1f8a4c; }
+.sb-metric-card--muted .sb-metric-card__value { color: var(--muted); }
+
+@media (max-width: 720px) {
+  .sb-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---------- Bin tabs ---------- */
+.sb-bin-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+
+.sb-bin-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+
+.sb-bin-tab:hover {
+  color: var(--nu-blue-700);
+  background: var(--paper);
+}
+
+.sb-bin-tab--active {
+  color: var(--nu-blue-700);
+  border-bottom-color: var(--nu-blue-700);
+  background: var(--paper);
+}
+
+.sb-bin-tab__count {
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--paper);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 1px 7px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.sb-bin-tab--active .sb-bin-tab__count {
+  background: var(--nu-blue-700);
+  color: #fff;
+}
+
 /* ---------- Toolbar ---------- */
 .sb-toolbar {
   display: flex;

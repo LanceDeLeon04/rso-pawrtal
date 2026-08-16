@@ -131,6 +131,86 @@ export default function RescheduleRequests() {
   )
 }
 
+// --- Venue availability checking, mirroring the same policy used on the
+// original Event Application in SubmissionBin.jsx: a venue is unavailable
+// on a date if another activity holds a 'pencil' or 'reserved' booking
+// there, or admin/FMO has 'blocked' the date via venue_blocks. Bookings on
+// the same venue + date may coexist if their times (plus a 2-hour
+// ingress/egress buffer, capped to 6:00 AM–9:00 PM gate hours) don't
+// overlap. The event being rescheduled is excluded from the check so it
+// doesn't conflict with itself.
+const INGRESS_EGRESS_BUFFER_MIN = 2 * 60
+const GATE_OPEN_MIN = 6 * 60
+const GATE_CLOSE_MIN = 21 * 60
+
+function toMinutes(t) {
+  if (!t) return null
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
+function coreWindow(startTime, endTime) {
+  const start = toMinutes(startTime)
+  const end = toMinutes(endTime)
+  if (start == null || end == null) return null
+  return [start, end]
+}
+function bufferedWindow(startTime, endTime) {
+  const core = coreWindow(startTime, endTime)
+  if (!core) return null
+  const [start, end] = core
+  return [Math.max(GATE_OPEN_MIN, start - INGRESS_EGRESS_BUFFER_MIN), Math.min(GATE_CLOSE_MIN, end + INGRESS_EGRESS_BUFFER_MIN)]
+}
+function windowsOverlap(a, b) {
+  return a[0] < b[1] && b[0] < a[1]
+}
+
+// Returns null when clear, or { blocking, message }.
+async function checkVenueAvailability(venueId, date, startTime, endTime, excludeEventId) {
+  if (!venueId || !date) return null
+
+  // venue_ids is an array column — match rows where it contains venueId.
+  let eventsQuery = supabase
+    .from('events')
+    .select('id, booking_status, start_time, end_time, venue_ids, organizations ( acronym )')
+    .eq('event_date', date)
+    .in('booking_status', ['pencil', 'reserved'])
+    .contains('venue_ids', [venueId])
+  if (excludeEventId) eventsQuery = eventsQuery.neq('id', excludeEventId)
+
+  const [{ data: existingEvents }, { data: existingBlocks }] = await Promise.all([
+    eventsQuery,
+    supabase.from('venue_blocks').select('id, reason').eq('venue_id', venueId).eq('block_date', date),
+  ])
+
+  if (existingBlocks && existingBlocks.length > 0) {
+    const reason = existingBlocks[0].reason
+    return { blocking: true, message: `Blocked on this date${reason ? ` (${reason})` : ''}.` }
+  }
+
+  if (existingEvents && existingEvents.length > 0) {
+    const newCore = coreWindow(startTime, endTime)
+    const newBuffered = bufferedWindow(startTime, endTime)
+    if (!newCore || !newBuffered) {
+      const status = existingEvents[0].booking_status
+      return { blocking: true, message: `Already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by another activity.` }
+    }
+    for (const ev of existingEvents) {
+      const evCore = coreWindow(ev.start_time, ev.end_time)
+      const evBuffered = bufferedWindow(ev.start_time, ev.end_time)
+      const orgLabel = ev.organizations?.acronym || 'another activity'
+      if (!evCore || !evBuffered) {
+        const status = ev.booking_status
+        return { blocking: true, message: `Already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by ${orgLabel}.` }
+      }
+      if (windowsOverlap(newCore, evBuffered) || windowsOverlap(evCore, newBuffered)) {
+        const status = ev.booking_status
+        return { blocking: true, message: `Already ${status === 'reserved' ? 'reserved' : 'pencil booked'} during an overlapping time (incl. ingress/egress buffers) by ${orgLabel}.` }
+      }
+    }
+  }
+  return null
+}
+
 function venueLine(ids, details, venues) {
   if (!ids || !ids.length) return '—'
   return ids.map((id) => {
@@ -147,6 +227,7 @@ function NewRequestForm({ events, venues, preselectEventId, onDone, onCancel }) 
   const [items, setItems] = useState([{ original_event_date: '', new_event_date: '', new_start_time: '', new_end_time: '', new_venue_ids: [] }])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [availability, setAvailability] = useState({}) // key: `${itemIdx}:${venueId}` -> { blocking, message } | 'checking'
 
   const selectedEvent = events.find((e) => e.id === eventId)
   const originalDates = useMemo(() => {
@@ -174,6 +255,37 @@ function NewRequestForm({ events, venues, preselectEventId, onDone, onCancel }) 
     }))
   }
 
+  // Re-run venue/date/time conflict checks — same policy as the original
+  // Event Application — whenever a date entry's date, time, or venue
+  // selection changes. The activity being rescheduled is excluded so its
+  // own current booking never shows up as a conflict with itself.
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      const pending = {}
+      items.forEach((it, i) => {
+        it.new_venue_ids.forEach((venueId) => { pending[`${i}:${venueId}`] = 'checking' })
+      })
+      setAvailability(pending)
+      const results = {}
+      await Promise.all(
+        items.flatMap((it, i) => it.new_venue_ids.map(async (venueId) => {
+          if (!it.new_event_date) { results[`${i}:${venueId}`] = null; return }
+          const res = await checkVenueAvailability(venueId, it.new_event_date, it.new_start_time, it.new_end_time, eventId)
+          results[`${i}:${venueId}`] = res
+        }))
+      )
+      if (!cancelled) setAvailability(results)
+    }
+    if (items.some((it) => it.new_event_date && it.new_venue_ids.length)) run()
+    else setAvailability({})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, JSON.stringify(items.map((it) => [it.new_event_date, it.new_start_time, it.new_end_time, it.new_venue_ids]))])
+
+  const hasBlockingConflict = Object.values(availability).some((v) => v && v.blocking)
+  const stillChecking = Object.values(availability).some((v) => v === 'checking')
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
@@ -183,6 +295,8 @@ function NewRequestForm({ events, venues, preselectEventId, onDone, onCancel }) 
       if (!it.new_event_date) { setError('Every date entry needs a new date.'); return }
       if (!it.new_venue_ids.length) { setError('Select at least one venue for each date entry.'); return }
     }
+    if (stillChecking) { setError('Still checking venue availability, please wait a moment.'); return }
+    if (hasBlockingConflict) { setError('One or more of your selected venues has a scheduling conflict on the new date/time. Please resolve the conflicts (shown below) before submitting.'); return }
 
     setSaving(true)
     const { error: err } = await supabase.rpc('create_reschedule_request', {
@@ -256,12 +370,23 @@ function NewRequestForm({ events, venues, preselectEventId, onDone, onCancel }) 
               <div className="rr-field">
                 New Venue(s)
                 <div className="rr-venue-checks">
-                  {venues.map((v) => (
-                    <label key={v.id} className="rr-venue-check">
-                      <input type="checkbox" checked={it.new_venue_ids.includes(v.id)} onChange={() => toggleVenue(i, v.id)} />
-                      {v.name}
-                    </label>
-                  ))}
+                  {venues.map((v) => {
+                    const status = availability[`${i}:${v.id}`]
+                    return (
+                      <label key={v.id} className="rr-venue-check">
+                        <input type="checkbox" checked={it.new_venue_ids.includes(v.id)} onChange={() => toggleVenue(i, v.id)} />
+                        {v.name}
+                        {it.new_venue_ids.includes(v.id) && status === 'checking' && (
+                          <Loader2 size={11} className="spin" />
+                        )}
+                        {it.new_venue_ids.includes(v.id) && status && status !== 'checking' && (
+                          <span className={`rr-venue-status rr-venue-status--${status.blocking ? 'blocked' : 'warn'}`}>
+                            <AlertCircle size={11} /> {status.message}
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })}
                 </div>
               </div>
               {items.length > 1 && (
@@ -280,7 +405,8 @@ function NewRequestForm({ events, venues, preselectEventId, onDone, onCancel }) 
 
         <div className="rr-form-actions">
           <button type="button" className="rr-btn rr-btn--ghost" onClick={onCancel} disabled={saving}>Cancel</button>
-          <button className="rr-btn rr-btn--gold" type="submit" disabled={saving}>
+          <button className="rr-btn rr-btn--gold" type="submit" disabled={saving || stillChecking || hasBlockingConflict}
+            title={hasBlockingConflict ? 'Resolve venue conflicts before submitting' : undefined}>
             {saving ? <Loader2 size={14} className="spin" /> : 'Submit Request'}
           </button>
         </div>

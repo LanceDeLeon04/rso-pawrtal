@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, CalendarDays, Inbox, ShieldCheck, Building2,
-  AlertTriangle, ChevronRight, Loader2, CheckCircle2, Clock,
+  AlertTriangle, ChevronRight, Loader2, CheckCircle2, Clock, ClipboardCheck,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
@@ -46,6 +46,7 @@ export default function Dashboard() {
     clearanceOverdue: 0,
     myClearanceBlocked: false,
     myReviewQueue: 0,
+    myOpenAssignments: 0,
   })
 
   useEffect(() => {
@@ -109,6 +110,9 @@ export default function Dashboard() {
     } else if (myOrgId) {
       queries.push(
         supabase.from('clearances').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).in('status', ['pending', 'overdue']),
+        // RLS already scopes assignments to ones targeting me / my org /
+        // my position tag, so no extra filter is needed here.
+        supabase.from('assignments').select('id', { count: 'exact', head: true }).in('status', ['pending', 'returned', 'conditional_approved']),
       )
     }
 
@@ -133,6 +137,7 @@ export default function Dashboard() {
       if (rest[3]) next.myReviewQueue = rest[3].count || 0
     } else if (myOrgId) {
       next.myClearanceBlocked = (rest[0]?.count || 0) > 0
+      next.myOpenAssignments = rest[1]?.count || 0
     }
 
     setMetrics(next)
@@ -241,35 +246,47 @@ export default function Dashboard() {
 
           <div className="dash-alerts">
             {admin && metrics.myReviewQueue > 0 && (
-              <div className="dash-alert dash-alert--warn">
+              <Link to="/submissions" className="dash-alert dash-alert--warn dash-alert--link">
                 <Clock size={15} />
                 <span><strong>{metrics.myReviewQueue}</strong> submission{metrics.myReviewQueue !== 1 ? 's' : ''} waiting on your action.</span>
-              </div>
+                <ChevronRight size={14} className="dash-alert__chevron" />
+              </Link>
             )}
 
             {admin && metrics.clearanceOverdue > 0 && (
-              <div className="dash-alert dash-alert--danger">
+              <Link to="/clearance" className="dash-alert dash-alert--danger dash-alert--link">
                 <AlertTriangle size={15} />
                 <span><strong>{metrics.clearanceOverdue}</strong> org{metrics.clearanceOverdue !== 1 ? 's have' : ' has'} an overdue clearance report.</span>
-              </div>
+                <ChevronRight size={14} className="dash-alert__chevron" />
+              </Link>
             )}
 
             {!admin && metrics.myClearanceBlocked && (
-              <div className="dash-alert dash-alert--danger">
+              <Link to="/clearance" className="dash-alert dash-alert--danger dash-alert--link">
                 <AlertTriangle size={15} />
                 <span>Your org has an unresolved clearance report — new event submissions are blocked until it's cleared.</span>
-              </div>
+                <ChevronRight size={14} className="dash-alert__chevron" />
+              </Link>
             )}
 
             {!admin && metrics.pendingSubmissions > 0 && (
-              <div className="dash-alert dash-alert--warn">
+              <Link to="/submissions" className="dash-alert dash-alert--warn dash-alert--link">
                 <Clock size={15} />
                 <span><strong>{metrics.pendingSubmissions}</strong> submission{metrics.pendingSubmissions !== 1 ? 's' : ''} currently in review.</span>
-              </div>
+                <ChevronRight size={14} className="dash-alert__chevron" />
+              </Link>
+            )}
+
+            {!admin && metrics.myOpenAssignments > 0 && (
+              <Link to="/assignments" className="dash-alert dash-alert--warn dash-alert--link">
+                <ClipboardCheck size={15} />
+                <span><strong>{metrics.myOpenAssignments}</strong> task{metrics.myOpenAssignments !== 1 ? 's' : ''} assigned to your org need{metrics.myOpenAssignments === 1 ? 's' : ''} attention.</span>
+                <ChevronRight size={14} className="dash-alert__chevron" />
+              </Link>
             )}
 
             {((admin && metrics.myReviewQueue === 0 && metrics.clearanceOverdue === 0) ||
-              (!admin && !metrics.myClearanceBlocked && metrics.pendingSubmissions === 0)) && (
+              (!admin && !metrics.myClearanceBlocked && metrics.pendingSubmissions === 0 && metrics.myOpenAssignments === 0)) && (
               <div className="dash-alert dash-alert--ok">
                 <CheckCircle2 size={15} />
                 <span>All caught up — nothing needs your attention right now.</span>

@@ -177,6 +177,27 @@ const STEPS_REPORT_SHS = [
   { key: 'approved', label: 'Received' },
 ]
 
+// Buckets a submission into one of the Submission Bin's four tabs.
+// 'action'   — it's this reviewer's turn to act on it right now (or, for
+//              an org officer, it's still moving through the approval
+//              chain at all — they can't act, but it's "in progress").
+// 'approved' — fully approved / received.
+// 'others'   — draft, returned, rejected, cancelled, or (for a reviewer)
+//              pending with someone else in the chain.
+function binTabFor(sub, { admin, role }) {
+  if (sub.stage === 'approved') return 'approved'
+  if (['returned', 'rejected', 'cancelled', 'draft'].includes(sub.stage)) return 'others'
+  if (admin) {
+    const isSHS = sub.organizations?.department === 'shs'
+    const mine = !!nextActionFor(role, sub.stage, sub.type, isSHS)
+    return mine ? 'action' : 'others'
+  }
+  // Org officer view: anything still moving through the chain counts as
+  // "in progress" rather than "awaiting my approval" (they're not the
+  // approver), everything else already landed in approved/others above.
+  return 'action'
+}
+
 const REVIEWER_ROLES = [
   'sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin', 'executive_director',
   'sdao_shs', 'shs_principal',
@@ -591,6 +612,7 @@ export default function SubmissionBin() {
   const [typeFilter, setTypeFilter] = useState('all')
   const [stageFilter, setStageFilter] = useState('all')
   const [orgFilter, setOrgFilter] = useState('all')
+  const [binTab, setBinTab] = useState('action')
   const [search, setSearch] = useState('')
   const [filterOrgs, setFilterOrgs] = useState([])
   const [venues, setVenues] = useState([])
@@ -3073,8 +3095,70 @@ export default function SubmissionBin() {
       })
     : submissions
 
+  // Overview counts + tab bucketing computed off the currently loaded
+  // (type/stage/org filtered) submissions, before the search narrows the
+  // table — so the tab counts reflect "how many are in this bucket",
+  // and search just narrows within whichever tab is selected.
+  const binCounts = visibleSubmissions.reduce(
+    (acc, s) => {
+      const bucket = binTabFor(s, { admin, role: profile?.role })
+      acc[bucket] = (acc[bucket] || 0) + 1
+      acc.all += 1
+      return acc
+    },
+    { action: 0, approved: 0, others: 0, all: 0 }
+  )
+  const tabbedSubmissions = binTab === 'all'
+    ? visibleSubmissions
+    : visibleSubmissions.filter((s) => binTabFor(s, { admin, role: profile?.role }) === binTab)
+
+  const BIN_TABS = admin
+    ? [
+        { key: 'action', label: 'Awaiting My Approval', count: binCounts.action },
+        { key: 'approved', label: 'Approved', count: binCounts.approved },
+        { key: 'others', label: 'Others', count: binCounts.others },
+        { key: 'all', label: 'All', count: binCounts.all },
+      ]
+    : [
+        { key: 'action', label: 'In Review', count: binCounts.action },
+        { key: 'approved', label: 'Approved', count: binCounts.approved },
+        { key: 'others', label: 'Others', count: binCounts.others },
+        { key: 'all', label: 'All', count: binCounts.all },
+      ]
+
   return (
     <div className="sb-page">
+      <div className="sb-metrics">
+        <div className="sb-metric-card">
+          <span className="sb-metric-card__value">{binCounts.all}</span>
+          <span className="sb-metric-card__label">Total Submissions</span>
+        </div>
+        <div className="sb-metric-card sb-metric-card--warn">
+          <span className="sb-metric-card__value">{binCounts.action}</span>
+          <span className="sb-metric-card__label">{admin ? 'Awaiting My Approval' : 'In Review'}</span>
+        </div>
+        <div className="sb-metric-card sb-metric-card--ok">
+          <span className="sb-metric-card__value">{binCounts.approved}</span>
+          <span className="sb-metric-card__label">Approved</span>
+        </div>
+        <div className="sb-metric-card sb-metric-card--muted">
+          <span className="sb-metric-card__value">{binCounts.others}</span>
+          <span className="sb-metric-card__label">Others</span>
+        </div>
+      </div>
+
+      <div className="sb-bin-tabs">
+        {BIN_TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`sb-bin-tab ${binTab === t.key ? 'sb-bin-tab--active' : ''}`}
+            onClick={() => setBinTab(t.key)}
+          >
+            {t.label} <span className="sb-bin-tab__count">{t.count}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="sb-toolbar">
         <div className="sb-toolbar__filters">
           <select className="sb-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
@@ -3153,10 +3237,10 @@ export default function SubmissionBin() {
         {listError && <div className="sb-form-error"><AlertCircle size={14} /> {listError}</div>}
         {loading ? (
           <div className="sb-loading"><Loader2 size={22} className="spin" /></div>
-        ) : visibleSubmissions.length === 0 ? (
+        ) : tabbedSubmissions.length === 0 ? (
           <div className="sb-empty">
             <Inbox size={26} strokeWidth={1.6} />
-            <p>{submissions.length === 0 ? 'No submissions here yet.' : 'Nothing matches this search.'}</p>
+            <p>{submissions.length === 0 ? 'No submissions here yet.' : (search.trim() ? 'Nothing matches this search.' : 'Nothing in this tab right now.')}</p>
           </div>
         ) : (
           <div className="table-scroll">
@@ -3173,7 +3257,7 @@ export default function SubmissionBin() {
               </tr>
             </thead>
             <tbody>
-              {visibleSubmissions.map((s) => {
+              {tabbedSubmissions.map((s) => {
                 const meta = STAGE_META[s.stage]
                 const isConfirmingDelete = confirmDeleteId === s.id
                 return (
