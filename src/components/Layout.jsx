@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, CalendarDays, Inbox, FileText, ShieldCheck,
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
-  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info, CalendarClock, Menu,
+  Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info, CalendarClock, Menu, ClipboardCheck,
 } from 'lucide-react'
 import {
   useAuth, isAdminTier, isFMO, isExecutiveDirector,
@@ -40,6 +40,9 @@ const NAV_ITEMS = [
   // Director work the queue — same shape as Submission Bin's audience
   // (migration 062). Not for FMO/ED/SHS Principal/SHS Faculty.
   { to: '/reschedule-requests', label: 'Reschedule Requests', icon: CalendarClock, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true },
+  // Annual RSO renewal — College orgs only, same exclusions as
+  // Reschedule Requests plus SDAO-SHS (migration 070).
+  { to: '/renewal', label: 'RSO Renewal', icon: ClipboardCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true, hideForShsAdmin: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/about', label: 'About the System', icon: Info },
 ]
@@ -94,6 +97,7 @@ export default function Layout() {
   // Moderator (role stays 'rso_officer' — see isSHSFacultyModerator).
   const shsVenueParty = isSHSVenueRequestParty(profile?.role) || isSHSFacultyModerator(profile)
   const seesAllDepts = seesAllDepartments(profile?.role)
+  const shsAdmin = profile?.role === 'sdao_shs'
   const visibleNav = NAV_ITEMS.filter((item) =>
     // Accounts is admin-only, PLUS SDAO-SHS/SHS Principal, who get a
     // narrowed version of it (SHS orgs + SHS RSO/Moderator accounts
@@ -103,6 +107,7 @@ export default function Layout() {
     && (!ed || !item.hideForED)
     && (!shsPrincipal || !item.hideForShsPrincipal)
     && (!shsFaculty || !item.hideForShsFaculty)
+    && (!shsAdmin || !item.hideForShsAdmin)
     // Venue Request only ever shows for the three roles inside that
     // chain — Faculty, SDAO-SHS, SHS Principal — never for full admins,
     // FMO, or College roles.

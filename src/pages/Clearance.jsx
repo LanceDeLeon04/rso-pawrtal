@@ -6,7 +6,7 @@ import {
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isSHSReviewer } from '../context/AuthContext'
-import { toISODate } from '../lib/dateUtils'
+import { toISODate, parseISO } from '../lib/dateUtils'
 import { reconcileOwnOverdueAssignments } from '../lib/clearanceReconcile'
 import './Clearance.css'
 
@@ -20,7 +20,11 @@ const STATUS_META = {
 function daysUntil(dateStr) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const target = new Date(dateStr)
+  // parseISO, not `new Date(dateStr)` — dateStr is a bare 'YYYY-MM-DD'
+  // and the native parser treats that as UTC midnight, which in any
+  // browser west of UTC lands a day early and threw off the
+  // pending/overdue countdown by a day.
+  const target = parseISO(dateStr)
   target.setHours(0, 0, 0, 0)
   return Math.round((target - today) / (1000 * 60 * 60 * 24))
 }

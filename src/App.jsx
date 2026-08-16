@@ -20,6 +20,7 @@ import ExternalApproval from './pages/ExternalApproval'
 import EventVerification from './pages/EventVerification'
 import VenueRequest from './pages/VenueRequest'
 import RescheduleRequests from './pages/RescheduleRequests'
+import OrgRenewal from './pages/OrgRenewal'
 
 export default function App() {
   return (
@@ -126,6 +127,14 @@ export default function App() {
             <Route
               path="/reschedule-requests"
               element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal', 'shs_faculty']}><RescheduleRequests /></ProtectedRoute>}
+            />
+            {/* Annual RSO renewal: org (President) submits requirements;
+                SDAO Assistant/Supervisor/Academic Director work the
+                approval queue. Not an SHS concern (no shs_shs/shs_faculty/
+                shs_principal here), same exclusions as Reschedule Requests. */}
+            <Route
+              path="/renewal"
+              element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal', 'shs_faculty', 'sdao_shs']}><OrgRenewal /></ProtectedRoute>}
             />
             <Route
               path="/settings"

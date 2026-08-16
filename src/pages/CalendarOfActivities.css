@@ -241,7 +241,8 @@
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
 }
 
@@ -264,6 +265,9 @@
   border-bottom: 1px solid var(--line);
   background: var(--paper);
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .cal-weekday {
@@ -279,10 +283,9 @@
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: 1fr;
+  grid-auto-rows: minmax(92px, 1fr);
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
 }
 
 .cal-cell {

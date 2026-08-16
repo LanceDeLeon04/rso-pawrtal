@@ -23,7 +23,11 @@ const ROLE_LABELS = {
 
 function fmtDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  // d is a bare 'YYYY-MM-DD' event_date string. `new Date(d)` parses
+  // that as UTC midnight, which renders as the previous day in any
+  // browser west of UTC — parse the y/m/d as local instead.
+  const [y, m, day] = d.split('-').map(Number)
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
 function fmtDateTime(d) {

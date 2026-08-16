@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
-import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates, examPreWeekRange } from '../lib/dateUtils'
+import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates, examPreWeekRange, parseISO } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
 import { generateReplySlipPdf } from '../lib/replySlipPdf'
@@ -991,7 +991,12 @@ export default function SubmissionBin() {
           status: stageMeta?.label || a.stage,
           eventDate: a.is_continuing
             ? (a.continuing_type === 'term' ? `Term ${a.term_label || ''}`.trim() : 'Year-Round')
-            : (a.event_date ? new Date(a.event_date).toLocaleDateString('en-PH') : '—'),
+            // event_date is a bare 'YYYY-MM-DD' string — parse it as a
+            // local date (parseISO), not `new Date(iso)` which JS treats
+            // as UTC midnight and can render as the previous day in any
+            // browser west of UTC. This was the cause of dates shifting
+            // by a day on this list for some viewers.
+            : (a.event_date ? parseISO(a.event_date).toLocaleDateString('en-PH') : '—'),
           reportSubmission: report
             ? `Submitted — ${reportStageMeta?.label || report.stage}`
             : (a.stage === 'approved' ? 'Not yet submitted' : 'N/A (not yet approved)'),
@@ -2883,7 +2888,11 @@ export default function SubmissionBin() {
             // SDAO Assistant assigned when forwarding this application.
             deadlineISO = sub.report_submission_date
           } else {
-            const deadline = new Date(sub.event_date)
+            // parseISO, not `new Date(sub.event_date)` — that parses a
+            // bare 'YYYY-MM-DD' string as UTC midnight, which shifts to
+            // the previous local day in any browser west of UTC and was
+            // writing the wrong clearance deadline to the database.
+            const deadline = parseISO(sub.event_date)
             deadline.setDate(deadline.getDate() + 7)
             deadlineISO = toISODate(deadline)
           }
@@ -2921,7 +2930,9 @@ export default function SubmissionBin() {
               .eq('org_id', sub.org_id)
               .eq('position', 'President')
               .maybeSingle()
-            const securityDue = new Date(sub.event_date)
+            // Same parseISO fix as the clearance deadline above — avoids
+            // writing the security letter's due_date a day early/late.
+            const securityDue = parseISO(sub.event_date)
             securityDue.setDate(securityDue.getDate() - 3)
             await supabase.from('assignments').insert({
               title: `Security Office Letter — ${sub.title}`,

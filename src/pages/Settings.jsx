@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
   Loader2, AlertCircle, CheckCircle2, UserCheck, UserX, Building2, FlaskConical, Plus, Trash2,
-  Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star, Mail,
+  Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star, Mail, RefreshCw, CalendarClock,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -39,6 +39,7 @@ export default function Settings() {
       <NotificationsSection profileId={profile?.id} />
       <PasswordSection completePasswordChange={completePasswordChange} />
       {canManageFeatureFlags && <FeatureFlagsSection />}
+      {canManageFeatureFlags && <RenewalPolicySection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
       <FeedbackSection profile={profile} />
@@ -245,6 +246,145 @@ function FeatureFlagsSection() {
           <span className="set-switch__knob" />
         </button>
       </div>
+      </div>
+    </section>
+  )
+}
+
+// SDAO opens/manages RSO Renewal for the current academic year:
+// setting it "open" auto-assigns a renewal to every org's President
+// (see open_org_renewal in migration 070), and SDAO can set/extend the
+// submission deadline and choose whether Constitution & By-Laws can be
+// declared via checkbox instead of a fresh upload each year.
+function RenewalPolicySection() {
+  const [loading, setLoading] = useState(true)
+  const [ay, setAy] = useState(null)
+  const [settings, setSettings] = useState(null)
+  const [deadline, setDeadline] = useState('')
+  const [allowBylaws, setAllowBylaws] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    const { data: currentAy } = await supabase.from('academic_years').select('*').eq('is_current', true).maybeSingle()
+    setAy(currentAy || null)
+    if (currentAy) {
+      const { data: rs } = await supabase.from('renewal_settings').select('*').eq('academic_year_id', currentAy.id).maybeSingle()
+      setSettings(rs || null)
+      setDeadline(rs?.deadline || '')
+      setAllowBylaws(!!rs?.allow_bylaws_checkbox)
+    } else {
+      setSettings(null)
+    }
+    setLoading(false)
+  }
+
+  async function handleOpen() {
+    if (!ay) return
+    setError(''); setMsg(''); setSaving(true)
+    const { error: err } = await supabase.rpc('open_org_renewal', {
+      p_academic_year_id: ay.id,
+      p_deadline: deadline || null,
+      p_allow_bylaws_checkbox: allowBylaws,
+    })
+    setSaving(false)
+    if (err) { setError(err.message || 'Could not open renewal.'); return }
+    setMsg('Renewal is open — every org\'s President has been assigned their renewal requirements.')
+    load()
+  }
+
+  async function handleSaveDeadline() {
+    if (!ay) return
+    setError(''); setMsg(''); setSaving(true)
+    const { error: err } = await supabase.rpc('update_org_renewal_deadline', {
+      p_academic_year_id: ay.id,
+      p_deadline: deadline || null,
+      p_allow_bylaws_checkbox: allowBylaws,
+    })
+    setSaving(false)
+    if (err) { setError(err.message || 'Could not update the deadline.'); return }
+    setMsg('Deadline updated.')
+    load()
+  }
+
+  async function handleClose() {
+    if (!ay) return
+    setError(''); setMsg(''); setSaving(true)
+    const { error: err } = await supabase.rpc('close_org_renewal', { p_academic_year_id: ay.id })
+    setSaving(false)
+    if (err) { setError(err.message || 'Could not close renewal.'); return }
+    setMsg('Renewal closed to new submissions. Renewals already submitted keep moving through review.')
+    load()
+  }
+
+  return (
+    <section className="set-section">
+      <div className="set-card">
+        <span className="set-card__label"><CalendarClock size={13} /> RSO Renewal Policy</span>
+
+        {loading ? (
+          <div className="set-toggle-row__hint"><Loader2 size={13} className="spin" /> Loading...</div>
+        ) : !ay ? (
+          <p className="set-toggle-row__hint">Set a current Academic Year first (Calendar of Activities → Academic Year &amp; Terms) before opening renewal.</p>
+        ) : (
+          <>
+            <p className="set-toggle-row__hint" style={{ marginTop: -4, marginBottom: 12 }}>
+              For <strong>{ay.label}</strong>. Opening renewal auto-assigns every org's President to submit their
+              renewal requirements, with an approval tracker through SDAO Assistant → SDAO Supervisor → Academic Director.
+            </p>
+
+            <div className="set-toggle-row">
+              <div>
+                <strong>Renewal Status</strong>
+                <p className="set-toggle-row__hint">
+                  {settings?.is_open ? 'Open — Presidents can submit renewal requirements.' : 'Not open yet.'}
+                </p>
+              </div>
+              <span className={`set-switch ${settings?.is_open ? 'set-switch--on' : ''}`} aria-pressed={!!settings?.is_open}>
+                <span className="set-switch__knob" />
+              </span>
+            </div>
+
+            <div className="set-name-form" style={{ marginTop: 10 }}>
+              <label className="set-field">
+                Submission Deadline
+                <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+              </label>
+              <label className="set-toggle-row" style={{ cursor: 'pointer' }}>
+                <input type="checkbox" checked={allowBylaws} onChange={(e) => setAllowBylaws(e.target.checked)} style={{ width: 16, height: 16 }} />
+                <div>
+                  <strong>Allow Constitution &amp; By-Laws checkbox</strong>
+                  <p className="set-toggle-row__hint">Let a President declare "on file, no changes" instead of re-uploading the document.</p>
+                </div>
+              </label>
+            </div>
+
+            {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
+            {msg && <div className="set-success"><CheckCircle2 size={13} /> {msg}</div>}
+
+            <div className="set-row-actions" style={{ marginTop: 10 }}>
+              {!settings?.is_open ? (
+                <button className="set-btn set-btn--gold" onClick={handleOpen} disabled={saving}>
+                  {saving ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Open Renewal
+                </button>
+              ) : (
+                <>
+                  <button className="set-btn set-btn--outline" onClick={handleSaveDeadline} disabled={saving}>
+                    {saving ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Update Deadline
+                  </button>
+                  <button className="set-btn set-btn--outline" onClick={handleClose} disabled={saving}>
+                    <X size={14} /> Close to New Submissions
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </section>
   )
