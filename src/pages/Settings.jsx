@@ -3,6 +3,7 @@ import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
   Loader2, AlertCircle, CheckCircle2, UserCheck, UserX, Building2, FlaskConical, Plus, Trash2,
   Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star, Mail, RefreshCw, CalendarClock,
+  KeyRound, Eye, EyeOff, Shuffle, GraduationCap, Megaphone, Leaf,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -40,6 +41,7 @@ export default function Settings() {
       <PasswordSection completePasswordChange={completePasswordChange} />
       {canManageFeatureFlags && <FeatureFlagsSection />}
       {canManageFeatureFlags && <RenewalPolicySection />}
+      {canManageFeatureFlags && <ExternalApproverPinsSection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
       <FeedbackSection profile={profile} />
@@ -387,6 +389,227 @@ function RenewalPolicySection() {
         )}
       </div>
     </section>
+  )
+}
+
+// SDAO/Admin assign a hidden 4-digit security PIN per external
+// approver (Adviser per org, the 4 fixed Deans, the 4 fixed SDG
+// Representatives, and a free-form Marketing roster). Everything here
+// lives behind a click-to-open modal — never shown inline on the
+// Settings page itself — and each PIN field is password-type with a
+// show/hide toggle, per spec.
+const APPROVER_TABS = [
+  { role: 'adviser', label: 'Advisers', icon: Users },
+  { role: 'dean', label: 'Deans', icon: GraduationCap },
+  { role: 'sdg_rep', label: 'SDG Representatives', icon: Leaf },
+  { role: 'marketing_rep', label: 'Marketing', icon: Megaphone },
+]
+
+function ExternalApproverPinsSection() {
+  const [open, setOpen] = useState(false)
+  return (
+    <section className="set-section">
+      <div className="set-card">
+        <span className="set-card__label"><KeyRound size={13} /> External Approver Security PINs</span>
+        <p className="set-toggle-row__hint" style={{ marginTop: -4, marginBottom: 12 }}>
+          Assign a hidden 4-digit PIN to each Adviser, Dean, SDG Representative, and Marketing reviewer.
+          They must enter it, on top of their emailed link, before an approval is accepted.
+        </p>
+        <button className="set-btn set-btn--gold" onClick={() => setOpen(true)}>
+          <KeyRound size={14} /> Manage External Approver PINs
+        </button>
+      </div>
+      {open && <ExternalApproverPinsModal onClose={() => setOpen(false)} />}
+    </section>
+  )
+}
+
+function ExternalApproverPinsModal({ onClose }) {
+  const [tab, setTab] = useState('adviser')
+  const [rows, setRows] = useState([])
+  const [orgsById, setOrgsById] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => { load() // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    const [{ data: approvers, error: aErr }, { data: orgs }] = await Promise.all([
+      supabase.from('external_approvers').select('*').eq('is_active', true).order('person_name'),
+      supabase.from('organizations').select('id, name, acronym'),
+    ])
+    if (aErr) setError('Could not load the approver roster.')
+    setRows(approvers || [])
+    setOrgsById(Object.fromEntries((orgs || []).map((o) => [o.id, o])))
+    setLoading(false)
+  }
+
+  const rowsForTab = rows.filter((r) => r.role === tab)
+
+  return (
+    <div className="set-modal-backdrop" onClick={onClose}>
+      <div className="set-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="set-modal__close" onClick={onClose}><X size={18} /></button>
+        <h3 className="set-modal__title"><KeyRound size={16} /> External Approver Security PINs</h3>
+
+        <div className="set-approver-tabs">
+          {APPROVER_TABS.map((t) => (
+            <button
+              key={t.role}
+              className={`set-approver-tab ${tab === t.role ? 'set-approver-tab--active' : ''}`}
+              onClick={() => setTab(t.role)}
+            >
+              <t.icon size={13} /> {t.label}
+            </button>
+          ))}
+        </div>
+
+        {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
+
+        {loading ? (
+          <div className="set-toggle-row__hint"><Loader2 size={13} className="spin" /> Loading...</div>
+        ) : (
+          <div className="set-approver-list">
+            {rowsForTab.length === 0 && <p className="set-toggle-row__hint">No entries yet.</p>}
+            {rowsForTab.map((row) => (
+              <ApproverRow
+                key={row.id}
+                row={row}
+                orgLabel={row.org_id ? (orgsById[row.org_id]?.acronym || orgsById[row.org_id]?.name) : null}
+                showSchool={tab === 'dean'}
+                onChanged={load}
+              />
+            ))}
+            {tab !== 'adviser' && (
+              <AddApproverForm role={tab} showSchool={tab === 'dean'} onAdded={load} />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ApproverRow({ row, orgLabel, showSchool, onChanged }) {
+  const [name, setName] = useState(row.person_name)
+  const [school, setSchool] = useState(row.school || '')
+  const [pin, setPin] = useState(row.pin || '')
+  const [pinVisible, setPinVisible] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+
+  async function saveDetails() {
+    setError(''); setBusy('details')
+    const { error: err } = await supabase.rpc('update_external_approver', {
+      p_id: row.id, p_person_name: name, p_school: showSchool ? school : null,
+    })
+    setBusy('')
+    if (err) { setError(err.message || 'Could not save.'); return }
+    onChanged()
+  }
+
+  async function savePin() {
+    setError('')
+    if (pin && !/^[0-9]{4}$/.test(pin)) { setError('PIN must be exactly 4 digits.'); return }
+    setBusy('pin')
+    const { error: err } = await supabase.rpc('set_external_approver_pin', { p_id: row.id, p_pin: pin || null })
+    setBusy('')
+    if (err) { setError(err.message || 'Could not save the PIN.'); return }
+    onChanged()
+  }
+
+  async function generatePin() {
+    setError(''); setBusy('generate')
+    const { data, error: err } = await supabase.rpc('generate_external_approver_pin', { p_id: row.id })
+    setBusy('')
+    if (err) { setError(err.message || 'Could not generate a PIN.'); return }
+    setPin(data)
+    setPinVisible(true)
+  }
+
+  async function remove() {
+    if (!window.confirm(`Remove ${row.person_name}?`)) return
+    setError(''); setBusy('remove')
+    const { error: err } = await supabase.rpc('remove_external_approver', { p_id: row.id })
+    setBusy('')
+    if (err) { setError(err.message || 'Could not remove this entry.'); return }
+    onChanged()
+  }
+
+  return (
+    <div className="set-approver-row">
+      {orgLabel && <span className="set-approver-row__org">{orgLabel}</span>}
+      <div className="set-approver-row__fields">
+        <input className="set-approver-row__name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
+        {showSchool && (
+          <input className="set-approver-row__school" value={school} onChange={(e) => setSchool(e.target.value)} placeholder="School" />
+        )}
+        <button className="set-icon-btn" title="Save name" disabled={busy === 'details'} onClick={saveDetails}>
+          {busy === 'details' ? <Loader2 size={13} className="spin" /> : <Check size={13} />}
+        </button>
+      </div>
+      <div className="set-approver-row__pin">
+        <div className="set-approver-row__pin-input">
+          <input
+            type={pinVisible ? 'text' : 'password'}
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="••••"
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          />
+          <button type="button" onClick={() => setPinVisible((v) => !v)} title={pinVisible ? 'Hide' : 'Show'}>
+            {pinVisible ? <EyeOff size={13} /> : <Eye size={13} />}
+          </button>
+        </div>
+        <button className="set-btn set-btn--outline set-btn--small" disabled={busy === 'pin'} onClick={savePin}>
+          {busy === 'pin' ? <Loader2 size={12} className="spin" /> : 'Save'}
+        </button>
+        <button className="set-btn set-btn--outline set-btn--small" disabled={busy === 'generate'} onClick={generatePin} title="Auto-generate">
+          {busy === 'generate' ? <Loader2 size={12} className="spin" /> : <Shuffle size={12} />}
+        </button>
+        {row.role !== 'adviser' && (
+          <button className="set-icon-btn set-icon-btn--danger" title="Remove" disabled={busy === 'remove'} onClick={remove}>
+            <Trash2 size={13} />
+          </button>
+        )}
+      </div>
+      {error && <div className="set-error" style={{ marginTop: 4 }}><AlertCircle size={12} /> {error}</div>}
+    </div>
+  )
+}
+
+function AddApproverForm({ role, showSchool, onAdded }) {
+  const [name, setName] = useState('')
+  const [school, setSchool] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function add() {
+    setError('')
+    if (!name.trim()) { setError('Please enter a name.'); return }
+    setBusy(true)
+    const { error: err } = await supabase.rpc('add_external_approver', {
+      p_role: role, p_person_name: name.trim(), p_school: showSchool ? (school.trim() || null) : null, p_org_id: null,
+    })
+    setBusy(false)
+    if (err) { setError(err.message || 'Could not add this entry.'); return }
+    setName(''); setSchool('')
+    onAdded()
+  }
+
+  return (
+    <div className="set-approver-add">
+      <input placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
+      {showSchool && <input placeholder="School" value={school} onChange={(e) => setSchool(e.target.value)} />}
+      <button className="set-btn set-btn--outline set-btn--small" disabled={busy} onClick={add}>
+        {busy ? <Loader2 size={12} className="spin" /> : <Plus size={12} />} Add
+      </button>
+      {error && <div className="set-error" style={{ marginTop: 4 }}><AlertCircle size={12} /> {error}</div>}
+    </div>
   )
 }
 

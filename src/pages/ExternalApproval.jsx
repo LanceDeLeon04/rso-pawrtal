@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   CheckCircle2, XCircle, Clock, FileText, ExternalLink,
-  Loader2, AlertTriangle, MessageSquare, Send, ShieldCheck,
+  Loader2, AlertTriangle, MessageSquare, Send, ShieldCheck, Eye, EyeOff, KeyRound,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import SignaturePad from '../components/SignaturePad'
@@ -55,6 +55,9 @@ export default function ExternalApproval() {
   const [messages, setMessages] = useState([])
   const [newMessage, setNewMessage] = useState('')
   const [sendingMessage, setSendingMessage] = useState(false)
+  const [pin, setPin] = useState('')
+  const [pinVisible, setPinVisible] = useState(false)
+  const [pendingDecision, setPendingDecision] = useState(null) // 'approved' | 'rejected' — awaiting PIN confirmation
 
   useEffect(() => {
     load()
@@ -96,7 +99,10 @@ export default function ExternalApproval() {
     }
   }
 
-  async function submitDecision(decision) {
+  // Validates whatever's needed for a decision (signature, SDG ticks,
+  // reject reason), then either opens the PIN confirmation modal
+  // (when this reviewer has one assigned) or submits straight away.
+  function requestDecision(decision) {
     setActionError('')
     if (decision === 'approved' && !signature) {
       setActionError('Please sign above before approving.')
@@ -106,6 +112,24 @@ export default function ExternalApproval() {
       setActionError('Please mark at least one SDG before approving.')
       return
     }
+    if (decision === 'rejected' && !comment.trim()) {
+      setActionError(`Please provide a reason for ${payload.link.role === 'marketing_rep' ? 'returning' : 'rejecting'}.`)
+      return
+    }
+    if (payload.link.pin_required) {
+      setPin('')
+      setPendingDecision(decision)
+      return
+    }
+    submitDecision(decision)
+  }
+
+  async function submitDecision(decision) {
+    setActionError('')
+    if (payload.link.pin_required && !/^[0-9]{4}$/.test(pin)) {
+      setActionError('Please enter your 4-digit security PIN.')
+      return
+    }
     setSubmitting(true)
     const { error } = await supabase.rpc('submit_approval_decision', {
       p_token: token,
@@ -113,12 +137,14 @@ export default function ExternalApproval() {
       p_comment: comment.trim() || null,
       p_signature: signature,
       p_sdgs: payload.link.role === 'sdg_rep' ? sdgSelections : null,
+      p_pin: payload.link.pin_required ? pin : null,
     })
     setSubmitting(false)
     if (error) {
       setActionError(error.message || 'Something went wrong. Please try again.')
       return
     }
+    setPendingDecision(null)
     setDoneDecision(decision)
   }
 
@@ -333,7 +359,7 @@ export default function ExternalApproval() {
                     <button
                       className="xap-btn xap-btn--ok"
                       disabled={submitting}
-                      onClick={() => submitDecision('approved')}
+                      onClick={() => requestDecision('approved')}
                     >
                       {submitting ? <Loader2 size={16} className="xap__spin" /> : <CheckCircle2 size={16} />} Confirm Approval
                     </button>
@@ -341,10 +367,7 @@ export default function ExternalApproval() {
                   <button
                     className="xap-btn xap-btn--danger"
                     disabled={submitting}
-                    onClick={() => {
-                      if (!comment.trim()) { setActionError(`Please provide a reason for ${link.role === 'marketing_rep' ? 'returning' : 'rejecting'}.`); return }
-                      submitDecision('rejected')
-                    }}
+                    onClick={() => requestDecision('rejected')}
                   >
                     <XCircle size={16} /> {rejectLabel}
                   </button>
@@ -358,6 +381,47 @@ export default function ExternalApproval() {
       <footer className="xap__footer">
         Link expires {fmtDateTime(link.expires_at)} · NU Laguna SDAO — RSO PAWrtal
       </footer>
+
+      {pendingDecision && (
+        <div className="xap-modal-backdrop" onClick={() => !submitting && setPendingDecision(null)}>
+          <div className="xap-modal" onClick={(e) => e.stopPropagation()}>
+            <KeyRound size={26} color="var(--nu-navy, #0b2545)" />
+            <h3>Confirm your Security PIN</h3>
+            <p>
+              Enter the 4-digit PIN SDAO assigned to you as {roleLabel}
+              {organization?.acronym || organization?.name ? ` for ${organization.acronym || organization.name}` : ''} to {pendingDecision === 'approved' ? 'confirm your approval' : `confirm you're ${link.role === 'marketing_rep' ? 'returning' : 'rejecting'} this`}.
+            </p>
+            <div className="xap-pin__input xap-pin__input--modal">
+              <input
+                type={pinVisible ? 'text' : 'password'}
+                inputMode="numeric"
+                maxLength={4}
+                autoFocus
+                placeholder="••••"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                onKeyDown={(e) => e.key === 'Enter' && submitDecision(pendingDecision)}
+              />
+              <button type="button" onClick={() => setPinVisible((v) => !v)} aria-label={pinVisible ? 'Hide PIN' : 'Show PIN'}>
+                {pinVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            {actionError && <p className="xap-error">{actionError}</p>}
+            <div className="xap-modal__actions">
+              <button className="xap-btn xap-btn--ghost" disabled={submitting} onClick={() => setPendingDecision(null)}>
+                Cancel
+              </button>
+              <button
+                className={pendingDecision === 'approved' ? 'xap-btn xap-btn--ok' : 'xap-btn xap-btn--danger'}
+                disabled={submitting}
+                onClick={() => submitDecision(pendingDecision)}
+              >
+                {submitting ? <Loader2 size={16} className="xap__spin" /> : <CheckCircle2 size={16} />} Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

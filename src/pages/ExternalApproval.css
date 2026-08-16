@@ -286,6 +286,51 @@
   margin-bottom: 6px;
 }
 
+.xap-pin {
+  margin-bottom: 14px;
+}
+
+.xap-pin label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.xap-pin__input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 160px;
+}
+
+.xap-pin__input input {
+  flex: 1;
+  border: 1px solid var(--line, #e2e5eb);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  font-family: inherit;
+  font-size: 1.05rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+
+.xap-pin__input button {
+  border: 1px solid var(--line, #e2e5eb);
+  background: #fff;
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+}
+
+.xap-pin__input button:hover {
+  background: #f5f6f8;
+}
+
 .xap-sdg {
   margin-bottom: 16px;
 }
@@ -350,7 +395,61 @@
 
 .xap-btn--ok { background: #21653a; color: #fff; }
 .xap-btn--danger { background: var(--danger); color: #fff; }
+.xap-btn--ghost { background: #fff; color: var(--muted); border: 1px solid var(--line, #e2e5eb); }
+.xap-btn--ghost:hover { background: #f5f6f8; }
 .xap-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ---- PIN confirmation modal ---- */
+.xap-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 80;
+}
+
+.xap-modal {
+  background: #fff;
+  border-radius: 14px;
+  padding: 26px 24px;
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.xap-modal h3 {
+  margin: 4px 0 0;
+  font-size: 1.02rem;
+}
+
+.xap-modal p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.xap-pin__input--modal {
+  margin-top: 8px;
+}
+
+.xap-modal__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  width: 100%;
+}
+
+.xap-modal__actions .xap-btn {
+  flex: 1;
+  justify-content: center;
+}
 
 .xap-outcome {
   text-align: center;

@@ -727,6 +727,20 @@ export default function SubmissionBin() {
   // Adviser/Dean external approval links (event applications only)
   const [approvalLinks, setApprovalLinks] = useState([])
   const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' } })
+  // Dean/SDG Representative rosters — fixed, admin-managed lists
+  // (Settings → Manage External Approver PINs) so staff pick a name
+  // instead of typing it. { dean: [{person_name, school}], sdg_rep: [...] }
+  const [approverRoster, setApproverRoster] = useState({ dean: [], sdg_rep: [] })
+
+  useEffect(() => {
+    (async () => {
+      const [{ data: deans }, { data: sdgReps }] = await Promise.all([
+        supabase.rpc('list_external_approver_names', { p_role: 'dean' }),
+        supabase.rpc('list_external_approver_names', { p_role: 'sdg_rep' }),
+      ])
+      setApproverRoster({ dean: deans || [], sdg_rep: sdgReps || [] })
+    })()
+  }, [])
   const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
   const [generatingFRF, setGeneratingFRF] = useState(false)
   const [frfError, setFrfError] = useState('')
@@ -5193,7 +5207,20 @@ export default function SubmissionBin() {
                                       onChange={(e) => setLinkForm((f) => ({ ...f, sdg_rep: { ...f.sdg_rep, name: e.target.value } }))}
                                     >
                                       <option value="">Select SDG Representative…</option>
-                                      {SDG_REP_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+                                      {(approverRoster.sdg_rep.length ? approverRoster.sdg_rep.map((r) => r.person_name) : SDG_REP_NAMES)
+                                        .map((n) => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                  ) : role === 'dean' ? (
+                                    <select
+                                      value={linkForm.dean.name}
+                                      onChange={(e) => setLinkForm((f) => ({ ...f, dean: { ...f.dean, name: e.target.value } }))}
+                                    >
+                                      <option value="">Select Dean…</option>
+                                      {approverRoster.dean.map((r) => (
+                                        <option key={r.person_name} value={r.person_name}>
+                                          {r.person_name}{r.school ? ` — ${r.school}` : ''}
+                                        </option>
+                                      ))}
                                     </select>
                                   ) : (
                                     <input
