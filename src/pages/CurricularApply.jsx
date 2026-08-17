@@ -2,17 +2,26 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   Loader2, AlertTriangle, CheckCircle2, Copy, Check, ShieldCheck, CalendarDays, Info, Clock,
-  DoorOpen, DoorClosed, ShieldAlert, Paperclip, X, FileText,
+  DoorOpen, DoorClosed, ShieldAlert, Paperclip, X, FileText, AlertCircle,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import {
   getCurricularApplyLink, submitCurricularActivity,
   fileToBase64, formatFileSize, MAX_ATTACHMENT_MB, MAX_ATTACHMENTS,
 } from '../lib/curricularActivities'
+import { checkVenueAvailability } from '../lib/venueAvailability'
 import EventCalendarModal from '../components/EventCalendarModal'
 import './CurricularApply.css'
 
 const ACTIVITY_TYPES = ['Curricular Requirement', 'Extension/Outreach', 'Seminar/Training', 'Competition', 'Other']
+
+// Same two venues that get a cascading Building/Floor/Room or
+// Laboratory picker on the RSO Event Application, instead of a
+// free-text detail field.
+const VENUE_DETAIL_PROMPTS = {
+  Room: 'Select the building, floor, and room',
+  Laboratory: 'Select the laboratory',
+}
 
 export default function CurricularApply() {
   const { token } = useParams()
@@ -22,6 +31,13 @@ export default function CurricularApply() {
   const [linkLabel, setLinkLabel] = useState('')
 
   const [venues, setVenues] = useState([])
+  const [venueRooms, setVenueRooms] = useState([])
+  const [venueLabs, setVenueLabs] = useState([])
+  const [roomSel, setRoomSel] = useState({ building: '', floor: '', number: '' })
+  const [labId, setLabId] = useState('')
+  const [venueConflict, setVenueConflict] = useState(null)
+  const [venueAdvisory, setVenueAdvisory] = useState(null)
+  const [checkingVenue, setCheckingVenue] = useState(false)
   const [form, setForm] = useState({
     faculty_name: '', faculty_email: '', faculty_personal_email: '', department: '',
     title: '', description: '', activity_type: '', activity_type_other: '',
@@ -41,8 +57,14 @@ export default function CurricularApply() {
     (async () => {
       setLoading(true)
       const { data, error } = await getCurricularApplyLink(token)
-      const { data: venueData } = await supabase.from('venues').select('id, name').eq('is_active', true).order('name')
+      const [{ data: venueData }, { data: rooms }, { data: labs }] = await Promise.all([
+        supabase.from('venues').select('id, name').eq('is_active', true).order('name'),
+        supabase.from('venue_rooms').select('id, building, floor, room_number').order('building').order('floor').order('sort_order'),
+        supabase.from('venue_labs').select('id, name, care_of, location').order('sort_order'),
+      ])
       setVenues(venueData || [])
+      setVenueRooms(rooms || [])
+      setVenueLabs(labs || [])
       setLoading(false)
       if (error || !data || data.error) {
         setLinkError(
@@ -56,6 +78,35 @@ export default function CurricularApply() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  const roomBuildingOptionsFor = () => [...new Set(venueRooms.map((r) => r.building))]
+  const roomFloorOptionsFor = (building) => [...new Set(venueRooms.filter((r) => r.building === building).map((r) => r.floor))]
+  const roomNumberOptionsFor = (building, floor) => venueRooms.filter((r) => r.building === building && r.floor === floor)
+
+  const selectedVenue = venues.find((v) => v.id === form.venue_id)
+  const detailPrompt = selectedVenue ? VENUE_DETAIL_PROMPTS[selectedVenue.name] : null
+
+  // Live venue-availability check — same blocked/already-booked/heads-up
+  // notices as the RSO Event Application, so faculty find out here
+  // instead of only at review time.
+  useEffect(() => {
+    const usesOnCampusVenue = form.medium === 'f2f' || form.medium === 'hybrid'
+    if (!usesOnCampusVenue || !form.venue_id || !form.event_date) {
+      setVenueConflict(null)
+      setVenueAdvisory(null)
+      return
+    }
+    let cancelled = false
+    setCheckingVenue(true)
+    checkVenueAvailability(supabase, form.venue_id, form.event_date, form.start_time, form.end_time, '', '')
+      .then((result) => {
+        if (cancelled) return
+        setVenueConflict(result?.blocking ? result.message : null)
+        setVenueAdvisory(result && !result.blocking ? result.message : null)
+        setCheckingVenue(false)
+      })
+    return () => { cancelled = true }
+  }, [form.medium, form.venue_id, form.event_date, form.start_time, form.end_time])
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
@@ -97,6 +148,10 @@ export default function CurricularApply() {
 
     if (!form.faculty_name.trim() || !form.faculty_email.trim() || !form.title.trim() || !form.event_date) {
       setSubmitError('Please fill in your name, email, activity title, and event date.')
+      return
+    }
+    if (venueConflict) {
+      setSubmitError('Please resolve the venue conflict below before submitting.')
       return
     }
 
@@ -286,19 +341,115 @@ export default function CurricularApply() {
             )}
 
             {(form.medium === 'f2f' || form.medium === 'hybrid') && (
-              <div className="curric-grid-2">
-                <div className="field">
-                  <label>Venue</label>
-                  <select value={form.venue_id} onChange={(e) => set('venue_id', e.target.value)}>
-                    <option value="">Select...</option>
-                    {venues.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </select>
+              <>
+                <div className="curric-grid-2">
+                  <div className="field">
+                    <label>Venue</label>
+                    <select
+                      value={form.venue_id}
+                      onChange={(e) => {
+                        set('venue_id', e.target.value)
+                        set('venue_detail', '')
+                        setRoomSel({ building: '', floor: '', number: '' })
+                        setLabId('')
+                      }}
+                    >
+                      <option value="">Select...</option>
+                      {venues.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                  </div>
+                  {!detailPrompt && (
+                    <div className="field">
+                      <label>Room / Detail</label>
+                      <input value={form.venue_detail} onChange={(e) => set('venue_detail', e.target.value)} placeholder="e.g. Room 301" />
+                    </div>
+                  )}
                 </div>
-                <div className="field">
-                  <label>Room / Detail</label>
-                  <input value={form.venue_detail} onChange={(e) => set('venue_detail', e.target.value)} placeholder="e.g. Room 301" />
-                </div>
-              </div>
+
+                {selectedVenue?.name === 'Room' && (
+                  <div className="curric-grid-2">
+                    <div className="field">
+                      <label>Building</label>
+                      <select
+                        value={roomSel.building}
+                        onChange={(e) => {
+                          const next = { building: e.target.value, floor: '', number: '' }
+                          setRoomSel(next)
+                          set('venue_detail', '')
+                        }}
+                      >
+                        <option value="">Select building</option>
+                        {roomBuildingOptionsFor().map((b) => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label>Floor</label>
+                      <select
+                        value={roomSel.floor}
+                        disabled={!roomSel.building}
+                        onChange={(e) => {
+                          const next = { ...roomSel, floor: e.target.value, number: '' }
+                          setRoomSel(next)
+                          set('venue_detail', '')
+                        }}
+                      >
+                        <option value="">Select floor</option>
+                        {roomFloorOptionsFor(roomSel.building).map((f) => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label>Room</label>
+                      <select
+                        value={roomSel.number}
+                        disabled={!roomSel.floor}
+                        onChange={(e) => {
+                          const room = roomNumberOptionsFor(roomSel.building, roomSel.floor).find((r) => r.room_number === e.target.value)
+                          setRoomSel({ ...roomSel, number: e.target.value })
+                          set('venue_detail', room ? `${room.building}, ${room.floor} Flr — ${room.room_number}` : '')
+                        }}
+                      >
+                        <option value="">Select room</option>
+                        {roomNumberOptionsFor(roomSel.building, roomSel.floor).map((r) => (
+                          <option key={r.id} value={r.room_number}>{r.room_number}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {selectedVenue?.name === 'Laboratory' && (
+                  <div className="field">
+                    <label>Laboratory</label>
+                    <select
+                      value={labId}
+                      onChange={(e) => {
+                        const lab = venueLabs.find((l) => l.id === e.target.value)
+                        setLabId(e.target.value)
+                        set('venue_detail', lab ? `${lab.name} c/o ${lab.care_of}, ${lab.location}` : '')
+                      }}
+                    >
+                      <option value="">Select laboratory</option>
+                      {venueLabs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {form.venue_id && form.event_date && (
+                  <>
+                    {checkingVenue && (
+                      <div className="curric-hint curric-hint--plain">
+                        <Loader2 size={12} className="spin" /> Checking venue availability…
+                      </div>
+                    )}
+                    {venueConflict && (
+                      <div className="curric-error curric-error--tight"><AlertCircle size={14} /><span>{venueConflict}</span></div>
+                    )}
+                    {!venueConflict && venueAdvisory && (
+                      <div className="curric-hint"><AlertCircle size={12} /> {venueAdvisory}</div>
+                    )}
+                  </>
+                )}
+              </>
             )}
             {(form.medium === 'online' || form.medium === 'hybrid') && (
               <div className="field">
@@ -366,7 +517,7 @@ export default function CurricularApply() {
             )}
           </fieldset>
 
-          <button className="btn-primary curric-submit" type="submit" disabled={submitting}>
+          <button className="btn-primary curric-submit" type="submit" disabled={submitting || !!venueConflict || checkingVenue}>
             {submitting ? <><Loader2 size={16} className="spin" /> Submitting…</> : 'Submit Application'}
           </button>
         </form>
