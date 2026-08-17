@@ -242,6 +242,25 @@
   line-height: 1.5;
 }
 
+.track-activity-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  border-radius: var(--radius-sm);
+  color: var(--nu-gold-300);
+  font: 600 13px/1 var(--font-body);
+  text-decoration: none;
+  background: rgba(240, 180, 41, 0.06);
+}
+
+.track-activity-btn:hover {
+  background: rgba(240, 180, 41, 0.14);
+}
+
 .spin {
   animation: spin 0.8s linear infinite;
 }

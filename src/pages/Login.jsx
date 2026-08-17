@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { User, Lock, Eye, EyeOff, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react'
+import { User, Lock, Eye, EyeOff, AlertCircle, ShieldCheck, Loader2, Search } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import './Login.css'
 
@@ -132,6 +132,11 @@ export default function Login() {
             Accounts are created by SDAO Admins only. Contact your SDAO
             Admin for access.
           </p>
+
+          <Link to="/track" className="track-activity-btn">
+            <Search size={15} />
+            Track My Activity
+          </Link>
         </form>
       </div>
     </div>

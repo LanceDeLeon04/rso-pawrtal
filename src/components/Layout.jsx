@@ -4,6 +4,7 @@ import {
   LayoutDashboard, CalendarDays, Inbox, FileText, ShieldCheck,
   ClipboardList, Users, Settings as SettingsIcon, LogOut,
   Bell, ChevronsLeft, ChevronsRight, ChevronDown, Building2, X, Info, CalendarClock, Menu, ClipboardCheck,
+  GraduationCap,
 } from 'lucide-react'
 import {
   useAuth, isAdminTier, isFMO, isExecutiveDirector,
@@ -43,6 +44,9 @@ const NAV_ITEMS = [
   // Annual RSO renewal — College orgs only, same exclusions as
   // Reschedule Requests plus SDAO-SHS (migration 070).
   { to: '/renewal', label: 'RSO Renewal', icon: ClipboardCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true, hideForShsAdmin: true },
+  // Faculty Curricular Activities — SDAO Assistant/Supervisor and
+  // Academic Director only (migration 074), never SHS/FMO/ED/CRSO/QMO.
+  { to: '/curricular-activities', label: 'Curricular Activities', icon: GraduationCap, curricularOnly: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/about', label: 'About the System', icon: Info },
 ]
@@ -98,6 +102,7 @@ export default function Layout() {
   const shsVenueParty = isSHSVenueRequestParty(profile?.role) || isSHSFacultyModerator(profile)
   const seesAllDepts = seesAllDepartments(profile?.role)
   const shsAdmin = profile?.role === 'sdao_shs'
+  const curricularAllowed = ['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin'].includes(profile?.role)
   const visibleNav = NAV_ITEMS.filter((item) =>
     // Accounts is admin-only, PLUS SDAO-SHS/SHS Principal, who get a
     // narrowed version of it (SHS orgs + SHS RSO/Moderator accounts
@@ -111,7 +116,8 @@ export default function Layout() {
     // Venue Request only ever shows for the three roles inside that
     // chain — Faculty, SDAO-SHS, SHS Principal — never for full admins,
     // FMO, or College roles.
-    && (!item.shsVenuePartyOnly || shsVenueParty))
+    && (!item.shsVenuePartyOnly || shsVenueParty)
+    && (!item.curricularOnly || curricularAllowed))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
   const org = profile?.org_memberships?.[0]?.organizations
   const orgLabel = org?.acronym

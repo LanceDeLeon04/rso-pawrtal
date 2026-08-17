@@ -1,0 +1,186 @@
+.curric-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 48px) 16px;
+  background: linear-gradient(180deg, var(--nu-navy) 0%, var(--paper) 340px);
+  overflow-y: auto;
+}
+
+.curric-card {
+  width: 100%;
+  max-width: 640px;
+  background: var(--card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 28px clamp(20px, 4vw, 36px) 36px;
+  height: fit-content;
+}
+
+.curric-center {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 28px;
+}
+
+.curric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 12px/1 var(--font-body);
+  color: var(--nu-blue-700);
+  background: rgba(44, 95, 184, 0.1);
+  border: 1px solid rgba(44, 95, 184, 0.2);
+  border-radius: 999px;
+  padding: 6px 12px;
+  margin-bottom: 14px;
+}
+
+.curric-card h1 {
+  font: 700 24px/1.3 var(--font-display);
+  color: var(--ink);
+  margin: 0 0 6px;
+}
+
+.curric-sub {
+  font: 400 14px/1.6 var(--font-body);
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+
+.curric-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #fef2f2;
+  color: var(--danger);
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font: 500 13px/1.5 var(--font-body);
+  margin-bottom: 16px;
+}
+
+.curric-card fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 16px 16px 6px;
+  margin: 0 0 18px;
+}
+
+.curric-card legend {
+  font: 700 12px/1 var(--font-body);
+  color: var(--nu-blue-700);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 6px;
+}
+
+.curric-card .field {
+  margin-bottom: 14px;
+}
+
+.curric-card .field label {
+  display: block;
+  font: 600 13px/1.4 var(--font-body);
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.curric-card input,
+.curric-card select,
+.curric-card textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font: 400 14px/1.4 var(--font-body);
+  color: var(--ink);
+  background: #fff;
+}
+
+.curric-card input:focus,
+.curric-card select:focus,
+.curric-card textarea:focus {
+  outline: none;
+  border-color: var(--nu-blue-500);
+  box-shadow: 0 0 0 3px rgba(44, 95, 184, 0.14);
+}
+
+.curric-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 14px;
+}
+
+@media (max-width: 520px) {
+  .curric-grid-2 { grid-template-columns: 1fr; }
+}
+
+.curric-submit {
+  width: 100%;
+  justify-content: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.curric-code-box {
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin: 6px 0 14px;
+}
+
+.curric-code-label {
+  display: block;
+  font: 700 11px/1 var(--font-body);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.curric-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.curric-code {
+  font: 700 26px/1 var(--font-display);
+  color: var(--nu-navy);
+  letter-spacing: 0.03em;
+}
+
+.curric-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--nu-blue-500);
+  color: var(--nu-blue-700);
+  background: #fff;
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font: 600 13px/1 var(--font-body);
+  cursor: pointer;
+}
+
+.curric-copy-btn:hover {
+  background: rgba(44, 95, 184, 0.08);
+}
+
+.curric-track-link {
+  display: inline-block;
+  margin-top: 4px;
+  text-decoration: none;
+  text-align: center;
+}

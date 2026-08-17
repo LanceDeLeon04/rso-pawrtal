@@ -1,0 +1,172 @@
+.track-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--nu-navy);
+}
+
+.track-card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 28px clamp(20px, 5vw, 32px) 32px;
+}
+
+.track-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 12px/1 var(--font-body);
+  color: var(--muted);
+  text-decoration: none;
+  margin-bottom: 14px;
+}
+
+.track-card h1 {
+  font: 700 22px/1.3 var(--font-display);
+  color: var(--ink);
+  margin: 0 0 6px;
+}
+
+.track-sub {
+  font: 400 14px/1.6 var(--font-body);
+  color: var(--muted);
+  margin: 0 0 18px;
+}
+
+.track-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.track-input-row input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font: 600 14px/1.4 var(--font-body);
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.track-input-row input:focus {
+  outline: none;
+  border-color: var(--nu-blue-500);
+  box-shadow: 0 0 0 3px rgba(44, 95, 184, 0.14);
+}
+
+.track-input-row .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.track-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: #fef2f2;
+  color: var(--danger);
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font: 500 13px/1.5 var(--font-body);
+  margin-top: 14px;
+}
+
+.track-result {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.track-result h2 {
+  font: 700 17px/1.3 var(--font-display);
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+
+.track-code {
+  font: 600 13px/1 var(--font-body);
+  color: var(--muted);
+  letter-spacing: 0.03em;
+  margin: 0 0 18px;
+}
+
+.track-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.track-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  position: relative;
+}
+
+.track-step__dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 12px/1 var(--font-body);
+  flex-shrink: 0;
+  background: var(--paper);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.track-step--done .track-step__dot {
+  background: #16a34a;
+  color: #fff;
+  border-color: #16a34a;
+}
+
+.track-step--active .track-step__dot {
+  background: var(--nu-blue-500);
+  color: #fff;
+  border-color: var(--nu-blue-500);
+}
+
+.track-step__label {
+  font: 600 14px/1.4 var(--font-body);
+  color: var(--ink);
+}
+
+.track-step--pending .track-step__label {
+  color: var(--muted);
+}
+
+.track-terminal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font: 600 14px/1.4 var(--font-body);
+}
+
+.track-terminal--rejected {
+  background: #fef2f2;
+  color: var(--danger);
+}
+
+.track-terminal--returned {
+  background: #fff7ed;
+  color: #c2410c;
+}

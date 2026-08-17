@@ -21,6 +21,10 @@ import EventVerification from './pages/EventVerification'
 import VenueRequest from './pages/VenueRequest'
 import RescheduleRequests from './pages/RescheduleRequests'
 import OrgRenewal from './pages/OrgRenewal'
+import CurricularApply from './pages/CurricularApply'
+import CurricularApproval from './pages/CurricularApproval'
+import TrackCurricularActivity from './pages/TrackCurricularActivity'
+import CurricularActivities from './pages/CurricularActivities'
 
 export default function App() {
   return (
@@ -43,6 +47,14 @@ export default function App() {
               approved ACP Form points to; see src/lib/eventVerification.js
               and migration 021. */}
           <Route path="/verify/:token" element={<EventVerification />} />
+          {/* Public — no login. Faculty applying for a Curricular Activity
+              via an SDAO-generated link (migration 074). */}
+          <Route path="/curricular/apply/:token" element={<CurricularApply />} />
+          {/* Public — no login. Dean/SDG Representative review link. */}
+          <Route path="/curricular/approve/:token" element={<CurricularApproval />} />
+          {/* Public — no login. "Track My Activity" from the login page —
+              event code only, no faculty PII returned. */}
+          <Route path="/track" element={<TrackCurricularActivity />} />
 
           <Route
             element={
@@ -135,6 +147,18 @@ export default function App() {
             <Route
               path="/renewal"
               element={<ProtectedRoute excludeRoles={['fmo', 'executive_director', 'shs_principal', 'shs_faculty', 'sdao_shs']}><OrgRenewal /></ProtectedRoute>}
+            />
+            {/* Faculty Curricular Activities: SDAO/Admin generate apply
+                links and work the Dean -> SDG Rep -> Academic Director
+                queue (migration 074). Not an RSO-org concern, so no SHS/
+                FMO/ED roles here. */}
+            <Route
+              path="/curricular-activities"
+              element={
+                <ProtectedRoute allowedRoles={['sdao_assistant', 'sdao_supervisor', 'academic_director', 'system_admin']}>
+                  <CurricularActivities />
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/settings"

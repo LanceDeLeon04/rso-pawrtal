@@ -1,0 +1,255 @@
+import { useEffect, useState } from 'react'
+import { useParams, Link } from 'react-router-dom'
+import { Loader2, AlertTriangle, CheckCircle2, Copy, Check, ShieldCheck } from 'lucide-react'
+import { supabase } from '../lib/supabaseClient'
+import { getCurricularApplyLink, submitCurricularActivity } from '../lib/curricularActivities'
+import './CurricularApply.css'
+
+const ACTIVITY_TYPES = ['Curricular Requirement', 'Extension/Outreach', 'Seminar/Training', 'Competition', 'Other']
+
+export default function CurricularApply() {
+  const { token } = useParams()
+
+  const [loading, setLoading] = useState(true)
+  const [linkError, setLinkError] = useState('')
+  const [linkLabel, setLinkLabel] = useState('')
+
+  const [venues, setVenues] = useState([])
+  const [form, setForm] = useState({
+    faculty_name: '', faculty_email: '', department: '',
+    title: '', description: '', activity_type: '', activity_type_other: '',
+    target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
+    medium: 'f2f', venue_id: '', venue_detail: '', online_platform: '',
+    event_date: '', start_time: '', end_time: '',
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+  const [result, setResult] = useState(null) // { event_code }
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true)
+      const { data, error } = await getCurricularApplyLink(token)
+      const { data: venueData } = await supabase.from('venues').select('id, name').eq('is_active', true).order('name')
+      setVenues(venueData || [])
+      setLoading(false)
+      if (error || !data || data.error) {
+        setLinkError(
+          data?.error === 'inactive'
+            ? 'This application link has been deactivated. Please ask SDAO for a new one.'
+            : 'This application link is invalid. Please ask SDAO for a new one.'
+        )
+        return
+      }
+      setLinkLabel(data.label || '')
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  function set(field, value) {
+    setForm((f) => ({ ...f, [field]: value }))
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSubmitError('')
+
+    if (!form.faculty_name.trim() || !form.faculty_email.trim() || !form.title.trim() || !form.event_date) {
+      setSubmitError('Please fill in your name, email, activity title, and event date.')
+      return
+    }
+
+    setSubmitting(true)
+    const { data, error } = await submitCurricularActivity(token, form)
+    setSubmitting(false)
+
+    if (error || !data?.ok) {
+      setSubmitError(error?.message || 'Something went wrong submitting your activity. Please try again.')
+      return
+    }
+    setResult(data)
+  }
+
+  function copyCode() {
+    navigator.clipboard.writeText(result.event_code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  if (loading) {
+    return (
+      <div className="curric-screen">
+        <div className="curric-card curric-center"><Loader2 className="spin" size={22} /></div>
+      </div>
+    )
+  }
+
+  if (linkError) {
+    return (
+      <div className="curric-screen">
+        <div className="curric-card curric-center">
+          <AlertTriangle size={28} color="var(--danger)" />
+          <p>{linkError}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (result) {
+    return (
+      <div className="curric-screen">
+        <div className="curric-card curric-center">
+          <CheckCircle2 size={32} color="#16a34a" />
+          <h1>Activity submitted</h1>
+          <p className="curric-sub">
+            Your Curricular Activity has been sent for Dean review. We've also emailed your event code to{' '}
+            <strong>{form.faculty_email}</strong>.
+          </p>
+          <div className="curric-code-box">
+            <span className="curric-code-label">Event Code</span>
+            <div className="curric-code-row">
+              <span className="curric-code">{result.event_code}</span>
+              <button type="button" className="curric-copy-btn" onClick={copyCode}>
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+          <p className="curric-sub">Save this code — use it on the Track My Activity page to check its status anytime.</p>
+          <Link to="/track" className="btn-primary curric-track-link">Track this activity</Link>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="curric-screen">
+      <div className="curric-card">
+        <span className="curric-chip"><ShieldCheck size={14} /> Curricular Activity Application{linkLabel ? ` · ${linkLabel}` : ''}</span>
+        <h1>Apply for a Curricular Activity</h1>
+        <p className="curric-sub">
+          For faculty members — no RSO PAWrtal account needed. Your application will go through Dean, SDG
+          Representative, then Academic Director review.
+        </p>
+
+        {submitError && <div className="curric-error"><AlertTriangle size={16} /><span>{submitError}</span></div>}
+
+        <form onSubmit={handleSubmit} noValidate>
+          <fieldset>
+            <legend>Your Information</legend>
+            <div className="curric-grid-2">
+              <div className="field">
+                <label>Full Name</label>
+                <input value={form.faculty_name} onChange={(e) => set('faculty_name', e.target.value)} required />
+              </div>
+              <div className="field">
+                <label>Email</label>
+                <input type="email" value={form.faculty_email} onChange={(e) => set('faculty_email', e.target.value)} required />
+              </div>
+            </div>
+            <div className="field">
+              <label>Department / College</label>
+              <input value={form.department} onChange={(e) => set('department', e.target.value)} placeholder="e.g. College of Engineering" />
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Activity Details</legend>
+            <div className="field">
+              <label>Activity Title</label>
+              <input value={form.title} onChange={(e) => set('title', e.target.value)} required />
+            </div>
+            <div className="field">
+              <label>Description</label>
+              <textarea rows={3} value={form.description} onChange={(e) => set('description', e.target.value)} />
+            </div>
+            <div className="curric-grid-2">
+              <div className="field">
+                <label>Activity Type</label>
+                <select value={form.activity_type} onChange={(e) => set('activity_type', e.target.value)}>
+                  <option value="">Select...</option>
+                  {ACTIVITY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              {form.activity_type === 'Other' && (
+                <div className="field">
+                  <label>Specify</label>
+                  <input value={form.activity_type_other} onChange={(e) => set('activity_type_other', e.target.value)} />
+                </div>
+              )}
+              <div className="field">
+                <label>Target Audience</label>
+                <input value={form.target_audience} onChange={(e) => set('target_audience', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Target Participants</label>
+                <input type="number" min="0" value={form.target_participants} onChange={(e) => set('target_participants', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Projected Budget</label>
+                <input type="number" min="0" step="0.01" value={form.projected_budget} onChange={(e) => set('projected_budget', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Budget Source</label>
+                <input value={form.budget_source} onChange={(e) => set('budget_source', e.target.value)} />
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Schedule &amp; Venue</legend>
+            <div className="curric-grid-2">
+              <div className="field">
+                <label>Event Date</label>
+                <input type="date" value={form.event_date} onChange={(e) => set('event_date', e.target.value)} required />
+              </div>
+              <div className="field">
+                <label>Medium</label>
+                <select value={form.medium} onChange={(e) => set('medium', e.target.value)}>
+                  <option value="f2f">Face-to-face</option>
+                  <option value="online">Online</option>
+                  <option value="off_campus">Off-campus</option>
+                </select>
+              </div>
+              <div className="field">
+                <label>Start Time</label>
+                <input type="time" value={form.start_time} onChange={(e) => set('start_time', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>End Time</label>
+                <input type="time" value={form.end_time} onChange={(e) => set('end_time', e.target.value)} />
+              </div>
+            </div>
+
+            {form.medium === 'f2f' && (
+              <div className="curric-grid-2">
+                <div className="field">
+                  <label>Venue</label>
+                  <select value={form.venue_id} onChange={(e) => set('venue_id', e.target.value)}>
+                    <option value="">Select...</option>
+                    {venues.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Room / Detail</label>
+                  <input value={form.venue_detail} onChange={(e) => set('venue_detail', e.target.value)} placeholder="e.g. Room 301" />
+                </div>
+              </div>
+            )}
+            {form.medium === 'online' && (
+              <div className="field">
+                <label>Online Platform</label>
+                <input value={form.online_platform} onChange={(e) => set('online_platform', e.target.value)} placeholder="e.g. MS Teams" />
+              </div>
+            )}
+          </fieldset>
+
+          <button className="btn-primary curric-submit" type="submit" disabled={submitting}>
+            {submitting ? <><Loader2 size={16} className="spin" /> Submitting…</> : 'Submit Application'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
