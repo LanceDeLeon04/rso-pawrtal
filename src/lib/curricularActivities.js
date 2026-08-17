@@ -31,6 +31,18 @@ export function fileToBase64(file) {
   })
 }
 
+// Inverse-ish of fileToBase64, for content generated in-memory (e.g. the
+// auto-generated ACP PDF) rather than picked from disk. Chunked to avoid
+// blowing the call stack on large PDFs.
+export function bytesToBase64(bytes) {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
 export function downloadBase64File(base64, fileName, fileType) {
   const byteChars = atob(base64)
   const byteNumbers = new Array(byteChars.length)

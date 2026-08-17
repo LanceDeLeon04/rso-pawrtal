@@ -7,13 +7,22 @@ import {
 import { supabase } from '../lib/supabaseClient'
 import {
   getCurricularApplyLink, submitCurricularActivity,
-  fileToBase64, formatFileSize, MAX_ATTACHMENT_MB, MAX_ATTACHMENTS,
+  fileToBase64, bytesToBase64, formatFileSize, MAX_ATTACHMENT_MB, MAX_ATTACHMENTS,
 } from '../lib/curricularActivities'
 import { checkVenueAvailability } from '../lib/venueAvailability'
+import { generateACPFormPdf } from '../lib/acpPdf'
+import { toISODate, formatTime } from '../lib/dateUtils'
 import EventCalendarModal from '../components/EventCalendarModal'
 import './CurricularApply.css'
 
 const ACTIVITY_TYPES = ['Curricular Requirement', 'Extension/Outreach', 'Seminar/Training', 'Competition', 'Other']
+
+const COLLEGE_OPTIONS = [
+  'School of Computer Studies',
+  'School of Arts and Sciences',
+  'School of Accountancy, Business, and Management',
+  'School of Engineering and Architecture',
+]
 
 // Same two venues that get a cascading Building/Floor/Room or
 // Laboratory picker on the RSO Event Application, instead of a
@@ -118,8 +127,10 @@ export default function CurricularApply() {
     e.target.value = ''
     if (!files.length) return
 
-    if (attachments.length + files.length > MAX_ATTACHMENTS) {
-      setAttachError(`You can attach up to ${MAX_ATTACHMENTS} files.`)
+    // The auto-generated ACP always takes one of the (up to 8) attachment
+    // slots, so cap manually-picked files one lower to leave room for it.
+    if (attachments.length + files.length > MAX_ATTACHMENTS - 1) {
+      setAttachError(`You can attach up to ${MAX_ATTACHMENTS - 1} files (the ACP Form is auto-generated and attached separately).`)
       return
     }
     const tooBig = files.find((f) => f.size > MAX_ATTACHMENT_MB * 1024 * 1024)
@@ -156,7 +167,47 @@ export default function CurricularApply() {
     }
 
     setSubmitting(true)
-    const { data, error } = await submitCurricularActivity(token, { ...form, attachments })
+
+    // Auto-generate the filled ACP Form PDF from what's being submitted
+    // and attach it — same as the RSO Event Application, no manual
+    // upload needed. Best-effort: if it fails for some reason, still
+    // let the actual application go through.
+    let allAttachments = attachments
+    try {
+      const activityTypeLabel = form.activity_type === 'Other' ? form.activity_type_other : form.activity_type
+      const venueLabel = selectedVenue
+        ? [selectedVenue.name, form.venue_detail].filter(Boolean).join(' — ')
+        : (form.online_platform || '')
+      const timeRange = [form.start_time && formatTime(form.start_time), form.end_time && formatTime(form.end_time)].filter(Boolean).join(' – ')
+
+      const pdfBytes = await generateACPFormPdf({
+        applicationDate: toISODate(new Date()),
+        orgName: form.department || '',
+        contactPerson: form.faculty_name,
+        position: 'Faculty',
+        email: form.faculty_email,
+        title: form.title,
+        activityTypeLabel,
+        venueAddress: venueLabel,
+        venueAddressLines: [venueLabel],
+        targetAudience: form.target_audience,
+        targetParticipants: form.target_participants,
+        eventDate: form.event_date,
+        timeRange,
+        projectedBudget: form.projected_budget,
+        budgetSource: form.budget_source,
+        description: form.description,
+      })
+      const acpBase64 = bytesToBase64(pdfBytes)
+      allAttachments = [
+        { name: `ACP-Form-${form.title || 'activity'}.pdf`, type: 'application/pdf', size: pdfBytes.length, data: acpBase64 },
+        ...attachments,
+      ]
+    } catch (err) {
+      console.error('Could not auto-generate ACP PDF', err)
+    }
+
+    const { data, error } = await submitCurricularActivity(token, { ...form, attachments: allAttachments })
     setSubmitting(false)
 
     if (error || !data?.ok) {
@@ -250,7 +301,10 @@ export default function CurricularApply() {
               </div>
               <div className="field">
                 <label>Department / College</label>
-                <input value={form.department} onChange={(e) => set('department', e.target.value)} placeholder="e.g. College of Engineering" />
+                <select value={form.department} onChange={(e) => set('department', e.target.value)}>
+                  <option value="">Select...</option>
+                  {COLLEGE_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
             </div>
             <p className="curric-hint curric-hint--plain">
@@ -492,7 +546,7 @@ export default function CurricularApply() {
           <fieldset>
             <legend>Attachments</legend>
             <p className="curric-hint curric-hint--plain">
-              <Info size={12} /> Same set the RSO Event Application uses where relevant — program design/matrix, budget breakdown, endorsement letter, or any supporting document. Up to {MAX_ATTACHMENTS} files, {MAX_ATTACHMENT_MB}MB each.
+              <Info size={12} /> A filled Activity Concept Paper (ACP) is generated automatically from this form and attached for you — no need to upload one. You can still attach other supporting documents (program design/matrix, budget breakdown, endorsement letter, etc.) — up to {MAX_ATTACHMENTS - 1} files, {MAX_ATTACHMENT_MB}MB each.
             </p>
 
             <label className="curric-file-drop">
