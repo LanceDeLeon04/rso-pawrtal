@@ -1,0 +1,249 @@
+.ecm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 28, 61, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.ecm-modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: min(640px, 92vh);
+  max-height: min(640px, 92dvh);
+  background: var(--card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ecm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.ecm-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 14px/1 var(--font-body);
+  color: var(--nu-navy);
+}
+
+.ecm-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  padding: 2px;
+  border-radius: 6px;
+}
+
+.ecm-close:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.ecm-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px 4px;
+  flex-shrink: 0;
+}
+
+.ecm-nav-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--nu-blue-700);
+}
+
+.ecm-nav-btn:hover {
+  background: rgba(44, 95, 184, 0.08);
+}
+
+.ecm-nav-label {
+  font: 700 13px/1 var(--font-display);
+  color: var(--ink);
+}
+
+.ecm-error {
+  margin: 8px 18px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #fef2f2;
+  color: var(--danger);
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font: 500 12px/1.4 var(--font-body);
+}
+
+.ecm-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--nu-blue-700);
+}
+
+.ecm-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: 10px 12px 0;
+  flex-shrink: 0;
+}
+
+.ecm-weekdays span {
+  text-align: center;
+  font: 700 10px/1 var(--font-body);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ecm-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  padding: 6px 12px 8px;
+  flex-shrink: 0;
+}
+
+.ecm-cell {
+  aspect-ratio: 1;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  font: 500 12px/1 var(--font-body);
+  color: var(--ink);
+  padding: 2px;
+}
+
+.ecm-cell:hover {
+  background: var(--paper);
+}
+
+.ecm-cell--out {
+  color: var(--line);
+}
+
+.ecm-cell--today .ecm-cell-num {
+  color: var(--nu-blue-700);
+  font-weight: 800;
+}
+
+.ecm-cell--selected {
+  background: rgba(44, 95, 184, 0.12);
+  border-color: var(--nu-blue-500);
+}
+
+.ecm-cell-dots {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 6px;
+}
+
+.ecm-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--nu-gold-600);
+}
+
+.ecm-dot-more {
+  font: 700 8px/1 var(--font-body);
+  color: var(--nu-blue-700);
+}
+
+.ecm-details {
+  border-top: 1px solid var(--line);
+  padding: 12px 18px 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 60px;
+}
+
+.ecm-hint {
+  margin: 0;
+  font: 400 12.5px/1.5 var(--font-body);
+  color: var(--muted);
+  text-align: center;
+  padding: 10px 0;
+}
+
+.ecm-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ecm-event-list__label {
+  font: 700 11px/1 var(--font-body);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
+}
+
+.ecm-event-row {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  position: relative;
+}
+
+.ecm-event-title {
+  font: 700 12.5px/1.3 var(--font-body);
+  color: var(--ink);
+}
+
+.ecm-event-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 11.5px/1.3 var(--font-body);
+  color: var(--muted);
+}
+
+.ecm-pencil-badge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font: 700 9px/1 var(--font-body);
+  color: var(--nu-gold-600);
+  background: rgba(240, 180, 41, 0.14);
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  border-radius: 999px;
+  padding: 3px 7px;
+}

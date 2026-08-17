@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { Loader2, AlertTriangle, CheckCircle2, Copy, Check, ShieldCheck } from 'lucide-react'
+import { Loader2, AlertTriangle, CheckCircle2, Copy, Check, ShieldCheck, CalendarDays, Info, Clock, DoorOpen, DoorClosed, ShieldAlert } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { getCurricularApplyLink, submitCurricularActivity } from '../lib/curricularActivities'
+import EventCalendarModal from '../components/EventCalendarModal'
 import './CurricularApply.css'
 
 const ACTIVITY_TYPES = ['Curricular Requirement', 'Extension/Outreach', 'Seminar/Training', 'Competition', 'Other']
@@ -26,6 +27,7 @@ export default function CurricularApply() {
   const [submitError, setSubmitError] = useState('')
   const [result, setResult] = useState(null) // { event_code }
   const [copied, setCopied] = useState(false)
+  const [showCalendar, setShowCalendar] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -198,7 +200,13 @@ export default function CurricularApply() {
           </fieldset>
 
           <fieldset>
-            <legend>Schedule &amp; Venue</legend>
+            <div className="curric-legend-row">
+              <legend>Schedule &amp; Venue</legend>
+              <button type="button" className="curric-cal-btn" onClick={() => setShowCalendar(true)}>
+                <CalendarDays size={13} /> View Calendar
+              </button>
+            </div>
+
             <div className="curric-grid-2">
               <div className="field">
                 <label>Event Date</label>
@@ -209,6 +217,7 @@ export default function CurricularApply() {
                 <select value={form.medium} onChange={(e) => set('medium', e.target.value)}>
                   <option value="f2f">Face-to-face</option>
                   <option value="online">Online</option>
+                  <option value="hybrid">Hybrid (Face-to-face + Online)</option>
                   <option value="off_campus">Off-campus</option>
                 </select>
               </div>
@@ -222,7 +231,14 @@ export default function CurricularApply() {
               </div>
             </div>
 
-            {form.medium === 'f2f' && (
+            {form.medium === 'hybrid' && (
+              <p className="curric-hint">
+                <Info size={12} /> Hybrid activity — fill in whichever parts apply: the on-campus venue below, the
+                online platform, or both.
+              </p>
+            )}
+
+            {(form.medium === 'f2f' || form.medium === 'hybrid') && (
               <div className="curric-grid-2">
                 <div className="field">
                   <label>Venue</label>
@@ -237,12 +253,24 @@ export default function CurricularApply() {
                 </div>
               </div>
             )}
-            {form.medium === 'online' && (
+            {(form.medium === 'online' || form.medium === 'hybrid') && (
               <div className="field">
                 <label>Online Platform</label>
                 <input value={form.online_platform} onChange={(e) => set('online_platform', e.target.value)} placeholder="e.g. MS Teams" />
               </div>
             )}
+
+            <div className="curric-policies">
+              <span className="curric-policies__label"><ShieldAlert size={13} /> Venue &amp; Date Policies</span>
+              <ul className="curric-policies__list">
+                <li><Clock size={12} /> Every booking automatically gets a 2‑hour ingress buffer before the start time and a 2‑hour egress buffer after the end time — the venue is considered occupied for that whole padded window, not just your listed start/end.</li>
+                <li><DoorOpen size={12} /> Venues can only be entered starting <strong>6:00 AM</strong> and must be cleared by <strong>9:00 PM</strong> (gate hours). A day starting before 8:00 AM or ending after 7:00 PM won't get the full 2‑hour buffer on that side.</li>
+                <li><DoorClosed size={12} /> Need to go earlier or later than gate hours? That requires a separate Security Office letter — coordinate with SDAO once this application is approved.</li>
+                <li><Clock size={12} /> Setting up the night before is only allowed at select large venues, from <strong>7:00–9:00 PM</strong>, and only if nothing else is already booked there during that window.</li>
+                <li><ShieldAlert size={12} /> Activities during a declared holiday or exam period are discouraged and reviewed with extra scrutiny — pick another date where possible.</li>
+                <li><Info size={12} /> A venue that's already booked for an overlapping time (including its ingress/egress buffers) will be flagged during review — use "View Calendar" above to check ahead of time.</li>
+              </ul>
+            </div>
           </fieldset>
 
           <button className="btn-primary curric-submit" type="submit" disabled={submitting}>
@@ -250,6 +278,8 @@ export default function CurricularApply() {
           </button>
         </form>
       </div>
+
+      {showCalendar && <EventCalendarModal onClose={() => setShowCalendar(false)} />}
     </div>
   )
 }

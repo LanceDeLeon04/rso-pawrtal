@@ -1,12 +1,14 @@
 .curric-screen {
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   width: 100%;
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   padding: clamp(16px, 4vw, 48px) 16px;
   background: linear-gradient(180deg, var(--nu-navy) 0%, var(--paper) 340px);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .curric-card {
@@ -79,6 +81,91 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 0 6px;
+}
+
+.curric-legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 4px;
+}
+
+.curric-legend-row legend {
+  padding: 0 6px 0 0;
+}
+
+.curric-cal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--nu-blue-500);
+  color: var(--nu-blue-700);
+  background: #fff;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font: 600 11.5px/1 var(--font-body);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.curric-cal-btn:hover {
+  background: rgba(44, 95, 184, 0.08);
+}
+
+.curric-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font: 500 12px/1.5 var(--font-body);
+  color: var(--nu-blue-700);
+  background: rgba(44, 95, 184, 0.06);
+  border: 1px solid rgba(44, 95, 184, 0.18);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: -4px 0 14px;
+}
+
+.curric-policies {
+  margin-top: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+.curric-policies__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 11.5px/1 var(--font-body);
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 8px;
+}
+
+.curric-policies__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.curric-policies__list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font: 400 12px/1.55 var(--font-body);
+  color: var(--muted);
+}
+
+.curric-policies__list li svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--nu-blue-500);
 }
 
 .curric-card .field {
