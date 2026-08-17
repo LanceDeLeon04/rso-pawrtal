@@ -23,11 +23,18 @@ const VENUE_MANAGER_ROLES = [
 // portal-wide feature flags such as Merchandise Proposal submission.
 const SDAO_ADMIN_ROLES = ['sdao_assistant', 'sdao_supervisor', 'system_admin']
 
+// SHS orgs have no Adviser — their external chain is President then
+// Moderator instead. Those two roles' PINs are managed ONLY by
+// SDAO-SHS and System Admin, deliberately excluding the College-side
+// sdao_assistant/sdao_supervisor/academic_director roles above.
+const SHS_KEY_ADMIN_ROLES = ['sdao_shs', 'system_admin']
+
 export default function Settings() {
   const { profile, completePasswordChange, refreshProfile, updateRecoveryEmail } = useAuth()
   const admin = isAdminTier(profile?.role)
   const canManageVenues = VENUE_MANAGER_ROLES.includes(profile?.role)
   const canManageFeatureFlags = SDAO_ADMIN_ROLES.includes(profile?.role)
+  const canManageShsKeys = SHS_KEY_ADMIN_ROLES.includes(profile?.role)
 
   return (
     <div className="set-page">
@@ -42,6 +49,7 @@ export default function Settings() {
       {canManageFeatureFlags && <FeatureFlagsSection />}
       {canManageFeatureFlags && <RenewalPolicySection />}
       {canManageFeatureFlags && <ExternalApproverPinsSection />}
+      {canManageShsKeys && <ShsApproverPinsSection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
       <FeedbackSection profile={profile} />
@@ -571,7 +579,7 @@ function ApproverRow({ row, orgLabel, showSchool, onChanged }) {
         <button className="set-btn set-btn--outline set-btn--small" disabled={busy === 'generate'} onClick={generatePin} title="Auto-generate">
           {busy === 'generate' ? <Loader2 size={12} className="spin" /> : <Shuffle size={12} />}
         </button>
-        {row.role !== 'adviser' && (
+        {!['adviser', 'org_president', 'org_moderator'].includes(row.role) && (
           <button className="set-icon-btn set-icon-btn--danger" title="Remove" disabled={busy === 'remove'} onClick={remove}>
             <Trash2 size={13} />
           </button>
@@ -609,6 +617,102 @@ function AddApproverForm({ role, showSchool, onAdded }) {
         {busy ? <Loader2 size={12} className="spin" /> : <Plus size={12} />} Add
       </button>
       {error && <div className="set-error" style={{ marginTop: 4 }}><AlertCircle size={12} /> {error}</div>}
+    </div>
+  )
+}
+
+// SHS has no Adviser — the President and Moderator each get a
+// one-per-SHS-org row instead (seeded automatically, same shape as
+// the Adviser row above: can't be added/removed, only deactivated).
+// Restricted to SDAO-SHS + System Admin only, kept as its own
+// section/modal so the gating is obvious and separate from the
+// wider-access Adviser/Dean/SDG Rep/Marketing PINs above.
+const SHS_APPROVER_TABS = [
+  { role: 'org_president', label: 'Presidents', icon: UserCheck },
+  { role: 'org_moderator', label: 'Moderators', icon: Users },
+]
+
+function ShsApproverPinsSection() {
+  const [open, setOpen] = useState(false)
+  return (
+    <section className="set-section">
+      <div className="set-card">
+        <span className="set-card__label"><KeyRound size={13} /> SHS President / Moderator Security PINs</span>
+        <p className="set-toggle-row__hint" style={{ marginTop: -4, marginBottom: 12 }}>
+          Assign a hidden 4-digit PIN to each SHS organization's President and Moderator — the
+          external approvers that stand in for an Adviser on SHS applications.
+        </p>
+        <button className="set-btn set-btn--gold" onClick={() => setOpen(true)}>
+          <KeyRound size={14} /> Manage President / Moderator PINs
+        </button>
+      </div>
+      {open && <ShsApproverPinsModal onClose={() => setOpen(false)} />}
+    </section>
+  )
+}
+
+function ShsApproverPinsModal({ onClose }) {
+  const [tab, setTab] = useState('org_president')
+  const [rows, setRows] = useState([])
+  const [orgsById, setOrgsById] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => { load() // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    const [{ data: approvers, error: aErr }, { data: orgs }] = await Promise.all([
+      supabase.from('external_approvers').select('*').in('role', ['org_president', 'org_moderator']).eq('is_active', true).order('person_name'),
+      supabase.from('organizations').select('id, name, acronym, department').eq('department', 'shs'),
+    ])
+    if (aErr) setError('Could not load the approver roster.')
+    setRows(approvers || [])
+    setOrgsById(Object.fromEntries((orgs || []).map((o) => [o.id, o])))
+    setLoading(false)
+  }
+
+  const rowsForTab = rows.filter((r) => r.role === tab)
+
+  return (
+    <div className="set-modal-backdrop" onClick={onClose}>
+      <div className="set-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="set-modal__close" onClick={onClose}><X size={18} /></button>
+        <h3 className="set-modal__title"><KeyRound size={16} /> SHS President / Moderator Security PINs</h3>
+
+        <div className="set-approver-tabs">
+          {SHS_APPROVER_TABS.map((t) => (
+            <button
+              key={t.role}
+              className={`set-approver-tab ${tab === t.role ? 'set-approver-tab--active' : ''}`}
+              onClick={() => setTab(t.role)}
+            >
+              <t.icon size={13} /> {t.label}
+            </button>
+          ))}
+        </div>
+
+        {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
+
+        {loading ? (
+          <div className="set-toggle-row__hint"><Loader2 size={13} className="spin" /> Loading...</div>
+        ) : (
+          <div className="set-approver-list">
+            {rowsForTab.length === 0 && <p className="set-toggle-row__hint">No SHS organizations yet.</p>}
+            {rowsForTab.map((row) => (
+              <ApproverRow
+                key={row.id}
+                row={row}
+                orgLabel={row.org_id ? (orgsById[row.org_id]?.acronym || orgsById[row.org_id]?.name) : null}
+                showSchool={false}
+                onChanged={load}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
