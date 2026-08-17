@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
 import {
   Link2, Plus, Copy, Check, Loader2, ChevronLeft, GraduationCap,
-  CheckCircle2, XCircle, RotateCcw, Send, ToggleLeft, ToggleRight,
+  CheckCircle2, XCircle, RotateCcw, Send, ToggleLeft, ToggleRight, FileText, Download,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import {
   fetchCurricularApplyLinks, generateCurricularApplyLink, setCurricularApplyLinkActive,
   fetchCurricularActivities, fetchCurricularApprovals, fetchCurricularHistory,
+  fetchCurricularAttachments,
   generateCurricularApproval, decideCurricularActivity,
   curricularApplyUrl, curricularApproveUrl, CURRICULAR_STATUS_LABELS,
+  downloadBase64File, formatFileSize,
 } from '../lib/curricularActivities'
 import './CurricularActivities.css'
 
@@ -108,7 +110,10 @@ function ApproverRow({ role, roleLabel, approval, activityStatus, onGenerate }) 
   const [email, setEmail] = useState(approval?.person_email || '')
   const [busy, setBusy] = useState(false)
 
-  const canGenerate = role === 'dean' ? activityStatus === 'dean_review' : (activityStatus === 'dean_review' || activityStatus === 'sdg_review')
+  // Dean and SDG Rep review in parallel now — either link can be generated
+  // (or reissued) any time the activity is still with reviewers, in any
+  // order, regardless of whether the other one has already decided.
+  const canGenerate = activityStatus === 'dean_review' || activityStatus === 'sdg_review'
 
   async function submit() {
     if (!name.trim()) return
@@ -151,6 +156,7 @@ function ApproverRow({ role, roleLabel, approval, activityStatus, onGenerate }) 
 function ActivityDetail({ activity, onBack, onChanged, canDecideAsDirector }) {
   const [approvals, setApprovals] = useState([])
   const [history, setHistory] = useState([])
+  const [attachments, setAttachments] = useState([])
   const [loading, setLoading] = useState(true)
   const [comment, setComment] = useState('')
   const [deciding, setDeciding] = useState(false)
@@ -159,12 +165,17 @@ function ActivityDetail({ activity, onBack, onChanged, canDecideAsDirector }) {
 
   async function load() {
     setLoading(true)
-    const [{ data: a }, { data: h }] = await Promise.all([
-      fetchCurricularApprovals(activity.id), fetchCurricularHistory(activity.id),
+    const [{ data: a }, { data: h }, { data: att }] = await Promise.all([
+      fetchCurricularApprovals(activity.id), fetchCurricularHistory(activity.id), fetchCurricularAttachments(activity.id),
     ])
     setApprovals(a)
     setHistory(h)
+    setAttachments(att)
     setLoading(false)
+  }
+
+  function handleDownload(att) {
+    if (att.file_data) downloadBase64File(att.file_data, att.file_name, att.file_type)
   }
 
   async function handleGenerate(role, name, email) {
@@ -198,7 +209,8 @@ function ActivityDetail({ activity, onBack, onChanged, canDecideAsDirector }) {
 
       <div className="ca-detail-grid">
         <div><span>Submitted By</span><strong>{activity.faculty_name}</strong></div>
-        <div><span>Email</span><strong>{activity.faculty_email}</strong></div>
+        <div><span>NU Email</span><strong>{activity.faculty_email}</strong></div>
+        <div><span>Personal Email</span><strong>{activity.faculty_personal_email || '—'}</strong></div>
         <div><span>Department</span><strong>{activity.department || '—'}</strong></div>
         <div><span>Date</span><strong>{fmtDate(activity.event_date)}</strong></div>
         <div><span>Time</span><strong>{activity.start_time || '—'} – {activity.end_time || '—'}</strong></div>
@@ -212,11 +224,27 @@ function ActivityDetail({ activity, onBack, onChanged, canDecideAsDirector }) {
         <div className="ca-detail-desc"><span>Description</span><p>{activity.description}</p></div>
       )}
 
+      {!loading && attachments.length > 0 && (
+        <div className="ca-attachments">
+          <span className="ca-section-title" style={{ marginTop: 0 }}>Attachments</span>
+          <ul className="ca-attachment-list">
+            {attachments.map((att) => (
+              <li key={att.id}>
+                <FileText size={14} />
+                <span className="ca-attachment-list__name">{att.file_name}</span>
+                <span className="ca-attachment-list__size">{formatFileSize(att.file_size)}</span>
+                <button type="button" onClick={() => handleDownload(att)}><Download size={14} /> Download</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {loading ? (
         <div className="ca-loading"><Loader2 className="spin" size={20} /></div>
       ) : (
         <>
-          <h3 className="ca-section-title">Approval Chain</h3>
+          <h3 className="ca-section-title">Approval Chain <span className="ca-muted" style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(Dean &amp; SDG Rep review in parallel — generate either link, in any order)</span></h3>
           <ApproverRow role="dean" roleLabel="Dean" approval={dean} activityStatus={activity.status} onGenerate={handleGenerate} />
           <ApproverRow role="sdg_rep" roleLabel="SDG Representative" approval={sdg} activityStatus={activity.status} onGenerate={handleGenerate} />
 
@@ -329,7 +357,7 @@ export default function CurricularActivities() {
           <GraduationCap size={22} />
           <div>
             <h1>Curricular Activities</h1>
-            <p>Faculty applications routed through Dean, SDG Representative, then Academic Director.</p>
+            <p>Faculty applications reviewed by Dean and SDG Representative in parallel, then Academic Director.</p>
           </div>
         </div>
       </div>

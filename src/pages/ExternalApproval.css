@@ -156,6 +156,57 @@
   line-height: 1.5;
 }
 
+.xap-attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.xap-attachment-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.xap-attachment-list__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xap-attachment-list__size {
+  color: var(--muted);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.xap-attachment-list li button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--nu-blue-500, #2c5fb8);
+  color: var(--nu-blue-700, #1d4ed8);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: 600 11.5px/1 inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.xap-attachment-list li button:hover {
+  background: rgba(44, 95, 184, 0.08);
+}
+
 .xap-muted {
   color: var(--muted);
   font-size: 0.85rem;

@@ -100,15 +100,18 @@ Deno.serve(async (req) => {
     if (kind === 'code') {
       const { data: a, error } = await admin
         .from('curricular_activities')
-        .select('event_code, title, faculty_name, faculty_email')
+        .select('event_code, title, faculty_name, faculty_email, faculty_personal_email')
         .eq('id', payload.activity_id)
         .single()
       if (error || !a) return json({ error: 'Activity not found' }, 404)
-      if (!a.faculty_email) return json({ skipped: true, reason: 'No faculty email on file' })
 
-      to = [a.faculty_email]
+      to = Array.from(
+        new Set([a.faculty_email, a.faculty_personal_email].filter((e): e is string => !!e && e.includes('@')))
+      )
+      if (to.length === 0) return json({ skipped: true, reason: 'No faculty email on file' })
+
       subject = `[RSO Pawrtal] Your Curricular Activity code: ${a.event_code}`
-      text = `Hi ${a.faculty_name},\n\nYour Curricular Activity "${a.title}" was received.\n\nEvent Code: ${a.event_code}\n\nKeep this code — use it on the "Track My Activity" page (${siteUrl}/track) to check its status anytime. It will move through Dean review, SDG Representative review, and Academic Director approval.\n\n— RSO Pawrtal / SDAO`
+      text = `Hi ${a.faculty_name},\n\nYour Curricular Activity "${a.title}" was received.\n\nEvent Code: ${a.event_code}\n\nKeep this code — use it on the "Track My Activity" page (${siteUrl}/track) to check its status anytime. It will move through Dean and SDG Representative review (in parallel), then Academic Director approval.\n\nThis is going to both your NU email and personal email, if you gave us one.\n\n— RSO Pawrtal / SDAO`
       html = wrapHtml('Your activity was received', `
         <p style="margin:0 0 16px 0;font:400 15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#334155;">Hi ${escapeHtml(a.faculty_name)}, your Curricular Activity "<strong>${escapeHtml(a.title)}</strong>" was received and is now with the Dean for review.</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:8px;margin:0 0 20px 0;"><tr><td style="padding:16px 18px;text-align:center;">

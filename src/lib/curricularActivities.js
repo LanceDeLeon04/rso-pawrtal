@@ -1,8 +1,8 @@
 import { supabase } from './supabaseClient'
 
 export const CURRICULAR_STATUS_LABELS = {
-  dean_review: 'Dean Review',
-  sdg_review: 'SDG Representative Review',
+  dean_review: 'Dean & SDG Representative Review',
+  sdg_review: 'Dean & SDG Representative Review',
   director_review: 'Academic Director Approval',
   approved: 'Approved',
   returned: 'Returned for Revision',
@@ -10,12 +10,48 @@ export const CURRICULAR_STATUS_LABELS = {
 }
 
 // Ordered chain used to render step-progress UI (track page + admin page).
+// Dean and SDG Representative review IN PARALLEL, so they share one step —
+// the activity only advances once BOTH have approved.
 export const CURRICULAR_CHAIN = [
-  { key: 'dean_review', label: 'Dean' },
-  { key: 'sdg_review', label: 'SDG Representative' },
+  { key: 'dean_review', label: 'Dean & SDG Rep' },
   { key: 'director_review', label: 'Academic Director' },
   { key: 'approved', label: 'Approved' },
 ]
+
+// ---------- Client-side attachment helpers ----------
+export const MAX_ATTACHMENT_MB = 5
+export const MAX_ATTACHMENTS = 8
+
+export function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '')
+    reader.onerror = () => reject(new Error('Could not read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+export function downloadBase64File(base64, fileName, fileType) {
+  const byteChars = atob(base64)
+  const byteNumbers = new Array(byteChars.length)
+  for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i)
+  const blob = new Blob([new Uint8Array(byteNumbers)], { type: fileType || 'application/octet-stream' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName || 'attachment'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+export function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 export function curricularApplyUrl(token) {
   return `${window.location.origin}/curricular/apply/${token}`
@@ -59,6 +95,16 @@ export async function fetchCurricularApprovals(activityId) {
     .select('id, role, token, person_name, person_email, status, comment, expires_at, decided_at, created_at')
     .eq('activity_id', activityId)
   return { data: data || [], error }
+}
+
+export async function fetchCurricularAttachments(activityId) {
+  const { data, error } = await supabase.rpc('fetch_curricular_attachments', { p_activity_id: activityId })
+  return { data: data || [], error }
+}
+
+export async function getCurricularApprovalAttachment(token, attachmentId) {
+  const { data, error } = await supabase.rpc('get_curricular_attachment', { p_token: token, p_attachment_id: attachmentId })
+  return { data, error }
 }
 
 export async function fetchCurricularHistory(activityId) {

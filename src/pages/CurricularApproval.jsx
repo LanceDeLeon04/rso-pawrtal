@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, ShieldCheck,
+  CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, ShieldCheck, FileText, Download,
 } from 'lucide-react'
 import SignaturePad from '../components/SignaturePad'
-import { getCurricularApproval, submitCurricularDecision } from '../lib/curricularActivities'
+import {
+  getCurricularApproval, submitCurricularDecision, getCurricularApprovalAttachment,
+  downloadBase64File, formatFileSize,
+} from '../lib/curricularActivities'
 import './ExternalApproval.css'
 
 const STATUS_META = {
@@ -99,12 +102,19 @@ export default function CurricularApproval() {
     )
   }
 
-  const { link, activity, dean_status: deanStatus } = payload
+  const { link, activity, dean_status: deanStatus, sdg_status: sdgStatus, attachments = [] } = payload
   const roleLabel = ROLE_LABELS[link.role] || 'Reviewer'
+  const counterpartRole = link.role === 'dean' ? 'sdg_rep' : 'dean'
+  const counterpartLabel = ROLE_LABELS[counterpartRole]
+  const counterpartStatus = link.role === 'dean' ? sdgStatus : deanStatus
   const effectiveStatus = doneDecision ? (doneDecision === 'approved' ? 'approved' : 'rejected') : link.status
   const meta = STATUS_META[effectiveStatus] || STATUS_META.pending
   const isDecided = effectiveStatus !== 'pending'
-  const roleBlocked = link.role === 'sdg_rep' && deanStatus !== 'approved' && !isDecided
+
+  async function handleDownload(att) {
+    const { data } = await getCurricularApprovalAttachment(token, att.id)
+    if (data?.data) downloadBase64File(data.data, data.file_name || att.file_name, data.file_type || att.file_type)
+  }
 
   return (
     <div className="xap">
@@ -143,15 +153,31 @@ export default function CurricularApproval() {
               <p>{activity.description}</p>
             </div>
           )}
+
+          {attachments.length > 0 && (
+            <div className="xap-desc">
+              <span>Attachments</span>
+              <ul className="xap-attachment-list">
+                {attachments.map((att) => (
+                  <li key={att.id}>
+                    <FileText size={14} />
+                    <span className="xap-attachment-list__name">{att.file_name}</span>
+                    <span className="xap-attachment-list__size">{formatFileSize(att.file_size)}</span>
+                    <button type="button" onClick={() => handleDownload(att)}><Download size={14} /> Download</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
 
-        {link.role === 'sdg_rep' && (
-          <div className={`xap-note ${deanStatus === 'approved' ? 'xap-note--ok' : 'xap-note--warn'}`}>
-            {deanStatus === 'approved'
-              ? 'The Dean has approved this activity. You may proceed.'
-              : 'Waiting on the Dean to approve first. You will be able to decide once they do.'}
-          </div>
-        )}
+        <div className={`xap-note ${counterpartStatus === 'approved' ? 'xap-note--ok' : 'xap-note--warn'}`}>
+          {counterpartStatus === 'approved'
+            ? `The ${counterpartLabel} has also approved this activity.`
+            : counterpartStatus === 'rejected'
+              ? `The ${counterpartLabel} rejected this activity — it won't proceed regardless of your decision.`
+              : `The ${counterpartLabel} is reviewing separately, in parallel. You don't need to wait for them — decide whenever you're ready.`}
+        </div>
 
         {isDecided ? (
           <section className={`xap-card xap-outcome xap-outcome--${effectiveStatus === 'approved' ? 'ok' : 'danger'}`}>
@@ -168,40 +194,34 @@ export default function CurricularApproval() {
         ) : (
           <section className="xap-card xap-decision">
             <h3><ShieldCheck size={16} /> Your Decision</h3>
-            {roleBlocked ? (
-              <p className="xap-muted">Decision controls will unlock once the Dean approves.</p>
-            ) : (
-              <>
-                <textarea
-                  placeholder="Add a comment (required if rejecting)…"
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  rows={3}
-                />
-                {decisionMode === 'approve' && (
-                  <div className="xap-sig">
-                    <label>Sign to approve <span className="xap-muted">(draw your signature, or attach an image)</span></label>
-                    <SignaturePad onChange={setSignature} />
-                  </div>
-                )}
-                {actionError && <p className="xap-error">{actionError}</p>}
-                <div className="xap-decision__actions">
-                  {decisionMode !== 'approve' && (
-                    <button className="xap-btn xap-btn--ok" onClick={() => setDecisionMode('approve')}>
-                      <CheckCircle2 size={16} /> Approve
-                    </button>
-                  )}
-                  {decisionMode === 'approve' && (
-                    <button className="xap-btn xap-btn--ok" disabled={submitting} onClick={() => requestDecision('approved')}>
-                      {submitting ? <Loader2 size={16} className="xap__spin" /> : <CheckCircle2 size={16} />} Confirm Approval
-                    </button>
-                  )}
-                  <button className="xap-btn xap-btn--danger" disabled={submitting} onClick={() => requestDecision('rejected')}>
-                    <XCircle size={16} /> Reject
-                  </button>
-                </div>
-              </>
+            <textarea
+              placeholder="Add a comment (required if rejecting)…"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={3}
+            />
+            {decisionMode === 'approve' && (
+              <div className="xap-sig">
+                <label>Sign to approve <span className="xap-muted">(draw your signature, or attach an image)</span></label>
+                <SignaturePad onChange={setSignature} />
+              </div>
             )}
+            {actionError && <p className="xap-error">{actionError}</p>}
+            <div className="xap-decision__actions">
+              {decisionMode !== 'approve' && (
+                <button className="xap-btn xap-btn--ok" onClick={() => setDecisionMode('approve')}>
+                  <CheckCircle2 size={16} /> Approve
+                </button>
+              )}
+              {decisionMode === 'approve' && (
+                <button className="xap-btn xap-btn--ok" disabled={submitting} onClick={() => requestDecision('approved')}>
+                  {submitting ? <Loader2 size={16} className="xap__spin" /> : <CheckCircle2 size={16} />} Confirm Approval
+                </button>
+              )}
+              <button className="xap-btn xap-btn--danger" disabled={submitting} onClick={() => requestDecision('rejected')}>
+                <XCircle size={16} /> Reject
+              </button>
+            </div>
           </section>
         )}
       </div>

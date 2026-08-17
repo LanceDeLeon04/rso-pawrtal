@@ -305,6 +305,65 @@
   letter-spacing: 0.04em;
   color: var(--nu-blue-700);
   margin: 20px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ca-attachments {
+  margin-bottom: 4px;
+}
+
+.ca-attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ca-attachment-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font: 500 13px/1.3 var(--font-body);
+  color: var(--ink);
+}
+
+.ca-attachment-list__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ca-attachment-list__size {
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ca-attachment-list li button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--nu-blue-500);
+  color: var(--nu-blue-700);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: 600 11.5px/1 var(--font-body);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ca-attachment-list li button:hover {
+  background: rgba(44, 95, 184, 0.08);
 }
 
 .ca-approver-row {
