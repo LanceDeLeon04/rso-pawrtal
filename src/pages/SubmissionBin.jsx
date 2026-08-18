@@ -2832,9 +2832,10 @@ export default function SubmissionBin() {
           // upload the Link and QR Code of this activity's official
           // Evaluation Form, via the Assignments/Alerts flow.
           const { data: sdaoStaff } = await supabase
-            .from('profiles').select('id, role').in('role', ['sdao_supervisor', 'sdao_assistant'])
+            .from('profiles').select('id, role').in('role', ['sdao_supervisor', 'sdao_assistant', 'system_admin'])
           const evalAssignee = sdaoStaff?.find((p) => p.role === 'sdao_supervisor')?.id
             || sdaoStaff?.find((p) => p.role === 'sdao_assistant')?.id
+            || sdaoStaff?.find((p) => p.role === 'system_admin')?.id
           if (evalAssignee) {
             await supabase.from('assignments').insert({
               title: `Generate Evaluation form for: ${sub.title}`,

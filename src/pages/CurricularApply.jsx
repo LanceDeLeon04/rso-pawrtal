@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabaseClient'
 import {
   getCurricularApplyLink, submitCurricularActivity,
   fileToBase64, bytesToBase64, formatFileSize, MAX_ATTACHMENT_MB, MAX_ATTACHMENTS,
+  fetchDeanForDepartment, fetchSdgRepresentatives,
 } from '../lib/curricularActivities'
 import { checkVenueAvailability } from '../lib/venueAvailability'
 import { generateACPFormPdf } from '../lib/acpPdf'
@@ -52,8 +53,11 @@ export default function CurricularApply() {
     title: '', description: '', activity_type: '', activity_type_other: '',
     target_audience: '', target_participants: '', projected_budget: '', budget_source: '',
     medium: 'f2f', venue_id: '', venue_detail: '', online_platform: '',
-    event_date: '', start_time: '', end_time: '',
+    event_date: '', start_time: '', end_time: '', sdg_rep_id: '',
   })
+  const [sdgReps, setSdgReps] = useState([])
+  const [detectedDean, setDetectedDean] = useState(null)
+  const [detectingDean, setDetectingDean] = useState(false)
   const [attachments, setAttachments] = useState([]) // [{ name, type, size, data }]
   const [attachError, setAttachError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -84,9 +88,29 @@ export default function CurricularApply() {
         return
       }
       setLinkLabel(data.label || '')
+      const { data: reps } = await fetchSdgRepresentatives()
+      setSdgReps(reps)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  // Auto-detect the Dean the moment a Department is picked — same
+  // fixed School→Dean roster SDAO manages in Settings. Faculty never
+  // types a Dean in themselves; this just confirms who it resolved to.
+  useEffect(() => {
+    if (!form.department) {
+      setDetectedDean(null)
+      return
+    }
+    let cancelled = false
+    setDetectingDean(true)
+    fetchDeanForDepartment(form.department).then(({ data }) => {
+      if (cancelled) return
+      setDetectedDean(data)
+      setDetectingDean(false)
+    })
+    return () => { cancelled = true }
+  }, [form.department])
 
   const roomBuildingOptionsFor = () => [...new Set(venueRooms.map((r) => r.building))]
   const roomFloorOptionsFor = (building) => [...new Set(venueRooms.filter((r) => r.building === building).map((r) => r.floor))]
@@ -306,6 +330,27 @@ export default function CurricularApply() {
                   {COLLEGE_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
+            </div>
+            {form.department && (
+              <p className="curric-hint curric-hint--plain">
+                {detectingDean ? (
+                  <><Loader2 size={12} className="spin" /> Detecting Dean…</>
+                ) : detectedDean ? (
+                  <><Info size={12} /> Dean: <strong>{detectedDean.person_name}</strong> — auto-detected for this department; their approval link is sent automatically once you submit.</>
+                ) : (
+                  <><AlertCircle size={12} /> No Dean is on file for this department yet — SDAO will assign one manually after you submit.</>
+                )}
+              </p>
+            )}
+            <div className="field">
+              <label>SDG Representative</label>
+              <select value={form.sdg_rep_id} onChange={(e) => set('sdg_rep_id', e.target.value)}>
+                <option value="">Select...</option>
+                {sdgReps.map((r) => <option key={r.id} value={r.id}>{r.person_name}</option>)}
+              </select>
+              <p className="curric-hint curric-hint--plain">
+                <Info size={12} /> Their approval link is generated and sent automatically once you submit — no need to contact them yourself.
+              </p>
             </div>
             <p className="curric-hint curric-hint--plain">
               <Info size={12} /> We'll send your event code and status updates to both addresses — the personal one is a backup in case your NU inbox is hard to reach.

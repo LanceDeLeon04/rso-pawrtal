@@ -224,6 +224,21 @@ export default function Assignments() {
     return false
   }
 
+  // The auto-generated "Generate Evaluation form for: ..." task is
+  // assigned_to ONE specific SDAO Supervisor/Assistant (whoever
+  // existed at approval time), but any SDAO Assistant, Supervisor, or
+  // Admin should be able to pick it up and fill it in — not just that
+  // one person. Detected by title since these tasks share the same
+  // auto_generated + event_id shape as the Post-Activity Report task
+  // (see canActOnAssignment below).
+  function isEvaluationFormTask(a) {
+    return !!a?.auto_generated && !!a?.title?.startsWith('Generate Evaluation form for:')
+  }
+
+  function canActOnAssignment(a) {
+    return isMyAssignment(a) || (canManage && isEvaluationFormTask(a))
+  }
+
   function openNewModal() {
     setForm(EMPTY_FORM)
     setFormError('')
@@ -822,13 +837,18 @@ export default function Assignments() {
               </div>
             )}
 
-            {isMyAssignment(selected) && ['pending', 'returned', 'conditional_approved'].includes(selected.status) && (
-              selected.auto_generated && selected.event_id ? (
+            {canActOnAssignment(selected) && ['pending', 'returned', 'conditional_approved'].includes(selected.status) && (
+              selected.auto_generated && selected.event_id && !isEvaluationFormTask(selected) ? (
                 <button className="asg-btn asg-btn--gold asg-btn--full" onClick={goSubmitReport}>
                   <ArrowRight size={15} /> Go to Report Submission
                 </button>
               ) : (
                 <form className="asg-deliverable-form" onSubmit={handleSubmitDeliverable}>
+                  {isEvaluationFormTask(selected) && (
+                    <p className="asg-hint">
+                      Upload the QR code image as the file, and paste the Evaluation Form link in the note field below.
+                    </p>
+                  )}
                   {deliverableError && <div className="asg-form-error"><AlertCircle size={14} /> {deliverableError}</div>}
                   <div className="asg-target-tabs">
                     <button
@@ -860,10 +880,10 @@ export default function Assignments() {
                     </label>
                   ) : (
                     <label className="asg-field">
-                      File <span className="asg-optional">(PDF or Excel)</span>
+                      File <span className="asg-optional">{isEvaluationFormTask(selected) ? '(QR code image)' : '(PDF or Excel)'}</span>
                       <input
                         type="file"
-                        accept=".pdf,.xlsx,.xls"
+                        accept={isEvaluationFormTask(selected) ? '.png,.jpg,.jpeg' : '.pdf,.xlsx,.xls'}
                         onChange={(e) => setDeliverableEntry(e.target.files?.[0] || null)}
                         required
                       />

@@ -96,7 +96,7 @@ export async function fetchCurricularApplyLinks() {
 export async function fetchCurricularActivities() {
   const { data, error } = await supabase
     .from('curricular_activities')
-    .select('*')
+    .select('*, sdg_rep:external_approvers ( person_name )')
     .order('created_at', { ascending: false })
   return { data: data || [], error }
 }
@@ -146,6 +146,19 @@ export async function decideCurricularActivity(activityId, decision, comment) {
 export async function getCurricularApplyLink(token) {
   const { data, error } = await supabase.rpc('get_curricular_apply_link', { p_token: token })
   return { data, error }
+}
+
+// Auto-detect the Dean for the department picked on the apply form.
+export async function fetchDeanForDepartment(department) {
+  if (!department) return { data: null, error: null }
+  const { data, error } = await supabase.rpc('get_dean_for_department', { p_department: department })
+  return { data: data?.[0] || null, error }
+}
+
+// Roster the faculty applicant picks their SDG Representative from.
+export async function fetchSdgRepresentatives() {
+  const { data, error } = await supabase.rpc('list_sdg_representatives')
+  return { data: data || [], error }
 }
 
 export async function submitCurricularActivity(token, payload) {

@@ -9,13 +9,22 @@
 do $$
 declare
   evaluator uuid;
+  n_backfilled integer := 0;
 begin
   select id into evaluator from profiles where role = 'sdao_supervisor' order by created_at asc limit 1;
   if evaluator is null then
     select id into evaluator from profiles where role = 'sdao_assistant' order by created_at asc limit 1;
   end if;
+  -- Last-resort fallback so this never silently no-ops for lack of a
+  -- Supervisor/Assistant account — any admin/staff can still pick the
+  -- task up in the app (see canActOnAssignment in Assignments.jsx).
+  if evaluator is null then
+    select id into evaluator from profiles where role = 'system_admin' order by created_at asc limit 1;
+  end if;
 
-  if evaluator is not null then
+  if evaluator is null then
+    raise notice 'No sdao_supervisor, sdao_assistant, or system_admin profile found — nothing to backfill. Create one of those accounts first, then re-run this migration.';
+  else
     insert into assignments (title, description, event_id, assigned_to, assigned_by, status, auto_generated)
     select
       'Generate Evaluation form for: ' || s.title,
@@ -34,5 +43,7 @@ begin
         where a.event_id = s.event_id
           and a.title like 'Generate Evaluation form for:%'
       );
+    get diagnostics n_backfilled = row_count;
+    raise notice 'Backfilled % evaluation-form assignment(s), assigned to profile %.', n_backfilled, evaluator;
   end if;
 end $$;

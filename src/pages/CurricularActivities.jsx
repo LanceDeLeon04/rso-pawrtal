@@ -212,6 +212,7 @@ function ActivityDetail({ activity, onBack, onChanged, canDecideAsDirector }) {
         <div><span>NU Email</span><strong>{activity.faculty_email}</strong></div>
         <div><span>Personal Email</span><strong>{activity.faculty_personal_email || '—'}</strong></div>
         <div><span>Department</span><strong>{activity.department || '—'}</strong></div>
+        <div><span>SDG Representative</span><strong>{activity.sdg_rep?.person_name || '—'}</strong></div>
         <div><span>Date</span><strong>{fmtDate(activity.event_date)}</strong></div>
         <div><span>Time</span><strong>{activity.start_time || '—'} – {activity.end_time || '—'}</strong></div>
         <div><span>Medium</span><strong>{activity.medium || '—'}</strong></div>
