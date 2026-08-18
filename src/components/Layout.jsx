@@ -11,6 +11,7 @@ import {
   isSHSReviewer, isSHSFaculty, isSHSVenueRequestParty, isSHSFacultyModerator,
   seesAllDepartments, DEPARTMENT_LABELS,
 } from '../context/AuthContext'
+import { supabase } from '../lib/supabaseClient'
 import InstallAppBanner from './InstallAppBanner'
 import './Layout.css'
 
@@ -97,6 +98,98 @@ export default function Layout() {
   const shsPrincipal = profile?.role === 'shs_principal'
   const shsReviewer = isSHSReviewer(profile?.role)
   const shsFaculty = isSHSFaculty(profile?.role)
+
+  // "Awaiting my action" badges across the nav — same red-count pattern
+  // extended to every reviewer queue (Submission Bin, Clearance,
+  // Assignments, Reschedule Requests, RSO Renewal, Curricular
+  // Activities, Venue Request). Each entry matches the exact
+  // stage/status a given role reviews at — same mappings already used
+  // inside those pages' own REVIEW_STAGE_BY_ROLE consts — so the
+  // number here always agrees with what that page itself shows. Org
+  // accounts get the org-facing equivalent: a 'returned' item that
+  // needs fixing, or a blocked clearance.
+  const [navBadges, setNavBadges] = useState({})
+  useEffect(() => {
+    if (!profile) return
+    let cancelled = false
+    const role = profile.role
+    const myOrgId = profile.org_memberships?.[0]?.org_id
+
+    async function loadBadges() {
+      const jobs = []
+
+      // ---- Submission Bin ----
+      const SUBMISSION_STAGE_BY_ROLE = {
+        sdao_assistant: ['submitted', 'assistant_review'],
+        sdao_supervisor: ['supervisor_endorsement', 'shs_supervisor_endorsement'],
+        academic_director: ['director_approval', 'shs_director_approval'],
+        executive_director: ['shs_executive_approval'],
+        sdao_shs: ['shs_review'],
+        shs_principal: ['shs_principal_approval'],
+      }
+      const subStages = SUBMISSION_STAGE_BY_ROLE[role]
+      if (subStages) {
+        jobs.push(['/submissions', supabase.from('submissions').select('id', { count: 'exact', head: true }).in('stage', subStages)])
+      } else if (role === 'rso_officer' && myOrgId) {
+        jobs.push(['/submissions', supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).eq('stage', 'returned')])
+      }
+
+      // ---- Clearance ----
+      if (admin || shsReviewer) {
+        jobs.push(['/clearance', supabase.from('clearances').select('id', { count: 'exact', head: true }).eq('status', 'overdue')])
+      } else if (myOrgId) {
+        jobs.push(['/clearance', supabase.from('clearances').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).in('status', ['pending', 'overdue'])])
+      }
+
+      // ---- Assignments ----
+      let asgQ = supabase.from('assignments').select('id', { count: 'exact', head: true })
+        .in('status', ['pending', 'returned', 'conditional_approved'])
+      if (admin || shsReviewer) asgQ = asgQ.eq('assigned_to', profile.id)
+      jobs.push(['/assignments', asgQ])
+
+      // ---- Reschedule Requests ----
+      const RESCHEDULE_STAGE_BY_ROLE = {
+        sdao_assistant: 'pending_assistant', sdao_supervisor: 'pending_supervisor', academic_director: 'pending_director',
+      }
+      if (RESCHEDULE_STAGE_BY_ROLE[role]) {
+        jobs.push(['/reschedule-requests', supabase.from('reschedule_requests').select('id', { count: 'exact', head: true }).eq('status', RESCHEDULE_STAGE_BY_ROLE[role])])
+      } else if (role === 'rso_officer' && myOrgId) {
+        jobs.push(['/reschedule-requests', supabase.from('reschedule_requests').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).eq('status', 'returned')])
+      }
+
+      // ---- RSO Renewal ----
+      const RENEWAL_STAGE_BY_ROLE = {
+        sdao_assistant: 'assistant_review', sdao_supervisor: 'supervisor_endorsement', academic_director: 'director_approval',
+      }
+      if (RENEWAL_STAGE_BY_ROLE[role]) {
+        jobs.push(['/renewal', supabase.from('org_renewals').select('id', { count: 'exact', head: true }).eq('stage', RENEWAL_STAGE_BY_ROLE[role])])
+      } else if (role === 'rso_officer' && myOrgId) {
+        jobs.push(['/renewal', supabase.from('org_renewals').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).eq('stage', 'returned')])
+      }
+
+      // ---- Curricular Activities (internal Academic Director step
+      // only — Dean/SDG review happens on account-less external links) ----
+      if (['academic_director', 'system_admin'].includes(role)) {
+        jobs.push(['/curricular-activities', supabase.from('curricular_activities').select('id', { count: 'exact', head: true }).eq('status', 'director_review')])
+      }
+
+      // ---- Venue Request (SHS chain) ----
+      if (role === 'sdao_shs') {
+        jobs.push(['/venue-requests', supabase.from('shs_venue_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_sdao_shs')])
+      } else if (role === 'shs_principal') {
+        jobs.push(['/venue-requests', supabase.from('shs_venue_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending_principal')])
+      }
+
+      const results = await Promise.all(jobs.map(([, q]) => q))
+      if (cancelled) return
+      const next = {}
+      jobs.forEach(([to], i) => { next[to] = (next[to] || 0) + (results[i].count || 0) })
+      setNavBadges(next)
+    }
+    loadBadges()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id, location.pathname])
   // isSHSVenueRequestParty only checks role, so it misses a Faculty-
   // Moderator (role stays 'rso_officer' — see isSHSFacultyModerator).
   const shsVenueParty = isSHSVenueRequestParty(profile?.role) || isSHSFacultyModerator(profile)
@@ -156,18 +249,29 @@ export default function Layout() {
         </div>
 
         <nav className="sidebar__nav">
-          {visibleNav.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) => `sidebar__link ${isActive ? 'sidebar__link--active' : ''}`}
-              title={collapsed ? label : undefined}
-              onClick={() => setMobileNavOpen(false)}
-            >
-              <Icon size={18} strokeWidth={2} />
-              {!collapsed && <span>{label}</span>}
-            </NavLink>
-          ))}
+          {visibleNav.map(({ to, label, icon: Icon }) => {
+            const badgeCount = navBadges[to] || 0
+            return (
+              <NavLink
+                key={to}
+                to={to}
+                className={({ isActive }) => `sidebar__link ${isActive ? 'sidebar__link--active' : ''}`}
+                title={collapsed ? label : undefined}
+                onClick={() => setMobileNavOpen(false)}
+              >
+                <span className="sidebar__link-icon">
+                  <Icon size={18} strokeWidth={2} />
+                  {badgeCount > 0 && collapsed && (
+                    <span className="sidebar__badge sidebar__badge--dot" />
+                  )}
+                </span>
+                {!collapsed && <span>{label}</span>}
+                {!collapsed && badgeCount > 0 && (
+                  <span className="sidebar__badge">{badgeCount > 99 ? '99+' : badgeCount}</span>
+                )}
+              </NavLink>
+            )
+          })}
         </nav>
 
         <button
