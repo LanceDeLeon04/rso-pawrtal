@@ -107,6 +107,16 @@ export default function Dashboard() {
           supabase.from('submissions').select('id', { count: 'exact', head: true }).in('stage', myStages),
         )
       }
+      // Tasks assigned directly to this staff member — e.g. an
+      // auto-generated "Generate Evaluation form for: ..." task handed
+      // to the SDAO Supervisor/Assistant once an Academic Director
+      // approves an activity (College or SHS alike). Index into `rest`
+      // below is 3 (right after activeOrgs/clearancePending/clearanceOverdue)
+      // when there's no myStages review-queue query, else 4.
+      queries.push(
+        supabase.from('assignments').select('id', { count: 'exact', head: true })
+          .eq('assigned_to', profile.id).in('status', ['pending', 'returned', 'conditional_approved']),
+      )
     } else if (myOrgId) {
       queries.push(
         supabase.from('clearances').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).in('status', ['pending', 'overdue']),
@@ -134,7 +144,10 @@ export default function Dashboard() {
       next.activeOrgs = rest[0]?.count || 0
       next.clearancePending = rest[1]?.count || 0
       next.clearanceOverdue = rest[2]?.count || 0
-      if (rest[3]) next.myReviewQueue = rest[3].count || 0
+      const myStages = REVIEW_STAGE_BY_ROLE[profile.role]
+      const myAssignmentsIdx = myStages ? 4 : 3
+      if (myStages && rest[3]) next.myReviewQueue = rest[3].count || 0
+      next.myOpenAssignments = rest[myAssignmentsIdx]?.count || 0
     } else if (myOrgId) {
       next.myClearanceBlocked = (rest[0]?.count || 0) > 0
       next.myOpenAssignments = rest[1]?.count || 0
@@ -261,6 +274,14 @@ export default function Dashboard() {
               </Link>
             )}
 
+            {admin && metrics.myOpenAssignments > 0 && (
+              <Link to="/assignments" className="dash-alert dash-alert--warn dash-alert--link">
+                <ClipboardCheck size={15} />
+                <span><strong>{metrics.myOpenAssignments}</strong> task{metrics.myOpenAssignments !== 1 ? 's' : ''} assigned to you need{metrics.myOpenAssignments === 1 ? 's' : ''} attention.</span>
+                <ChevronRight size={14} className="dash-alert__chevron" />
+              </Link>
+            )}
+
             {!admin && metrics.myClearanceBlocked && (
               <Link to="/clearance" className="dash-alert dash-alert--danger dash-alert--link">
                 <AlertTriangle size={15} />
@@ -285,7 +306,7 @@ export default function Dashboard() {
               </Link>
             )}
 
-            {((admin && metrics.myReviewQueue === 0 && metrics.clearanceOverdue === 0) ||
+            {((admin && metrics.myReviewQueue === 0 && metrics.clearanceOverdue === 0 && metrics.myOpenAssignments === 0) ||
               (!admin && !metrics.myClearanceBlocked && metrics.pendingSubmissions === 0 && metrics.myOpenAssignments === 0)) && (
               <div className="dash-alert dash-alert--ok">
                 <CheckCircle2 size={15} />

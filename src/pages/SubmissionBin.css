@@ -857,6 +857,16 @@
   margin-bottom: 8px;
 }
 
+.sb-eval-qr {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.sb-eval-qr .sb-approval-row__link {
+  margin-bottom: 8px;
+}
+
 .sb-attach-list, .sb-history-list, .sb-task-list {
   list-style: none;
   margin: 0;

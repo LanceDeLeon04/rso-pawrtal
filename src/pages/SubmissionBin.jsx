@@ -749,8 +749,10 @@ export default function SubmissionBin() {
   const [generatingLinkRole, setGeneratingLinkRole] = useState(null)
   const [generatingFRF, setGeneratingFRF] = useState(false)
   const [frfError, setFrfError] = useState('')
+  const [evaluationForm, setEvaluationForm] = useState(null) // { qrUrl, link } | null while not yet uploaded
   const [linkError, setLinkError] = useState('')
   const [copiedRole, setCopiedRole] = useState(null)
+  const [evalCopied, setEvalCopied] = useState(false)
   // Self-sign state — used only when the logged-in user IS the
   // Moderator of the submitting SHS org (see selfSignModeratorLink).
   const [selfSignComment, setSelfSignComment] = useState('')
@@ -2434,6 +2436,25 @@ export default function SubmissionBin() {
     setChecklist(check || [])
     setComments(cmts || [])
     setViewerAttachmentId((att && att[0]?.id) || null)
+    setEvaluationForm(null)
+    if (sub.type === 'event_application' && sub.stage === 'approved' && sub.event_id) {
+      const { data: evalAsg } = await supabase.from('assignments')
+        .select('id')
+        .eq('event_id', sub.event_id)
+        .ilike('title', 'Generate Evaluation form for:%')
+        .maybeSingle()
+      if (evalAsg) {
+        const { data: evalDeliv } = await supabase.from('assignment_deliverables')
+          .select('file_url, note')
+          .eq('assignment_id', evalAsg.id)
+          .order('uploaded_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (evalDeliv?.file_url) {
+          setEvaluationForm({ qrUrl: evalDeliv.file_url, link: evalDeliv.note || '' })
+        }
+      }
+    }
     setDetailLoading(false)
   }
 
@@ -2803,6 +2824,28 @@ export default function SubmissionBin() {
             status: 'pending',
             auto_generated: true,
           })
+
+          // Applies to BOTH College and SHS applications alike — the
+          // stage chain funnels into the same 'approved' terminal state
+          // either way. Prompts the SDAO Supervisor (falling back to
+          // the SDAO Assistant if no supervisor account exists) to
+          // upload the Link and QR Code of this activity's official
+          // Evaluation Form, via the Assignments/Alerts flow.
+          const { data: sdaoStaff } = await supabase
+            .from('profiles').select('id, role').in('role', ['sdao_supervisor', 'sdao_assistant'])
+          const evalAssignee = sdaoStaff?.find((p) => p.role === 'sdao_supervisor')?.id
+            || sdaoStaff?.find((p) => p.role === 'sdao_assistant')?.id
+          if (evalAssignee) {
+            await supabase.from('assignments').insert({
+              title: `Generate Evaluation form for: ${sub.title}`,
+              description: 'Upload the QR code image as the file deliverable, and paste the Evaluation Form link in the note field below.',
+              event_id: eventId,
+              assigned_to: evalAssignee,
+              assigned_by: profile.id,
+              status: 'pending',
+              auto_generated: true,
+            })
+          }
 
           // Requested additional ingress/egress time that falls outside
           // gate hours (before 6:00 AM / after 9:00 PM), OR the event's
@@ -5197,6 +5240,40 @@ export default function SubmissionBin() {
                       >
                         {generatingFRF ? <Loader2 size={14} className="spin" /> : <><Download size={13} /> Generate Facility Request Form/s</>}
                       </button>
+
+                      <div className="sb-eval-qr">
+                        <span className="sb-detail-section__label">Evaluation QR</span>
+                        {evaluationForm ? (
+                          <>
+                            <p className="sb-empty-note">Use this QR code as the official evaluation form for this activity.</p>
+                            <div className="sb-approval-row__link">
+                              <input readOnly value={evaluationForm.link || evaluationForm.qrUrl} onFocus={(e) => e.target.select()} />
+                              <button
+                                type="button"
+                                className="sb-icon-btn"
+                                title="Copy link"
+                                onClick={() => {
+                                  navigator.clipboard?.writeText(evaluationForm.link || evaluationForm.qrUrl)
+                                  setEvalCopied(true)
+                                  setTimeout(() => setEvalCopied(false), 1500)
+                                }}
+                              >
+                                {evalCopied ? <Check size={14} /> : <Copy size={14} />}
+                              </button>
+                            </div>
+                            <a
+                              href={evaluationForm.qrUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="sb-btn sb-btn--outline sb-btn--sm sb-btn--full"
+                            >
+                              <Download size={13} /> Download QR
+                            </a>
+                          </>
+                        ) : (
+                          <p className="sb-empty-note">Evaluation form isn't uploaded yet — please check back later.</p>
+                        )}
+                      </div>
                     </div>
                   )}
 
