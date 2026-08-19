@@ -176,9 +176,10 @@ export async function getCurricularApproval(token) {
   return { data, error }
 }
 
-export async function submitCurricularDecision(token, decision, comment, signature) {
+export async function submitCurricularDecision(token, decision, comment, signature, pin) {
   const { data, error } = await supabase.rpc('submit_curricular_decision', {
     p_token: token, p_decision: decision, p_comment: comment || null, p_signature: signature || null,
+    p_pin: pin || null,
   })
   return { data, error }
 }

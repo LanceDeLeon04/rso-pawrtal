@@ -354,11 +354,17 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 160px;
+  width: 100%;
+  max-width: 200px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .xap-pin__input input {
   flex: 1;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--line, #e2e5eb);
   border-radius: var(--radius-sm);
   padding: 9px 10px;
@@ -369,6 +375,7 @@
 }
 
 .xap-pin__input button {
+  flex: 0 0 auto;
   border: 1px solid var(--line, #e2e5eb);
   background: #fff;
   border-radius: var(--radius-sm);
@@ -376,6 +383,8 @@
   cursor: pointer;
   color: var(--muted);
   display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .xap-pin__input button:hover {
