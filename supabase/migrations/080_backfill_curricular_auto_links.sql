@@ -11,7 +11,7 @@ declare
   v_activity record;
   v_dean external_approvers;
   v_sdg external_approvers;
-begin
+begin 
   for v_activity in
     select * from curricular_activities where status = 'dean_review'
   loop
