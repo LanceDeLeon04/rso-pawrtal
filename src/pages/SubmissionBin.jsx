@@ -14,7 +14,7 @@ import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
 import { generateReplySlipPdf } from '../lib/replySlipPdf'
 import { generatePARFPdf } from '../lib/parfPdf'
-import { issueReportSignatureChain, fetchReportApprovalLinks, reportApprovalState, REPORT_APPROVAL_CHAIN, REPORT_ROLE_LABELS } from '../lib/reportApprovals'
+import { issueReportSignatureChain, fetchReportApprovalLinks, reportApprovalState, generateReportApprovalLink, reportApprovalLinkUrl, REPORT_APPROVAL_CHAIN, REPORT_ROLE_LABELS } from '../lib/reportApprovals'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
@@ -352,6 +352,31 @@ async function generateAndSetLink(submissionId, role, name, email, setApprovalLi
   }
   setBusy(role)
   const { data, error } = await generateApprovalLink(submissionId, role, name.trim(), email.trim())
+  setBusy(null)
+  if (error) {
+    setError(error.message || 'Could not generate the link. Please try again.')
+    return
+  }
+  setApprovalLinks((prev) => [...prev.filter((l) => l.role !== role), data])
+}
+
+// Report signature chain (Treasurer/Auditor/Secretary/Adviser/Dean) —
+// same shape as generateAndSetLink above, but issues links via the
+// report-specific wrapper (still hits the same generate_approval_link
+// RPC under the hood, see lib/reportApprovals.js) so SDAO staff can
+// manually (re)issue a signer's link from Submission Bin when the
+// automatic issuance at submission time (issueReportSignatureChain)
+// didn't produce one — e.g. the org has no Treasurer/Auditor/Secretary
+// on file yet, or the original event application never had an
+// Adviser/Dean link to reuse.
+async function generateAndSetReportLink(submissionId, role, name, email, setApprovalLinks, setError, setBusy) {
+  setError('')
+  if (!name.trim()) {
+    setError(`Please enter the ${REPORT_ROLE_LABELS[role]}'s name.`)
+    return
+  }
+  setBusy(role)
+  const { data, error } = await generateReportApprovalLink(submissionId, role, name.trim(), email.trim())
   setBusy(null)
   if (error) {
     setError(error.message || 'Could not generate the link. Please try again.')
@@ -741,7 +766,7 @@ export default function SubmissionBin() {
 
   // Adviser/Dean external approval links (event applications only)
   const [approvalLinks, setApprovalLinks] = useState([])
-  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' } })
+  const [linkForm, setLinkForm] = useState({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' }, treasurer: { name: '', email: '' }, auditor: { name: '', email: '' }, secretary: { name: '', email: '' } })
   // Dean/SDG Representative rosters — fixed, admin-managed lists
   // (Settings → Manage External Approver PINs) so staff pick a name
   // instead of typing it. { dean: [{person_name, school}], sdg_rep: [...] }
@@ -2456,7 +2481,7 @@ export default function SubmissionBin() {
     setConfirmingCancel(false)
     setCancelNote('')
     setCancelError('')
-    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' } })
+    setLinkForm({ adviser: { name: '', email: '' }, dean: { name: '', email: '' }, sdg_rep: { name: '', email: '' }, marketing_rep: { name: '', email: '' }, org_president: { name: '', email: '' }, org_moderator: { name: '', email: '' }, treasurer: { name: '', email: '' }, auditor: { name: '', email: '' }, secretary: { name: '', email: '' } })
     setLinkError('')
     setFrfError('')
     setApprovalLinks([])
@@ -5228,6 +5253,112 @@ export default function SubmissionBin() {
                                     className="sb-btn sb-btn--gold"
                                     disabled={generatingLinkRole === role}
                                     onClick={() => generateAndSetLink(
+                                      selected.id, role, linkForm[role].name, linkForm[role].email,
+                                      setApprovalLinks, setLinkError, setGeneratingLinkRole,
+                                    )}
+                                  >
+                                    {generatingLinkRole === role ? <Loader2 size={14} className="spin" /> : <><Send size={13} /> Generate Link</>}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+
+                  {/* ---------- Report Signature Chain (Treasurer/Auditor/Secretary/Adviser/Dean) ---------- */}
+                  {selected.type === 'report' && (() => {
+                    const canManage = (isOwnerOrg || admin) && ['submitted', 'shs_review'].includes(selected.stage)
+                    const state = reportApprovalState(approvalLinks)
+                    const linkByRole = state.byRole
+
+                    function badgeForReport(link) {
+                      if (!link) return <span className="sb-badge sb-badge--muted">Not sent yet</span>
+                      if (link.status === 'pending' && new Date(link.expires_at) < new Date()) {
+                        return <span className="sb-badge sb-badge--danger"><Hourglass size={11} /> Expired</span>
+                      }
+                      if (link.status === 'approved') return <span className="sb-badge sb-badge--ok"><CheckCircle2 size={11} /> Approved</span>
+                      if (link.status === 'rejected') return <span className="sb-badge sb-badge--danger"><Ban size={11} /> Rejected</span>
+                      return <span className="sb-badge sb-badge--warn"><Hourglass size={11} /> Awaiting response</span>
+                    }
+
+                    return (
+                      <div className="sb-detail-section">
+                        <span className="sb-detail-section__label"><Link2 size={12} style={{ verticalAlign: -2 }} /> Report Sign-off ({REPORT_APPROVAL_CHAIN.map((role) => REPORT_ROLE_LABELS[role]).join(' → ')})</span>
+                        {linkError && <div className="sb-form-error"><AlertCircle size={14} /> {linkError}</div>}
+                        {REPORT_APPROVAL_CHAIN.map((role, idx) => {
+                          const link = linkByRole[role]
+                          const prevRole = REPORT_APPROVAL_CHAIN[idx - 1]
+                          const locked = idx > 0 && role !== 'secretary' && !(
+                            role === 'auditor'
+                              ? linkByRole.treasurer?.status === 'approved'
+                              : role === 'adviser'
+                                ? ['treasurer', 'auditor', 'secretary'].every((r) => linkByRole[r]?.status === 'approved')
+                                : role === 'dean'
+                                  ? linkByRole.adviser?.status === 'approved'
+                                  : false
+                          )
+                          const url = link?.token ? reportApprovalLinkUrl(link.token) : null
+                          return (
+                            <div key={role} className="sb-approval-row">
+                              <div className="sb-approval-row__head">
+                                <strong>{REPORT_ROLE_LABELS[role]}</strong>
+                                {badgeForReport(link)}
+                              </div>
+                              {locked && (
+                                <p className="sb-empty-note">
+                                  Unlocks once {role === 'adviser' ? 'the Treasurer, Auditor, and Secretary approve' : `the ${REPORT_ROLE_LABELS[prevRole]} approves`}.
+                                </p>
+                              )}
+                              {!locked && link && (
+                                <>
+                                  <p className="sb-approval-row__person">{link.person_name}{link.person_email ? ` · ${link.person_email}` : ''}</p>
+                                  {url && (
+                                    <div className="sb-approval-row__link">
+                                      <input readOnly value={url} onFocus={(e) => e.target.select()} />
+                                      <button
+                                        type="button"
+                                        className="sb-icon-btn"
+                                        title="Copy link"
+                                        onClick={() => {
+                                          navigator.clipboard?.writeText(url)
+                                          setCopiedRole(role)
+                                          setTimeout(() => setCopiedRole(null), 1500)
+                                        }}
+                                      >
+                                        {copiedRole === role ? <Check size={14} /> : <Copy size={14} />}
+                                      </button>
+                                    </div>
+                                  )}
+                                  {link.comment && <p className="sb-history-list__comment">"{link.comment}"</p>}
+                                  <span className="sb-history-list__time">Expires {new Date(link.expires_at).toLocaleString()}</span>
+                                  {admin && link.status === 'approved' && link.signature_data && (
+                                    <div className="sb-signature-view">
+                                      <span className="sb-signature-view__label">Signature</span>
+                                      <img src={link.signature_data} alt={`${role} signature`} className="sb-signature-view__img" />
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              {!locked && canManage && (!link || link.status === 'rejected' || (link.status === 'pending' && new Date(link.expires_at) < new Date())) && (
+                                <div className="sb-approval-row__form">
+                                  <input
+                                    placeholder={`${REPORT_ROLE_LABELS[role]} full name`}
+                                    value={linkForm[role].name}
+                                    onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], name: e.target.value } }))}
+                                  />
+                                  <input
+                                    placeholder="Email (optional)"
+                                    value={linkForm[role].email}
+                                    onChange={(e) => setLinkForm((f) => ({ ...f, [role]: { ...f[role], email: e.target.value } }))}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="sb-btn sb-btn--gold"
+                                    disabled={generatingLinkRole === role}
+                                    onClick={() => generateAndSetReportLink(
                                       selected.id, role, linkForm[role].name, linkForm[role].email,
                                       setApprovalLinks, setLinkError, setGeneratingLinkRole,
                                     )}
