@@ -25,6 +25,7 @@ import CurricularApply from './pages/CurricularApply'
 import CurricularApproval from './pages/CurricularApproval'
 import TrackCurricularActivity from './pages/TrackCurricularActivity'
 import CurricularActivities from './pages/CurricularActivities'
+import ReportApproval from './pages/ReportApproval'
 
 export default function App() {
   return (
@@ -52,6 +53,9 @@ export default function App() {
           <Route path="/curricular/apply/:token" element={<CurricularApply />} />
           {/* Public — no login. Dean/SDG Representative review link. */}
           <Route path="/curricular/approve/:token" element={<CurricularApproval />} />
+          {/* Public — no login. Treasurer/Auditor/Secretary/Adviser/Dean
+              report e-signature chain (migration 082). */}
+          <Route path="/report-sign/:token" element={<ReportApproval />} />
           {/* Public — no login. "Track My Activity" from the login page —
               event code only, no faculty PII returned. */}
           <Route path="/track" element={<TrackCurricularActivity />} />

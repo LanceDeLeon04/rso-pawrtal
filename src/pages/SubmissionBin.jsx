@@ -13,6 +13,8 @@ import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates, ex
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
 import { generateReplySlipPdf } from '../lib/replySlipPdf'
+import { generatePARFPdf } from '../lib/parfPdf'
+import { issueReportSignatureChain, fetchReportApprovalLinks, reportApprovalState, REPORT_APPROVAL_CHAIN, REPORT_ROLE_LABELS } from '../lib/reportApprovals'
 import {
   approvalLinkUrl, generateApprovalLink, fetchApprovalLinks, externalApprovalState,
 } from '../lib/approvalLinks'
@@ -34,7 +36,10 @@ import './SubmissionBin.css'
 // 'ACP Form' used to be a manual upload — it's now auto-generated from
 // the fields below and attached on submit, so it's no longer in this list.
 const EVENT_APP_DOCS = ['Attachments Template']
-const REPORT_DOCS = ['PARF Template', 'Liquidation Report', 'Narrative Report', 'Evaluation Report']
+// 'PARF Template' used to be a manual upload too — it's now auto-generated
+// (see generatePARFPdf) and auto-attached the moment a report is
+// submitted, same treatment as the ACP Form on event applications.
+const REPORT_DOCS = ['Liquidation Report', 'Narrative Report', 'Evaluation Report']
 const MERCH_DOCS = ['Design Concept', 'Quotation from Supplier']
 
 const ACTIVITY_TYPES = [
@@ -179,7 +184,8 @@ const STEPS_EVENT_APP_SHS = [
 // as soon as the SDAO Assistant (or SDAO-SHS, for an SHS org) receives them.
 const STEPS_REPORT = [
   { key: 'submitted', label: 'SDAO Assistant' },
-  { key: 'approved', label: 'Received' },
+  { key: 'sdao_supervisor_review', label: 'SDAO Supervisor' },
+  { key: 'approved', label: 'Filed' },
 ]
 const STEPS_REPORT_SHS = [
   { key: 'shs_review', label: 'SDAO-SHS' },
@@ -241,7 +247,7 @@ function stepIndexFor(type, stage, chainComplete, isSHS) {
   return i === -1 ? 0 : i
 }
 
-function nextActionFor(role, stage, type, isSHS) {
+function nextActionFor(role, stage, type, isSHS, reportChainComplete) {
   // Executive Director can approve from ANY stage, for ANY submission
   // type — skipping every intermediate reviewer entirely. Surfaced in
   // the UI with a mandatory justification + a visible warning banner
@@ -266,7 +272,11 @@ function nextActionFor(role, stage, type, isSHS) {
 
     if (type === 'report') {
       if (shsAssistantTurn && (role === 'sdao_shs' || role === 'system_admin')) {
-        return { to: 'approved', action: 'received', label: 'Mark as Received' }
+        if (!reportChainComplete) return null // Adviser/Dean signatures still pending
+        return { to: 'sdao_supervisor_review', action: 'received', label: 'Mark as Received' }
+      }
+      if (stage === 'sdao_supervisor_review' && (role === 'sdao_supervisor' || role === 'system_admin')) {
+        return { to: 'approved', action: 'approved', label: 'File Report' }
       }
       return null
     }
@@ -2133,6 +2143,46 @@ export default function SubmissionBin() {
         failedDocs.push(doc)
       }
     }
+
+    // Auto-create the PARF from the event's own data (no manual upload
+    // step — mirrors how the ACP Form is auto-filled on event
+    // applications) and kick off the Treasurer -> Auditor -> Secretary ->
+    // Adviser -> Dean e-signature chain (see lib/reportApprovals.js).
+    if (clearance?.event_id) {
+      try {
+        const { data: fullEvent } = await supabase
+          .from('events')
+          .select('title, event_date, contact_person, medium, venue_detail, online_platform, organizations ( name ), venues ( name )')
+          .eq('id', clearance.event_id)
+          .single()
+        if (fullEvent) {
+          const venueLabel = fullEvent.medium === 'online'
+            ? (fullEvent.online_platform || fullEvent.venue_detail || '—')
+            : (fullEvent.venues?.name || fullEvent.venue_detail || '—')
+          const pdfBytes = await generatePARFPdf({
+            orgName: fullEvent.organizations?.name || '',
+            eventTitle: fullEvent.title,
+            eventDateLabel: fullEvent.event_date ? toISODate(new Date(fullEvent.event_date)) : '—',
+            venueLabel,
+            contactPerson: fullEvent.contact_person || profile?.full_name || '',
+            filedDate: toISODate(new Date()),
+            signatories: {},
+          })
+          const parfFile = new File([pdfBytes], `PARF-${sub.id}.pdf`, { type: 'application/pdf' })
+          await uploadAttachment(sub.id, 'PARF Template', parfFile)
+        }
+      } catch (parfErr) {
+        console.error('Failed to auto-generate PARF', parfErr)
+        failedDocs.push('PARF Template')
+      }
+
+      try {
+        await issueReportSignatureChain(sub.id, myOrgId, clearance.event_id)
+      } catch (chainErr) {
+        console.error('Failed to issue report signature chain', chainErr)
+      }
+    }
+
     await supabase.from('submission_status_history').insert({
       submission_id: sub.id, stage: 'submitted', action: 'submitted', actor_id: profile.id,
     })
@@ -2410,6 +2460,9 @@ export default function SubmissionBin() {
         // permanently, if it wins the race) reappears in the UI.
         await regenerateAcpWithSdgMarks(sub)
       }
+    } else if (sub.type === 'report') {
+      const { data: links } = await fetchReportApprovalLinks(sub.id)
+      setApprovalLinks(links)
     }
     const [{ data: att }, { data: hist }, { data: tasks }, { data: check }, { data: cmts }] = await Promise.all([
       supabase.from('submission_attachments').select('*').eq('submission_id', sub.id).order('uploaded_at', { ascending: true }),
@@ -5392,7 +5445,26 @@ export default function SubmissionBin() {
 
                   {/* ---------- Reviewer actions ---------- */}
                   {canReview && !['approved', 'returned', 'rejected', 'cancelled'].includes(selected.stage) && (() => {
-                    const nextAction = nextActionFor(profile.role, selected.stage, selected.type, selected.organizations?.department === 'shs')
+                    const reportChainComplete = selected.type === 'report'
+                      ? reportApprovalState(approvalLinks).complete
+                      : true
+                    const assistantTurnForReport = ['sdao_assistant', 'sdao_shs', 'system_admin'].includes(profile.role)
+                      && (selected.stage === 'submitted' || selected.stage === 'shs_review')
+                    if (selected.type === 'report' && assistantTurnForReport && !reportChainComplete) {
+                      const state = reportApprovalState(approvalLinks)
+                      const waitingOnRole = REPORT_APPROVAL_CHAIN.find((role) => state.byRole[role]?.status !== 'approved')
+                      return (
+                        <div className="sb-review-actions">
+                          <div className="sb-note sb-note--warn">
+                            <ShieldAlert size={15} />
+                            <span>
+                              Waiting on the {REPORT_ROLE_LABELS[waitingOnRole]} to sign before this report can be received.
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    }
+                    const nextAction = nextActionFor(profile.role, selected.stage, selected.type, selected.organizations?.department === 'shs', reportChainComplete)
                     if (!nextAction) return null
 
                     const assistantTurn = ['sdao_assistant', 'system_admin'].includes(profile.role)
