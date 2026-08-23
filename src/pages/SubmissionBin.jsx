@@ -2150,15 +2150,27 @@ export default function SubmissionBin() {
     // Adviser -> Dean e-signature chain (see lib/reportApprovals.js).
     if (clearance?.event_id) {
       try {
-        const { data: fullEvent } = await supabase
+        const { data: fullEvent, error: fullEventErr } = await supabase
           .from('events')
-          .select('title, event_date, contact_person, medium, venue_detail, online_platform, organizations ( name ), venues ( name )')
+          .select('title, event_date, contact_person, medium, organizations ( name ), venues ( name )')
           .eq('id', clearance.event_id)
           .single()
+        // venue_detail/online_platform live on the originating submission,
+        // not on events — fetch them from there (same source the ACP
+        // regeneration code above already uses for this event).
+        const { data: originSub } = await supabase
+          .from('submissions')
+          .select('venue_detail, online_platform')
+          .eq('event_id', clearance.event_id)
+          .eq('type', 'event_application')
+          .order('submitted_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (fullEventErr) console.error('Failed to load event for PARF', fullEventErr)
         if (fullEvent) {
           const venueLabel = fullEvent.medium === 'online'
-            ? (fullEvent.online_platform || fullEvent.venue_detail || '—')
-            : (fullEvent.venues?.name || fullEvent.venue_detail || '—')
+            ? (originSub?.online_platform || originSub?.venue_detail || '—')
+            : (fullEvent.venues?.name || originSub?.venue_detail || '—')
           const pdfBytes = await generatePARFPdf({
             orgName: fullEvent.organizations?.name || '',
             eventTitle: fullEvent.title,
