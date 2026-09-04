@@ -170,6 +170,11 @@ export function AuthProvider({ children }) {
       .from('profiles')
       .update({ must_change_password: false })
       .eq('id', session.user.id)
+    // The account no longer has a system-generated default — an admin
+    // should no longer be able to see a password now, since it's the
+    // one the person themselves just chose. See migration 085's
+    // account_default_passwords_delete_own RLS policy.
+    await supabase.from('account_default_passwords').delete().eq('profile_id', session.user.id)
     await loadProfile(session.user.id)
     return { success: true }
   }

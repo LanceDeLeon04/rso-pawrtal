@@ -1,8 +1,8 @@
 // supabase/functions/reset-password/index.ts
 //
-// Resets an existing account's password back to the fixed SDAO default
-// ("password123") and flags must_change_password so the holder is forced
-// to set a new one on their next sign-in. Needs the service-role key,
+// Resets an existing account's password to a fresh system-generated
+// default and flags must_change_password so the holder is forced to
+// set a new one on their next sign-in. Needs the service-role key,
 // hence an Edge Function. Deploy with: supabase functions deploy reset-password
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -14,7 +14,16 @@ const ADMIN_ROLES = [
 const SHS_REVIEWER_ROLES = ['sdao_shs', 'shs_principal']
 const SHS_REVIEWER_MANAGEABLE_ROLES = ['rso_officer', 'shs_faculty']
 
-const DEFAULT_PASSWORD = 'password123'
+function generatePassword() {
+  // Same generator as create-account — kept in sync there in a comment
+  // since Edge Functions can't share a module across deployments here.
+  const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const bytes = new Uint8Array(10)
+  crypto.getRandomValues(bytes)
+  let password = ''
+  for (const b of bytes) password += ALPHABET[b % ALPHABET.length]
+  return password
+}
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -44,7 +53,7 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userErr } = await admin.auth.getUser(jwt)
     if (userErr || !user) return json({ error: 'Invalid or expired session.' }, 401)
 
-    const { data: caller } = await admin.from('profiles').select('role, is_active').eq('id', user.id).single()
+    const { data: caller } = await admin.from('profiles').select('role, is_active, full_name').eq('id', user.id).single()
     const callerIsAdmin = caller?.is_active && ADMIN_ROLES.includes(caller.role)
     const callerIsShsReviewer = caller?.is_active && SHS_REVIEWER_ROLES.includes(caller.role)
     if (!callerIsAdmin && !callerIsShsReviewer) {
@@ -54,21 +63,43 @@ Deno.serve(async (req) => {
     const { profile_id } = await req.json()
     if (!profile_id) return json({ error: 'profile_id is required.' }, 400)
 
-    const { data: target } = await admin.from('profiles').select('id, email, role').eq('id', profile_id).single()
+    const { data: target } = await admin.from('profiles').select('id, full_name, email, role').eq('id', profile_id).single()
     if (!target) return json({ error: 'Account not found.' }, 404)
 
     if (callerIsShsReviewer && !SHS_REVIEWER_MANAGEABLE_ROLES.includes(target.role)) {
       return json({ error: 'SDAO-SHS and the SHS Principal can only manage SHS RSO/Moderator or SHS Faculty accounts.' }, 403)
     }
 
+    const tempPassword = generatePassword()
+
     const { error: updateErr } = await admin.auth.admin.updateUserById(profile_id, {
-      password: DEFAULT_PASSWORD,
+      password: tempPassword,
     })
     if (updateErr) return json({ error: updateErr.message }, 400)
 
     await admin.from('profiles').update({ must_change_password: true }).eq('id', profile_id)
 
-    return json({ success: true, email: target.email, temp_password: DEFAULT_PASSWORD })
+    // Overwrites any previous default (e.g. if it had already been
+    // changed by the holder, this reinstates a visible, admin-known one).
+    await admin.from('account_default_passwords').upsert({
+      profile_id,
+      password: tempPassword,
+      set_by: user.id,
+      set_at: new Date().toISOString(),
+    })
+
+    await admin.from('audit_logs').insert({
+      actor_id: user.id,
+      actor_name: caller?.full_name || null,
+      actor_role: caller?.role || null,
+      action: 'password_reset',
+      target_type: 'profile',
+      target_id: profile_id,
+      target_label: target.full_name,
+      metadata: {},
+    })
+
+    return json({ success: true, email: target.email, temp_password: tempPassword })
   } catch (e) {
     return json({ error: e.message || 'Unexpected error.' }, 500)
   }

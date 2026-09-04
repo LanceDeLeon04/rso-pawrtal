@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Users, Plus, Loader2, AlertCircle, CheckCircle2, Building2, Copy,
   Tag, Trash2, X, Camera, Mail, Phone, Pencil, Check, KeyRound,
-  Eye, Landmark, ShieldCheck, BadgeCheck,
+  Eye, EyeOff, Landmark, ShieldCheck, BadgeCheck,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isSHSReviewer } from '../context/AuthContext'
@@ -104,13 +104,14 @@ export default function Accounts() {
   const [profiles, setProfiles] = useState([])
   const [memberships, setMemberships] = useState([])
   const [bankDetails, setBankDetails] = useState([])
+  const [defaultPasswords, setDefaultPasswords] = useState({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
     setLoading(true)
-    const [{ data: o }, { data: p }, { data: m }, { data: b }] = await Promise.all([
+    const [{ data: o }, { data: p }, { data: m }, { data: b }, { data: dp }] = await Promise.all([
       supabase.from('organizations')
         .select('id, name, acronym, category, adviser_name, department, logo_url, accreditation_status, contact_email, contact_number, is_active')
         .order('acronym'),
@@ -119,11 +120,17 @@ export default function Accounts() {
         .select('id, profile_id, org_id, position, is_primary, profiles ( full_name, recovery_email ), organizations ( acronym )')
         .order('created_at', { ascending: false }),
       supabase.from('organization_bank_details').select('org_id, bank_name, account_name, account_number'),
+      // System-generated default passwords (migration 085) — only rows
+      // for accounts that haven't set their own password yet come back;
+      // a profile with none here has already changed theirs, and is
+      // deliberately unrecoverable by an admin from this point on.
+      supabase.from('account_default_passwords').select('profile_id, password'),
     ])
     setOrgs(o || [])
     setProfiles(p || [])
     setMemberships(m || [])
     setBankDetails(b || [])
+    setDefaultPasswords(Object.fromEntries((dp || []).map((row) => [row.profile_id, row.password])))
     setLoading(false)
   }
 
@@ -178,6 +185,7 @@ export default function Accounts() {
           <AdminAccountsSection
             adminProfiles={shsFacultyProfiles}
             currentProfileId={currentProfile?.id}
+            defaultPasswords={defaultPasswords}
             onChanged={loadAll}
             title="SHS Faculty Accounts"
             subtitle="Faculty logins — Calendar + Venue Request only."
@@ -185,7 +193,7 @@ export default function Accounts() {
           />
           <CreateRSOAccountSection orgs={shsOrgs} onCreated={loadAll} />
           <OrganizationsSection orgs={shsOrgs} memberships={shsMemberships} bankDetails={bankDetails} onChanged={loadAll} lockDepartment="shs" />
-          <MembershipsSection orgs={shsOrgs} profiles={shsProfiles} memberships={shsMemberships} onChanged={loadAll} />
+          <MembershipsSection orgs={shsOrgs} profiles={shsProfiles} memberships={shsMemberships} defaultPasswords={defaultPasswords} onChanged={loadAll} />
         </>
       ) : (
         <>
@@ -194,10 +202,11 @@ export default function Accounts() {
           <AdminAccountsSection
             adminProfiles={adminProfiles}
             currentProfileId={currentProfile?.id}
+            defaultPasswords={defaultPasswords}
             onChanged={loadAll}
           />
           <OrganizationsSection orgs={orgs} memberships={memberships} bankDetails={bankDetails} onChanged={loadAll} />
-          <MembershipsSection orgs={orgs} profiles={profiles} memberships={memberships} onChanged={loadAll} />
+          <MembershipsSection orgs={orgs} profiles={profiles} memberships={memberships} defaultPasswords={defaultPasswords} onChanged={loadAll} />
         </>
       )}
     </div>
@@ -247,6 +256,36 @@ function CreatedAccountResult({ result, onClose }) {
 
 // ---------- ADMINISTRATORS (personal accounts) ----------
 // SDAO, Admins, Academic Directors, etc. — one login per person.
+// ============================================================
+// DefaultPasswordCell — shows a system-generated default password
+// hidden behind dots until the admin clicks to reveal it (migration
+// 085 / account_default_passwords). Once the account holder sets their
+// own password, there's no row for this profile anymore and this cell
+// just says so — that password isn't recoverable by anyone here.
+// ============================================================
+function DefaultPasswordCell({ password }) {
+  const [visible, setVisible] = useState(false)
+
+  if (!password) {
+    return <span className="acc-optional" title="This account's holder has already set their own password.">Changed by user</span>
+  }
+
+  return (
+    <div className="acc-edit-actions" style={{ alignItems: 'center' }}>
+      <code>{visible ? password : '•'.repeat(Math.min(password.length, 10))}</code>
+      <button
+        type="button"
+        className="acc-icon-btn"
+        onClick={() => setVisible((v) => !v)}
+        title={visible ? 'Hide password' : 'Show password'}
+      >
+        {visible ? <EyeOff size={13} /> : <Eye size={13} />}
+      </button>
+    </div>
+  )
+}
+
+
 function CreateAdminAccountSection({ onCreated }) {
   const [form, setForm] = useState(EMPTY_ADMIN_FORM)
   const [saving, setSaving] = useState(false)
@@ -481,7 +520,7 @@ function CreateSHSFacultyAccountSection({ orgs, onCreated }) {
 // CreateSHSFacultyAccountSection below) — same "personal account"
 // reset/delete actions, just a different title/subtitle and profile set.
 function AdminAccountsSection({
-  adminProfiles, currentProfileId, onChanged,
+  adminProfiles, currentProfileId, defaultPasswords = {}, onChanged,
   title = 'Administrator Accounts',
   subtitle = 'SDAO, Admins, Academic Directors, and Facilities (FMO) with a personal login.',
   emptyText = 'No administrator accounts yet.',
@@ -538,10 +577,10 @@ function AdminAccountsSection({
 
       <div className="table-scroll">
       <table className="acc-table">
-        <thead><tr><th>Name</th><th>Username</th><th>Gmail</th><th>Role</th><th /></tr></thead>
+        <thead><tr><th>Name</th><th>Username</th><th>Gmail</th><th>Role</th><th>Default Password</th><th /></tr></thead>
         <tbody>
           {adminProfiles.length === 0 ? (
-            <tr><td colSpan={5} className="acc-empty-row">{emptyText}</td></tr>
+            <tr><td colSpan={6} className="acc-empty-row">{emptyText}</td></tr>
           ) : (
             adminProfiles.map((p) => {
               const isSelf = p.id === currentProfileId
@@ -556,6 +595,7 @@ function AdminAccountsSection({
                       : <span className="acc-optional" title="This account can't self-serve a password reset until a Gmail is added.">No Gmail on file</span>}
                   </td>
                   <td>{ROLE_LABELS[p.role]}</td>
+                  <td><DefaultPasswordCell password={defaultPasswords[p.id]} /></td>
                   <td>
                     {isConfirming ? (
                       <div className="acc-edit-actions">
@@ -577,7 +617,7 @@ function AdminAccountsSection({
                           className="acc-icon-btn"
                           onClick={() => handleReset(p.id)}
                           disabled={resettingId === p.id}
-                          title="Reset password to default"
+                          title="Reset & generate a new default password"
                         >
                           {resettingId === p.id ? <Loader2 size={13} className="spin" /> : <KeyRound size={13} />}
                         </button>
@@ -1318,7 +1358,7 @@ function OrgDetailsModal({ org, bank, memberships, onClose }) {
   )
 }
 
-function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
+function MembershipsSection({ orgs, profiles, memberships, defaultPasswords = {}, onChanged }) {
   const [form, setForm] = useState(EMPTY_MEMBERSHIP_FORM)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -1455,10 +1495,10 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
 
       <div className="table-scroll">
       <table className="acc-table">
-        <thead><tr><th>Current Holder</th><th>Org</th><th>Position / Tag</th><th>Gmail</th><th /></tr></thead>
+        <thead><tr><th>Current Holder</th><th>Org</th><th>Position / Tag</th><th>Gmail</th><th>Default Password</th><th /></tr></thead>
         <tbody>
           {memberships.length === 0 ? (
-            <tr><td colSpan={5} className="acc-empty-row">No memberships yet.</td></tr>
+            <tr><td colSpan={6} className="acc-empty-row">No memberships yet.</td></tr>
           ) : (
             memberships.map((m) => (
               <tr key={m.id}>
@@ -1481,6 +1521,7 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
                     ? m.profiles.recovery_email
                     : <span className="acc-optional" title="This account can't self-serve a password reset until a Gmail is added.">No Gmail on file</span>}
                 </td>
+                <td><DefaultPasswordCell password={defaultPasswords[m.profile_id]} /></td>
                 <td>
                   {renamingId === m.id ? (
                     <div className="acc-edit-actions">
@@ -1500,7 +1541,7 @@ function MembershipsSection({ orgs, profiles, memberships, onChanged }) {
                         className="acc-icon-btn"
                         onClick={() => handleReset(m)}
                         disabled={resettingId === m.id}
-                        title="Reset password to default"
+                        title="Reset & generate a new default password"
                       >
                         {resettingId === m.id ? <Loader2 size={13} className="spin" /> : <KeyRound size={13} />}
                       </button>

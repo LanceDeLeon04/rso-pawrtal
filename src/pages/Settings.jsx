@@ -1298,6 +1298,7 @@ const AUDIT_ACTION_LABELS = {
   account_reactivated: 'Account reactivated',
   account_locked: 'Account locked',
   account_unlocked: 'Account lock reset',
+  password_reset: 'Password reset to new default',
   role_changed: 'Role changed',
   profile_renamed: 'Name changed',
 }

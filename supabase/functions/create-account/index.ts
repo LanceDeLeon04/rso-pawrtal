@@ -46,10 +46,19 @@ function json(body, status = 200) {
 }
 
 function generatePassword() {
-  // Fixed default per SDAO's account-creation policy — every new account
-  // (and every password reset) starts on this password and must be
-  // changed on first sign-in (must_change_password is always set true).
-  return 'password123'
+  // System-generated default per SDAO's account-creation policy — every
+  // new account (and every password reset, see reset-password) starts
+  // on a random string and must be changed on first sign-in
+  // (must_change_password is always set true). Avoids visually
+  // ambiguous characters (0/O, 1/l/I) since this is typed by hand off a
+  // screen. ~57 bits of entropy at 10 characters — plenty for a
+  // one-time value that's forced to be replaced immediately.
+  const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  const bytes = new Uint8Array(10)
+  crypto.getRandomValues(bytes)
+  let password = ''
+  for (const b of bytes) password += ALPHABET[b % ALPHABET.length]
+  return password
 }
 
 // RSO accounts belong to a *position* (e.g. "SCS-SC President"), not a
@@ -274,6 +283,19 @@ Deno.serve(async (req) => {
       )
       if (scopeErr) return json({ error: `Account created, but viewer scopes failed: ${scopeErr.message}` }, 207)
     }
+
+    // Record the generated default so an admin can look it up later
+    // (see account_default_passwords, migration 085) — it's shown once
+    // here in the response, but this is what backs the "show" toggle
+    // and Reset actions in Accounts.jsx after the fact. Deliberately
+    // non-fatal: a logging hiccup shouldn't undo an otherwise-successful
+    // account creation.
+    await admin.from('account_default_passwords').upsert({
+      profile_id: created.user.id,
+      password: tempPassword,
+      set_by: user.id,
+      set_at: new Date().toISOString(),
+    })
 
     return json({ success: true, email, temp_password: tempPassword })
   } catch (e) {
