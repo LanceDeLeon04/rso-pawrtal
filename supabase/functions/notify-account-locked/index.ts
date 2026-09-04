@@ -14,14 +14,20 @@
 // Required secrets (same ones notify-status-email/notify-approver-email
 // already need):
 //   EMAIL_WEBHOOK_SECRET   shared secret, must match app_config.email_webhook_secret
-//   GMAIL_USER             the Gmail address to send from
+//   GMAIL_USER             the Gmail address to send from (personal emails + fallback)
 //   GMAIL_APP_PASSWORD     16-character Gmail App Password
+//   RESEND_API_KEY         (optional) Resend API key, used for NU addresses
+//   RESEND_FROM            (optional) "Name <addr@yourdomain.com>" Resend sender
 //   SITE_URL                (optional) app base URL
+//
+// NU addresses (@nu-laguna.edu.ph) send via Resend; everyone else via
+// Gmail SMTP; NU mail falls back to Gmail automatically if Resend fails
+// or is maxed out — see _shared/mailer.ts.
 //
 // Deploy with: supabase functions deploy notify-account-locked
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { sendSmartMail } from '../_shared/mailer.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -69,6 +75,8 @@ Deno.serve(async (req) => {
 
     const gmailUser = Deno.env.get('GMAIL_USER')
     const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD')
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
+    const resendFrom = Deno.env.get('RESEND_FROM')
     if (!gmailUser || !gmailPass) {
       return json({ error: 'Email sender not configured' }, 500)
     }
@@ -98,12 +106,7 @@ Deno.serve(async (req) => {
 
     const recipients = Array.from(new Set((admins || []).map((a) => a.email).filter((e): e is string => !!e && e.includes('@'))))
 
-    const client = new SMTPClient({
-      connection: { hostname: 'smtp.gmail.com', port: 465, tls: true, auth: { username: gmailUser, password: gmailPass } },
-    })
-
     if (recipients.length === 0) {
-      await client.close()
       return json({ skipped: true, reason: 'No active SDAO Administrator accounts on file' })
     }
 
@@ -158,12 +161,14 @@ Deno.serve(async (req) => {
 </body>
 </html>`
 
-    await client.send({ from: `RSO Pawrtal <${gmailUser}>`, to: recipients, subject, content: text, html })
-    await client.close()
+    const results = await sendSmartMail(
+      { fromName: 'RSO Pawrtal', gmailUser, gmailPass, resendApiKey, resendFrom },
+      { to: recipients, subject, text, html }
+    )
 
     await admin.from('profiles').update({ lock_notified_at: new Date().toISOString() }).eq('id', profile_id)
 
-    return json({ sent: true, recipients })
+    return json({ sent: true, recipients, channels: results })
   } catch (err) {
     return json({ error: 'Unexpected error', detail: String(err) }, 500)
   }

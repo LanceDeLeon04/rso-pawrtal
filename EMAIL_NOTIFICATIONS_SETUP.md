@@ -9,7 +9,10 @@ rep decisions, and reports — they all flow through the same
 ## How it works
 1. Any status change inserts a row into `submission_status_history` (already happens today).
 2. A new DB trigger (`trg_notify_submission_status_email`, migration `049`) fires on that insert and calls the `notify-status-email` Edge Function via `pg_net` — async, so it never blocks or fails the underlying approval action.
-3. The Edge Function looks up the submission, builds a short status email, and sends it to both `submissions.email` (NU email) and `submissions.personal_email` via Gmail SMTP.
+3. The Edge Function looks up the submission, builds a short status email, and sends it to both `submissions.email` (NU email) and `submissions.personal_email`.
+4. **Where it's sent from:** the NU email (`@nu-laguna.edu.ph`) goes out via **Resend**; the personal email (Gmail/Outlook) goes out via **Gmail SMTP**, same as before. If Resend isn't configured, errors, or is maxed out (rate limit / quota), the NU email automatically falls back to the same Gmail SMTP path — nothing is ever silently dropped. See "Resend for NU accounts" below.
+
+This same NU-via-Resend / personal-via-Gmail (with Gmail fallback) split is shared by every email-sending function in the project: `notify-status-email`, `notify-approver-email`, `notify-curricular-email`, and `notify-account-locked` all use the same `supabase/functions/_shared/mailer.ts` helper.
 
 ## One-time setup
 
@@ -28,10 +31,47 @@ supabase functions deploy notify-status-email
 ```
 supabase secrets set GMAIL_USER=youraddress@gmail.com
 supabase secrets set GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx   # 16-char Gmail App Password, NOT your login password
+supabase secrets set RESEND_API_KEY=re_xxxxxxxxxxxxxxxx    # optional — see "Resend for NU accounts" below
+supabase secrets set RESEND_FROM="RSO Pawrtal <noreply@yourdomain.com>"  # optional, required if RESEND_API_KEY is set
 supabase secrets set EMAIL_WEBHOOK_SECRET=<a long random string>
 supabase secrets set SITE_URL=https://your-deployed-app-url
 ```
 Generate a Gmail App Password at https://myaccount.google.com/apppasswords (requires 2-Step Verification enabled on that Gmail account).
+
+If `RESEND_API_KEY`/`RESEND_FROM` are left unset, NU emails just go straight to Gmail like everything else — nothing breaks.
+
+## Resend for NU accounts
+
+To keep NU inboxes (`@nu-laguna.edu.ph` and `@students.nu-laguna.edu.ph`) from ever hitting Gmail's sending
+limits, all NU-addressed mail is routed through [Resend](https://resend.com)
+instead of Gmail SMTP. Personal emails (Gmail/Outlook/etc.) are unaffected —
+they keep going out via Gmail exactly as before.
+
+**Routing, done in `supabase/functions/_shared/mailer.ts`:**
+- Recipient ends in `@nu-laguna.edu.ph` or `@students.nu-laguna.edu.ph` → send via Resend.
+- Any other recipient → send via Gmail SMTP.
+- If the Resend call fails for any reason (not configured, network error,
+  bad request, or a `429` because you've hit your Resend plan's send
+  limit) → automatically retried via Gmail SMTP instead. The email always
+  goes out one way or the other; it never silently disappears.
+
+### One-time Resend setup
+1. Create a account at https://resend.com and verify a sending domain (or
+   use their shared test domain while developing).
+2. Create an API key and set it as `RESEND_API_KEY` (step 3 above).
+3. Set `RESEND_FROM` to a "Name <address@yourdomain.com>" string using
+   that verified domain.
+4. Redeploy the four functions that send email so they pick up the new
+   secrets:
+   ```
+   supabase functions deploy notify-status-email
+   supabase functions deploy notify-approver-email
+   supabase functions deploy notify-curricular-email
+   supabase functions deploy notify-account-locked
+   ```
+
+If you ever add another NU campus domain, add it to the `NU_EMAIL_DOMAINS`
+array at the top of `supabase/functions/_shared/mailer.ts`.
 
 ### 4. Point the DB trigger at your deployed function
 Run this once in the Supabase SQL editor (use the **same** random string as `EMAIL_WEBHOOK_SECRET` above):

@@ -43,6 +43,69 @@
   .sb-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* ---------- Hub tabs (Events / Curricular Activities / Reschedule) ----------
+   The Submission Bin's top-level section switcher for admins/SDAO/other
+   approvers — makes this page the one-stop shop for all approvals instead
+   of scattering Curricular Activities and Reschedule Requests across
+   separate sidebar destinations. Visually heavier than .sb-bin-tabs below
+   (which switches action/approved/others *within* the Events section) so
+   the two tab rows read as distinct levels of the hierarchy. */
+.sb-hub-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+
+.sb-hub-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sb-hub-tab:hover {
+  color: var(--nu-navy);
+}
+
+.sb-hub-tab--active {
+  color: #fff;
+  background: var(--nu-blue-700);
+}
+
+.sb-hub-embed {
+  margin-top: -2px;
+}
+
+/* CurricularActivities.jsx and RescheduleRequests.jsx are normally
+   routed as standalone pages with their own outer page padding/max-width
+   — strip that out here since they're embedded inside .sb-page, which
+   already has its own layout padding from Layout.jsx. */
+.sb-hub-embed .ca-page {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+.sb-hub-embed .rr-page {
+  height: auto;
+}
+
+@media (max-width: 720px) {
+  .sb-hub-tabs { gap: 3px; }
+  .sb-hub-tab { padding: 8px 10px; font-size: 12px; }
+}
+
 /* ---------- Bin tabs ---------- */
 .sb-bin-tabs {
   display: flex;

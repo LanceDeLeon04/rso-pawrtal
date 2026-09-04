@@ -13,14 +13,20 @@
 //
 // Required secrets (same ones notify-status-email already needs):
 //   EMAIL_WEBHOOK_SECRET   shared secret, must match app_config.email_webhook_secret
-//   GMAIL_USER             the Gmail address to send from
+//   GMAIL_USER             the Gmail address to send from (personal emails + fallback)
 //   GMAIL_APP_PASSWORD     16-character Gmail App Password
+//   RESEND_API_KEY         (optional) Resend API key, used for NU addresses
+//   RESEND_FROM            (optional) "Name <addr@yourdomain.com>" Resend sender
 //   SITE_URL                (optional) app base URL
+//
+// NU addresses (@nu-laguna.edu.ph) send via Resend; everyone else via
+// Gmail SMTP; NU mail falls back to Gmail automatically if Resend fails
+// or is maxed out — see _shared/mailer.ts.
 //
 // Deploy with: supabase functions deploy notify-approver-email
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { sendSmartMail } from '../_shared/mailer.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -114,10 +120,6 @@ function htmlShell(opts: { badge: string; badgeColor: string; title: string; int
 </html>`
 }
 
-async function sendMail(client: any, gmailUser: string, to: string[], subject: string, text: string, html: string) {
-  await client.send({ from: `RSO Pawrtal <${gmailUser}>`, to, subject, content: text, html })
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
@@ -130,9 +132,12 @@ Deno.serve(async (req) => {
 
     const gmailUser = Deno.env.get('GMAIL_USER')
     const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD')
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
+    const resendFrom = Deno.env.get('RESEND_FROM')
     if (!gmailUser || !gmailPass) {
       return json({ error: 'Email sender not configured' }, 500)
     }
+    const mailCfg = { fromName: 'RSO Pawrtal', gmailUser, gmailPass, resendApiKey, resendFrom }
 
     const payload = await req.json()
     const admin = createClient(
@@ -140,9 +145,6 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
     const siteUrl = Deno.env.get('SITE_URL') || 'https://pawrtal.app'
-    const client = new SMTPClient({
-      connection: { hostname: 'smtp.gmail.com', port: 465, tls: true, auth: { username: gmailUser, password: gmailPass } },
-    })
 
     if (payload.kind === 'internal_stage') {
       const { submission_id, stage, role_needed } = payload
@@ -164,7 +166,6 @@ Deno.serve(async (req) => {
 
       const recipients = Array.from(new Set((reviewers || []).map((r) => r.email).filter((e): e is string => !!e && e.includes('@'))))
       if (recipients.length === 0) {
-        await client.close()
         return json({ skipped: true, reason: `No active ${role_needed} accounts on file` })
       }
 
@@ -192,9 +193,8 @@ Deno.serve(async (req) => {
         ctaUrl: `${siteUrl}/submissions`,
       })
 
-      await sendMail(client, gmailUser, recipients, subject, text, html)
-      await client.close()
-      return json({ sent: true, recipients })
+      const results = await sendSmartMail(mailCfg, { to: recipients, subject, text, html })
+      return json({ sent: true, recipients, channels: results })
     }
 
     if (payload.kind === 'external_link') {
@@ -208,7 +208,6 @@ Deno.serve(async (req) => {
         .single()
       if (linkErr || !link) return json({ error: 'Approval link not found', detail: linkErr?.message }, 404)
       if (!link.person_email || !link.person_email.includes('@')) {
-        await client.close()
         return json({ skipped: true, reason: 'No person_email on link' })
       }
 
@@ -237,12 +236,10 @@ Deno.serve(async (req) => {
         ctaUrl: approveUrl,
       })
 
-      await sendMail(client, gmailUser, [link.person_email], subject, text, html)
-      await client.close()
-      return json({ sent: true, recipients: [link.person_email] })
+      const results = await sendSmartMail(mailCfg, { to: [link.person_email], subject, text, html })
+      return json({ sent: true, recipients: [link.person_email], channels: results })
     }
 
-    await client.close()
     return json({ error: 'Unknown kind' }, 400)
   } catch (err) {
     console.error('notify-approver-email error', err)

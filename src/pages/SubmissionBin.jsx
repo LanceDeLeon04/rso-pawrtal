@@ -5,10 +5,12 @@ import {
   Check, Undo2, Ban, Download, MapPin, Clock, Video, Building2, User,
   CheckCircle2, ChevronRight, ChevronLeft, ListChecks, CalendarClock, Trash2,
   Link2, Copy, Send, ShieldAlert, Hourglass, PartyPopper, Tag, Pencil, ExternalLink,
-  Star,
+  Star, GraduationCap,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier, isSHSReviewer, seesAllDepartments } from '../context/AuthContext'
+import CurricularActivities from './CurricularActivities'
+import RescheduleRequests from './RescheduleRequests'
 import { toISODate, formatTime, MEDIUM_LABELS, MONTH_NAMES, formatEventDates, examPreWeekRange, parseISO } from '../lib/dateUtils'
 import { generateACPFormPdf, generateMerchRequestFormPdf } from '../lib/acpPdf'
 import { generateFacilityReservationFormPdf } from '../lib/frfPdf'
@@ -656,6 +658,16 @@ export default function SubmissionBin() {
   const canTagCOLEvents = myOrgIsCOL && COL_EVENT_TAGGER_POSITIONS.includes(myMembershipRoot?.position)
   const location = useLocation()
   const navigate = useNavigate()
+
+  // Submission Bin is the one-stop shop for admins/SDAO/other approvers —
+  // Curricular Activities and Reschedule Requests render as sections
+  // inside this page (rather than their own sidebar destinations) for
+  // that audience. `section` can be deep-linked via ?section=curricular
+  // or ?section=reschedule (see Layout.jsx nav badges/links).
+  const initialSection = new URLSearchParams(location.search).get('section')
+  const [hubSection, setHubSection] = useState(
+    admin && ['curricular', 'reschedule'].includes(initialSection) ? initialSection : 'events'
+  )
 
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -3250,6 +3262,41 @@ export default function SubmissionBin() {
 
   return (
     <div className="sb-page">
+      {admin && (
+        <div className="sb-hub-tabs">
+          <button
+            type="button"
+            className={`sb-hub-tab ${hubSection === 'events' ? 'sb-hub-tab--active' : ''}`}
+            onClick={() => setHubSection('events')}
+          >
+            <Inbox size={15} /> Events, Reports &amp; Merch
+          </button>
+          <button
+            type="button"
+            className={`sb-hub-tab ${hubSection === 'curricular' ? 'sb-hub-tab--active' : ''}`}
+            onClick={() => setHubSection('curricular')}
+          >
+            <GraduationCap size={15} /> Curricular Activities
+          </button>
+          <button
+            type="button"
+            className={`sb-hub-tab ${hubSection === 'reschedule' ? 'sb-hub-tab--active' : ''}`}
+            onClick={() => setHubSection('reschedule')}
+          >
+            <CalendarClock size={15} /> Reschedule Requests
+          </button>
+        </div>
+      )}
+
+      {admin && hubSection === 'curricular' && (
+        <div className="sb-hub-embed"><CurricularActivities /></div>
+      )}
+      {admin && hubSection === 'reschedule' && (
+        <div className="sb-hub-embed"><RescheduleRequests /></div>
+      )}
+
+      {(!admin || hubSection === 'events') && (
+      <>
       <div className="sb-metrics">
         <div className="sb-metric-card">
           <span className="sb-metric-card__value">{binCounts.all}</span>
@@ -5872,6 +5919,8 @@ export default function SubmissionBin() {
             )}
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   )

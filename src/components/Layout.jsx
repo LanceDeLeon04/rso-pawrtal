@@ -41,13 +41,18 @@ const NAV_ITEMS = [
   // Org (rso_officer) submits; SDAO Assistant/Supervisor/Academic
   // Director work the queue — same shape as Submission Bin's audience
   // (migration 062). Not for FMO/ED/SHS Principal/SHS Faculty.
-  { to: '/reschedule-requests', label: 'Reschedule Requests', icon: CalendarClock, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true },
+  // For admins/SDAO/other approvers this now lives INSIDE the
+  // Submission Bin (see hideForApprovers below) — rso_officer still
+  // gets it here since that's their submission entry point.
+  { to: '/reschedule-requests', label: 'Reschedule Requests', icon: CalendarClock, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true, hideForApprovers: true },
   // Annual RSO renewal — College orgs only, same exclusions as
   // Reschedule Requests plus SDAO-SHS (migration 070).
   { to: '/renewal', label: 'RSO Renewal', icon: ClipboardCheck, hideForFMO: true, hideForED: true, hideForShsPrincipal: true, hideForShsFaculty: true, hideForShsAdmin: true },
-  // Faculty Curricular Activities — SDAO Assistant/Supervisor and
-  // Academic Director only (migration 074), never SHS/FMO/ED/CRSO/QMO.
-  { to: '/curricular-activities', label: 'Curricular Activities', icon: GraduationCap, curricularOnly: true },
+  // Faculty Curricular Activities — every account that could see this
+  // link is admin/SDAO tier, and it now lives INSIDE the Submission
+  // Bin as a section (see hideForApprovers below), so this standalone
+  // destination no longer appears in the sidebar for anyone.
+  { to: '/curricular-activities', label: 'Curricular Activities', icon: GraduationCap, curricularOnly: true, hideForApprovers: true },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
   { to: '/about', label: 'About the System', icon: Info },
 ]
@@ -148,11 +153,15 @@ export default function Layout() {
       jobs.push(['/assignments', asgQ])
 
       // ---- Reschedule Requests ----
+      // For approver roles this queue now lives inside the Submission
+      // Bin (see hub tabs in SubmissionBin.jsx), so its badge count
+      // rolls into '/submissions' rather than the now-hidden standalone
+      // link. rso_officer still has its own destination/badge.
       const RESCHEDULE_STAGE_BY_ROLE = {
         sdao_assistant: 'pending_assistant', sdao_supervisor: 'pending_supervisor', academic_director: 'pending_director',
       }
       if (RESCHEDULE_STAGE_BY_ROLE[role]) {
-        jobs.push(['/reschedule-requests', supabase.from('reschedule_requests').select('id', { count: 'exact', head: true }).eq('status', RESCHEDULE_STAGE_BY_ROLE[role])])
+        jobs.push(['/submissions', supabase.from('reschedule_requests').select('id', { count: 'exact', head: true }).eq('status', RESCHEDULE_STAGE_BY_ROLE[role])])
       } else if (role === 'rso_officer' && myOrgId) {
         jobs.push(['/reschedule-requests', supabase.from('reschedule_requests').select('id', { count: 'exact', head: true }).eq('org_id', myOrgId).eq('status', 'returned')])
       }
@@ -169,8 +178,9 @@ export default function Layout() {
 
       // ---- Curricular Activities (internal Academic Director step
       // only — Dean/SDG review happens on account-less external links) ----
+      // Rolls into the Submission Bin badge — see Reschedule Requests note above.
       if (['academic_director', 'system_admin'].includes(role)) {
-        jobs.push(['/curricular-activities', supabase.from('curricular_activities').select('id', { count: 'exact', head: true }).eq('status', 'director_review')])
+        jobs.push(['/submissions', supabase.from('curricular_activities').select('id', { count: 'exact', head: true }).eq('status', 'director_review')])
       }
 
       // ---- Venue Request (SHS chain) ----
@@ -210,7 +220,12 @@ export default function Layout() {
     // chain — Faculty, SDAO-SHS, SHS Principal — never for full admins,
     // FMO, or College roles.
     && (!item.shsVenuePartyOnly || shsVenueParty)
-    && (!item.curricularOnly || curricularAllowed))
+    && (!item.curricularOnly || curricularAllowed)
+    // Curricular Activities and Reschedule Requests are now sections
+    // inside the Submission Bin for admins/SDAO/other approvers — see
+    // SubmissionBin.jsx's hub tabs. Non-approvers (rso_officer) keep
+    // their standalone link since that's where they submit from.
+    && (!(admin || shsReviewer) || !item.hideForApprovers))
   const activeItem = NAV_ITEMS.find((item) => location.pathname.startsWith(item.to))
   const org = profile?.org_memberships?.[0]?.organizations
   const orgLabel = org?.acronym

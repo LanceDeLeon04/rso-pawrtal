@@ -7,19 +7,24 @@
 // adviser/dean/SDG-rep/marketing-rep decisions, and for reports as well as
 // event applications (they all write to the same table).
 //
-// Sends an update email to BOTH the submitter's NU email and personal email
-// via Gmail SMTP using an App Password.
+// Sends an update email to BOTH the submitter's NU email and personal email.
+// NU addresses (@nu-laguna.edu.ph) go out via Resend; personal addresses
+// (Gmail/Outlook/etc.) go out via Gmail SMTP. If Resend fails or is maxed
+// out, NU mail automatically falls back to the same Gmail SMTP path — see
+// _shared/mailer.ts.
 //
 // Required secrets (supabase secrets set ...):
 //   EMAIL_WEBHOOK_SECRET   shared secret, must match app_config.email_webhook_secret
-//   GMAIL_USER             the Gmail address to send from
+//   GMAIL_USER             the Gmail address to send from (personal emails + fallback)
 //   GMAIL_APP_PASSWORD     16-character Gmail App Password (not the account password)
+//   RESEND_API_KEY         (optional) Resend API key, used for NU addresses
+//   RESEND_FROM            (optional) "Name <addr@yourdomain.com>" Resend sender
 //   SITE_URL                (optional) app base URL for the "view status" link
 //
 // Deploy with: supabase functions deploy notify-status-email
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { sendSmartMail } from '../_shared/mailer.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -239,6 +244,8 @@ Deno.serve(async (req) => {
 
     const gmailUser = Deno.env.get('GMAIL_USER')
     const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD')
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
+    const resendFrom = Deno.env.get('RESEND_FROM')
     if (!gmailUser || !gmailPass) {
       return json({ error: 'Email sender not configured' }, 500)
     }
@@ -291,26 +298,12 @@ Deno.serve(async (req) => {
       siteUrl,
     })
 
-    const client = new SMTPClient({
-      connection: {
-        hostname: 'smtp.gmail.com',
-        port: 465,
-        tls: true,
-        auth: { username: gmailUser, password: gmailPass },
-      },
-    })
+    const results = await sendSmartMail(
+      { fromName: 'RSO Pawrtal', gmailUser, gmailPass, resendApiKey, resendFrom },
+      { to: recipients, subject, text, html }
+    )
 
-    await client.send({
-      from: `RSO Pawrtal <${gmailUser}>`,
-      to: recipients,
-      subject,
-      content: text,
-      html,
-    })
-
-    await client.close()
-
-    return json({ sent: true, recipients })
+    return json({ sent: true, recipients, channels: results })
   } catch (err) {
     console.error('notify-status-email error', err)
     return json({ error: 'Send failed', detail: String(err) }, 500)

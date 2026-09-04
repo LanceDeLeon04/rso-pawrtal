@@ -12,14 +12,20 @@
 //
 // Required secrets (same ones notify-status-email/notify-approver-email need):
 //   EMAIL_WEBHOOK_SECRET   shared secret, must match app_config.email_webhook_secret
-//   GMAIL_USER             the Gmail address to send from
+//   GMAIL_USER             the Gmail address to send from (personal emails + fallback)
 //   GMAIL_APP_PASSWORD     16-character Gmail App Password
+//   RESEND_API_KEY         (optional) Resend API key, used for NU addresses
+//   RESEND_FROM            (optional) "Name <addr@yourdomain.com>" Resend sender
 //   SITE_URL               (optional) app base URL
+//
+// NU addresses (@nu-laguna.edu.ph) send via Resend; everyone else via
+// Gmail SMTP; NU mail falls back to Gmail automatically if Resend fails
+// or is maxed out — see _shared/mailer.ts.
 //
 // Deploy with: supabase functions deploy notify-curricular-email
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { sendSmartMail } from '../_shared/mailer.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -85,6 +91,8 @@ Deno.serve(async (req) => {
 
     const gmailUser = Deno.env.get('GMAIL_USER')
     const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD')
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
+    const resendFrom = Deno.env.get('RESEND_FROM')
     if (!gmailUser || !gmailPass) return json({ error: 'Email sender not configured' }, 500)
 
     const siteUrl = Deno.env.get('SITE_URL') || 'https://pawrtal.app'
@@ -173,13 +181,12 @@ Deno.serve(async (req) => {
       return json({ error: 'Unknown kind' }, 400)
     }
 
-    const client = new SMTPClient({
-      connection: { hostname: 'smtp.gmail.com', port: 465, tls: true, auth: { username: gmailUser, password: gmailPass } },
-    })
-    await client.send({ from: `RSO Pawrtal <${gmailUser}>`, to, subject, content: text, html })
-    await client.close()
+    const results = await sendSmartMail(
+      { fromName: 'RSO Pawrtal', gmailUser, gmailPass, resendApiKey, resendFrom },
+      { to, subject, text, html }
+    )
 
-    return json({ sent: true, to })
+    return json({ sent: true, to, channels: results })
   } catch (err) {
     console.error('notify-curricular-email error', err)
     return json({ error: 'Send failed', detail: String(err) }, 500)
