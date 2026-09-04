@@ -101,11 +101,45 @@ export function AuthProvider({ children }) {
   }, [])
 
   async function signIn(username, password) {
+    const authEmail = toAuthEmail(username)
+
+    // Check for an existing lockout/cooldown *before* spending an
+    // attempt against Supabase Auth itself — see migration 083.
+    const { data: statusRows, error: statusError } = await supabase.rpc(
+      'get_login_lock_status',
+      { p_email: authEmail }
+    )
+    const status = Array.isArray(statusRows) ? statusRows[0] : statusRows
+    if (!statusError && status?.is_locked) {
+      return { error: { message: 'ACCOUNT_LOCKED' } }
+    }
+    if (!statusError && status?.cooldown_until) {
+      return { error: { message: 'ACCOUNT_COOLDOWN', cooldownUntil: status.cooldown_until } }
+    }
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: toAuthEmail(username),
+      email: authEmail,
       password,
     })
-    if (error) return { error }
+    if (error) {
+      // Wrong password (or unknown username) — record the attempt.
+      // 3 wrong attempts -> 30 min cooldown; another 3 after that ->
+      // the account is locked and SDAO Administrators are notified.
+      const { data: recordRows } = await supabase.rpc('record_failed_login', {
+        p_email: authEmail,
+      })
+      const record = Array.isArray(recordRows) ? recordRows[0] : recordRows
+      if (record?.is_locked) {
+        return { error: { message: 'ACCOUNT_LOCKED' } }
+      }
+      if (record?.cooldown_until) {
+        return { error: { message: 'ACCOUNT_COOLDOWN', cooldownUntil: record.cooldown_until } }
+      }
+      return { error }
+    }
+
+    // Correct password — clear any attempt history for this account.
+    await supabase.rpc('reset_login_attempts', { p_email: authEmail })
 
     // Force the Data Privacy Notice to show again for this fresh login,
     // even if this browser tab previously had it acknowledged (e.g. a
@@ -122,6 +156,9 @@ export function AuthProvider({ children }) {
   }
 
   async function signOut() {
+    if (session?.user) {
+      await supabase.rpc('log_audit_event', { p_action: 'logout' }).catch(() => {})
+    }
     await supabase.auth.signOut()
     setProfile(null)
   }

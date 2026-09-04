@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userErr } = await admin.auth.getUser(jwt)
     if (userErr || !user) return json({ error: 'Invalid or expired session.' }, 401)
 
-    const { data: caller } = await admin.from('profiles').select('role, is_active').eq('id', user.id).single()
+    const { data: caller } = await admin.from('profiles').select('role, is_active, full_name').eq('id', user.id).single()
     const callerIsAdmin = caller?.is_active && ADMIN_ROLES.includes(caller.role)
     const callerIsShsReviewer = caller?.is_active && SHS_REVIEWER_ROLES.includes(caller.role)
     if (!callerIsAdmin && !callerIsShsReviewer) {
@@ -81,6 +81,21 @@ Deno.serve(async (req) => {
 
     const { error: delErr } = await admin.auth.admin.deleteUser(profile_id)
     if (delErr) return json({ error: delErr.message }, 400)
+
+    // Logged explicitly here (rather than an AFTER DELETE trigger) since
+    // the profiles row is already gone by the time any trigger on it
+    // would fire, cascaded away by auth.admin.deleteUser() above — this
+    // is the last point with both the caller's and target's context.
+    await admin.from('audit_logs').insert({
+      actor_id: user.id,
+      actor_name: caller?.full_name || null,
+      actor_role: caller?.role || null,
+      action: 'account_deleted',
+      target_type: 'profile',
+      target_id: profile_id,
+      target_label: target.full_name,
+      metadata: { role: target.role },
+    })
 
     return json({ success: true })
   } catch (e) {

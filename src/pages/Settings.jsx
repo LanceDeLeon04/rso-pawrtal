@@ -3,7 +3,7 @@ import {
   Settings as SettingsIcon, User, Camera, Lock, Users, Pencil, Check, X,
   Loader2, AlertCircle, CheckCircle2, UserCheck, UserX, Building2, FlaskConical, Plus, Trash2,
   Bell, BellOff, BellRing, MessageSquarePlus, MessageSquare, Star, Mail, RefreshCw, CalendarClock,
-  KeyRound, Eye, EyeOff, Shuffle, GraduationCap, Megaphone, Leaf,
+  KeyRound, Eye, EyeOff, Shuffle, GraduationCap, Megaphone, Leaf, ScrollText, ChevronLeft, ChevronRight, Search,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth, isAdminTier } from '../context/AuthContext'
@@ -29,12 +29,19 @@ const SDAO_ADMIN_ROLES = ['sdao_assistant', 'sdao_supervisor', 'system_admin']
 // sdao_assistant/sdao_supervisor/academic_director roles above.
 const SHS_KEY_ADMIN_ROLES = ['sdao_shs', 'system_admin']
 
+// Deliberately narrower than isAdminTier() — matches audit_logs_select
+// in migration 084. The log can contain other admins' own account
+// actions, so it's restricted to the top tier already trusted with
+// unrestricted account management.
+const AUDIT_LOG_ROLES = ['system_admin', 'sdao_supervisor', 'executive_director']
+
 export default function Settings() {
   const { profile, completePasswordChange, refreshProfile, updateRecoveryEmail } = useAuth()
   const admin = isAdminTier(profile?.role)
   const canManageVenues = VENUE_MANAGER_ROLES.includes(profile?.role)
   const canManageFeatureFlags = SDAO_ADMIN_ROLES.includes(profile?.role)
   const canManageShsKeys = SHS_KEY_ADMIN_ROLES.includes(profile?.role)
+  const canViewAuditLog = AUDIT_LOG_ROLES.includes(profile?.role)
 
   return (
     <div className="set-page">
@@ -52,6 +59,7 @@ export default function Settings() {
       {canManageShsKeys && <ShsApproverPinsSection />}
       {canManageVenues && <VenueRoomsAndLabsSection />}
       {admin && <UserManagementSection currentProfileId={profile?.id} />}
+      {canViewAuditLog && <AuditLogSection />}
       <FeedbackSection profile={profile} />
       {admin && <AdminFeedbackSection />}
     </div>
@@ -1269,6 +1277,195 @@ function UserManagementSection({ currentProfileId }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ============================================================
+// AuditLogSection — System Admin / SDAO Supervisor / Executive
+// Director only (see AUDIT_LOG_ROLES). Read-only view over the
+// audit_logs table (migration 084), which is populated automatically
+// by DB triggers + a handful of explicit log_audit_event/direct-insert
+// calls (login attempts, account create/delete, lock/unlock, role
+// changes, deactivation, renames). Nothing here writes to the log.
+// ============================================================
+const AUDIT_ACTION_LABELS = {
+  login_success: 'Signed in',
+  logout: 'Signed out',
+  login_failed: 'Failed sign-in attempt',
+  account_created: 'Account created',
+  account_deleted: 'Account deleted',
+  account_deactivated: 'Account deactivated',
+  account_reactivated: 'Account reactivated',
+  account_locked: 'Account locked',
+  account_unlocked: 'Account lock reset',
+  role_changed: 'Role changed',
+  profile_renamed: 'Name changed',
+}
+
+const AUDIT_PAGE_SIZE = 25
+
+function auditActionLabel(action) {
+  return AUDIT_ACTION_LABELS[action] || action.replace(/_/g, ' ')
+}
+
+function auditActionTone(action) {
+  if (action === 'login_failed' || action === 'account_locked' || action === 'account_deleted' || action === 'account_deactivated') return 'inactive'
+  return 'active'
+}
+
+function auditDetail(log) {
+  const m = log.metadata || {}
+  switch (log.action) {
+    case 'login_failed':
+      if (m.reason === 'unknown_username') return 'Unknown username'
+      if (m.reason === 'already_locked') return 'Attempted while already locked'
+      if (m.reason === 'in_cooldown') return 'Attempted during 30-minute cooldown'
+      if (m.result === 'cooldown_started') return `Attempt ${m.attempt} of 3 — 30-minute cooldown started`
+      if (m.result === 'locked') return `Attempt ${m.attempt} of 3 (2nd round) — account locked`
+      return m.attempt ? `Attempt ${m.attempt} of 3` : ''
+    case 'role_changed':
+      return m.from && m.to ? `${String(m.from).replace(/_/g, ' ')} → ${String(m.to).replace(/_/g, ' ')}` : ''
+    case 'profile_renamed':
+      return m.from && m.to ? `"${m.from}" → "${m.to}"` : ''
+    case 'account_created':
+      return m.role ? `Role: ${String(m.role).replace(/_/g, ' ')}` : ''
+    case 'account_deleted':
+      return m.role ? `Role: ${String(m.role).replace(/_/g, ' ')}` : ''
+    default:
+      return ''
+  }
+}
+
+function AuditLogSection() {
+  const [logs, setLogs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [actionFilter, setActionFilter] = useState('')
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    setPage(0)
+  }, [actionFilter, search])
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, actionFilter, search])
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    const { data, error: err } = await supabase.rpc('list_audit_logs', {
+      p_limit: AUDIT_PAGE_SIZE + 1,
+      p_offset: page * AUDIT_PAGE_SIZE,
+      p_action: actionFilter || null,
+      p_search: search.trim() || null,
+    })
+    if (err) {
+      setError('Could not load the audit log.')
+      setLogs([])
+      setHasMore(false)
+    } else {
+      const rows = data || []
+      setHasMore(rows.length > AUDIT_PAGE_SIZE)
+      setLogs(rows.slice(0, AUDIT_PAGE_SIZE))
+    }
+    setLoading(false)
+  }
+
+  return (
+    <section className="set-section set-section--full">
+      <div className="set-card set-card--wide">
+        <span className="set-card__label"><ScrollText size={13} /> System Audit Log</span>
+        <p className="set-card__sub">
+          A record of security- and account-relevant events across the system — sign-ins, lockouts, and account changes — visible only to top-tier Administrators.
+        </p>
+
+        <div className="set-toggle-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ position: 'relative', maxWidth: 240 }}>
+            <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--nu-gray-500, #64748b)' }} />
+            <input
+              type="text"
+              className="set-inline-input"
+              style={{ paddingLeft: 26 }}
+              placeholder="Search by name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <select
+            className="set-inline-input"
+            style={{ maxWidth: 220 }}
+            value={actionFilter}
+            onChange={(e) => setActionFilter(e.target.value)}
+          >
+            <option value="">All events</option>
+            {Object.entries(AUDIT_ACTION_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <button type="button" className="set-icon-btn" onClick={load} title="Refresh">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+
+        {error && <div className="set-error"><AlertCircle size={13} /> {error}</div>}
+
+        {loading ? (
+          <Loader2 size={18} className="spin" />
+        ) : logs.length === 0 ? (
+          <p className="set-toggle-row__hint">No matching events.</p>
+        ) : (
+          <div className="table-scroll">
+            <table className="set-table">
+              <thead>
+                <tr><th>When</th><th>Actor</th><th>Event</th><th>Target</th><th>Details</th></tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={log.id}>
+                    <td>{new Date(log.created_at).toLocaleString()}</td>
+                    <td>
+                      {log.actor_name
+                        ? `${log.actor_name}${log.actor_role ? ` (${log.actor_role.replace(/_/g, ' ')})` : ''}`
+                        : <span className="set-photo-row__email">System</span>}
+                    </td>
+                    <td>
+                      <span className={`set-status-badge set-status-badge--${auditActionTone(log.action)}`} style={{ cursor: 'default' }}>
+                        {auditActionLabel(log.action)}
+                      </span>
+                    </td>
+                    <td>{log.target_label || '—'}</td>
+                    <td className="set-photo-row__email">{auditDetail(log)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="set-row-actions" style={{ justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="set-btn set-btn--outline"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0 || loading}
+          >
+            <ChevronLeft size={13} /> Newer
+          </button>
+          <button
+            type="button"
+            className="set-btn set-btn--outline"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!hasMore || loading}
+          >
+            Older <ChevronRight size={13} />
+          </button>
+        </div>
+      </div>
+    </section>
   )
 }
 

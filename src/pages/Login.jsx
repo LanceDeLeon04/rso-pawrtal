@@ -1,8 +1,30 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { User, Lock, Eye, EyeOff, AlertCircle, ShieldCheck, Loader2, Search } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import './Login.css'
+
+// Renders the remaining cooldown as "12:45" and counts down live so the
+// person doesn't have to keep re-submitting the form to check.
+function useCountdown(targetIso) {
+  const [remainingMs, setRemainingMs] = useState(() =>
+    targetIso ? new Date(targetIso).getTime() - Date.now() : 0
+  )
+
+  useEffect(() => {
+    if (!targetIso) return
+    const tick = () => setRemainingMs(new Date(targetIso).getTime() - Date.now())
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [targetIso])
+
+  if (!targetIso || remainingMs <= 0) return null
+  const totalSeconds = Math.ceil(remainingMs / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
 
 export default function Login() {
   const { signIn } = useAuth()
@@ -13,11 +35,27 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false)
   const [remember, setRemember] = useState(true)
   const [error, setError] = useState('')
+  const [errorKind, setErrorKind] = useState(null) // null | 'cooldown' | 'locked'
+  const [cooldownUntil, setCooldownUntil] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+
+  const countdown = useCountdown(errorKind === 'cooldown' ? cooldownUntil : null)
+
+  // If the countdown finishes while the person is still looking at the
+  // page, swap the message so they know they can try again.
+  useEffect(() => {
+    if (errorKind === 'cooldown' && !countdown) {
+      setError('You can try signing in again now.')
+      setErrorKind(null)
+      setCooldownUntil(null)
+    }
+  }, [errorKind, countdown])
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    setErrorKind(null)
+    setCooldownUntil(null)
     setSubmitting(true)
 
     const { data, error: signInError } = await signIn(email, password)
@@ -25,11 +63,19 @@ export default function Login() {
     setSubmitting(false)
 
     if (signInError) {
-      setError(
-        signInError.message === 'ACCOUNT_DEACTIVATED'
-          ? 'This account has been deactivated. Please contact SDAO.'
-          : 'Incorrect email or password. Please try again.'
-      )
+      if (signInError.message === 'ACCOUNT_DEACTIVATED') {
+        setError('This account has been deactivated. Please contact SDAO.')
+      } else if (signInError.message === 'ACCOUNT_LOCKED') {
+        setError(
+          'This account has been locked for security reasons. Please contact your SDAO Administrator to have it reset.'
+        )
+        setErrorKind('locked')
+      } else if (signInError.message === 'ACCOUNT_COOLDOWN') {
+        setErrorKind('cooldown')
+        setCooldownUntil(signInError.cooldownUntil)
+      } else {
+        setError('Incorrect username or password. Please try again.')
+      }
       return
     }
 
@@ -57,11 +103,20 @@ export default function Login() {
             organization's activities and submissions.
           </p>
 
-          {error && (
+          {errorKind === 'cooldown' && countdown ? (
             <div className="login-error">
               <AlertCircle size={16} />
-              <span>{error}</span>
+              <span>
+                Too many incorrect attempts. Please try again in <strong>{countdown}</strong>.
+              </span>
             </div>
+          ) : (
+            error && (
+              <div className="login-error">
+                <AlertCircle size={16} />
+                <span>{error}</span>
+              </div>
+            )
           )}
 
           <div className="field">
@@ -118,7 +173,11 @@ export default function Login() {
             Keep me signed in
           </label>
 
-          <button className="btn-primary" type="submit" disabled={submitting}>
+          <button
+            className="btn-primary"
+            type="submit"
+            disabled={submitting || errorKind === 'locked' || (errorKind === 'cooldown' && !!countdown)}
+          >
             {submitting ? (
               <>
                 <Loader2 size={16} className="spin" /> Signing in…
