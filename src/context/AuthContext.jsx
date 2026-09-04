@@ -156,10 +156,21 @@ export function AuthProvider({ children }) {
   }
 
   async function signOut() {
-    if (session?.user) {
-      await supabase.rpc('log_audit_event', { p_action: 'logout' }).catch(() => {})
+    // Best-effort audit log entry — must never block actually signing
+    // the person out, so it's wrapped in its own try/catch rather than
+    // chained with .catch() (not guaranteed to exist on every
+    // supabase-js query builder return type, and a missing method here
+    // would throw before auth.signOut() ever ran).
+    try {
+      if (session?.user) {
+        await supabase.rpc('log_audit_event', { p_action: 'logout' })
+      }
+    } catch {
+      // ignore — logging failure should never prevent sign-out
     }
+
     await supabase.auth.signOut()
+    setSession(null)
     setProfile(null)
   }
 
