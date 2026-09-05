@@ -5,9 +5,12 @@
 // of only finding out at review time.
 //
 // A venue is unavailable for a date if it's already 'pencil' booked or
-// 'reserved' by another activity's events row, or admin/FMO has marked
-// that date 'blocked' for maintenance/holidays via venue_blocks.
-// 'cancelled' and 'returned' bookings don't hold the slot.
+// 'reserved' by another activity's events row (or the equivalent status
+// on a Curricular Activity — see CURRICULAR_PENCIL_STATUSES /
+// CURRICULAR_RESERVED_STATUSES below), or admin/FMO has marked that
+// date 'blocked' for maintenance/holidays via venue_blocks.
+// 'cancelled' and 'returned' bookings don't hold the slot — same for a
+// Curricular Activity's 'rejected'/'returned' status.
 // Bookings on the same venue + date are allowed to coexist as long as
 // their times don't overlap. Every booking automatically gets a 2-hour
 // ingress buffer before its start and a 2-hour egress buffer after its
@@ -75,12 +78,23 @@ export function windowsOverlap(a, b) {
 // zones overlap, but neither activity's real time is affected).
 // additionalIngressTime / additionalEgressTime are the requested
 // additional-time values (if any) for the booking being checked.
+// Curricular Activities (migration 074) are treated exactly like RSO
+// Events for venue-blocking purposes even though they live in their own
+// table with their own status machine: an activity still working its
+// way through Dean -> SDG Rep -> Academic Director review holds the
+// slot the same way a 'pencil' event does, and once the Academic
+// Director approves it, it holds the slot the same way a 'reserved'
+// event does. 'rejected' and 'returned' free the slot, same as
+// 'cancelled'/'returned' events do.
+const CURRICULAR_PENCIL_STATUSES = ['dean_review', 'sdg_review', 'director_review']
+const CURRICULAR_RESERVED_STATUSES = ['approved']
+
 export async function checkVenueAvailability(
   supabase, venueId, date, startTime, endTime, additionalIngressTime, additionalEgressTime,
 ) {
   if (!venueId || !date) return null
 
-  const [{ data: existingEvents }, { data: existingBlocks }] = await Promise.all([
+  const [{ data: existingEvents }, { data: existingCurricular }, { data: existingBlocks }] = await Promise.all([
     supabase
       .from('events')
       .select('id, booking_status, start_time, end_time, additional_ingress_time, additional_egress_time, organizations ( acronym )')
@@ -88,18 +102,39 @@ export async function checkVenueAvailability(
       .eq('event_date', date)
       .in('booking_status', ['pencil', 'reserved']),
     supabase
+      .from('curricular_activities')
+      .select('id, status, start_time, end_time, faculty_name')
+      .eq('venue_id', venueId)
+      .eq('event_date', date)
+      .in('status', [...CURRICULAR_PENCIL_STATUSES, ...CURRICULAR_RESERVED_STATUSES]),
+    supabase
       .from('venue_blocks')
       .select('id, reason')
       .eq('venue_id', venueId)
       .eq('block_date', date),
   ])
 
+  // Normalize Curricular Activities into the same shape checked below
+  // (booking_status + org label), so a single loop handles both
+  // sources identically — no additional/night-before time on
+  // curricular rows, so those stay null.
+  const curricularAsEvents = (existingCurricular || []).map((ca) => ({
+    id: `ca-${ca.id}`,
+    booking_status: CURRICULAR_RESERVED_STATUSES.includes(ca.status) ? 'reserved' : 'pencil',
+    start_time: ca.start_time,
+    end_time: ca.end_time,
+    additional_ingress_time: null,
+    additional_egress_time: null,
+    organizations: { acronym: ca.faculty_name ? `${ca.faculty_name} (Curricular Activity)` : 'a Curricular Activity' },
+  }))
+  const allExistingEvents = [...(existingEvents || []), ...curricularAsEvents]
+
   if (existingBlocks && existingBlocks.length > 0) {
     const reason = existingBlocks[0].reason
     return { blocking: true, message: `This venue is blocked on this date${reason ? ` (${reason})` : ''}. Please pick another date or venue.` }
   }
 
-  if (existingEvents && existingEvents.length > 0) {
+  if (allExistingEvents.length > 0) {
     const newCore = coreWindow(startTime, endTime)
     const newBuffered = bufferedWindow(startTime, endTime, additionalIngressTime, additionalEgressTime)
     const normalIngress = newCore ? Math.max(GATE_OPEN_MIN, newCore[0] - INGRESS_EGRESS_BUFFER_MIN) : null
@@ -109,12 +144,12 @@ export async function checkVenueAvailability(
     // can't safely prove there's no overlap, so fall back to the old
     // "whole day" block.
     if (!newCore || !newBuffered) {
-      const status = existingEvents[0].booking_status
+      const status = allExistingEvents[0].booking_status
       return { blocking: true, message: `This venue is already ${status === 'reserved' ? 'reserved' : 'pencil booked'} on this date by another activity. Please pick another date or venue.` }
     }
 
     let advisory = null
-    for (const ev of existingEvents) {
+    for (const ev of allExistingEvents) {
       const evCore = coreWindow(ev.start_time, ev.end_time)
       const evBuffered = bufferedWindow(ev.start_time, ev.end_time, ev.additional_ingress_time, ev.additional_egress_time)
       const orgLabel = ev.organizations?.acronym || 'another activity'

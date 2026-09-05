@@ -67,6 +67,7 @@ export default function CalendarOfActivities() {
   // tagged under the general "Room"/"Laboratory" venue.
   const [locationFilter, setLocationFilter] = useState({ room_building: '', room_floor: '', room_number: '', lab_id: '' })
   const [events, setEvents] = useState([])
+  const [curricularActivities, setCurricularActivities] = useState([])
   const [blocks, setBlocks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -254,6 +255,7 @@ export default function CalendarOfActivities() {
 
   useEffect(() => {
     loadEvents()
+    loadCurricularActivities()
     loadBlocks()
     loadRestrictedPeriods()
     loadShsVenueBookings()
@@ -427,6 +429,78 @@ export default function CalendarOfActivities() {
     setLoading(false)
   }
 
+  // Curricular Activities (migration 074) are plotted and venue/date/
+  // time-blocked on this calendar exactly like RSO Events — same
+  // pencil (tentative)/reserved (confirmed) treatment, just sourced
+  // from curricular_activities instead of events and normalized below
+  // (see visibleEvents) into the same event-shaped object so every bit
+  // of existing chip/grid/legend rendering picks them up for free.
+  // Publicly selectable (RLS: curricular_activities_select_public), so
+  // — like RSO Events — every signed-in role that can see this page
+  // sees them plotted here too.
+  async function loadCurricularActivities() {
+    const rangeStart = toISODate(new Date(cursor.year, cursor.month, 1))
+    const rangeEnd = toISODate(new Date(cursor.year, cursor.month + 1, 0))
+
+    let query = supabase
+      .from('curricular_activities')
+      .select('id, title, description, faculty_name, department, venue_id, venue_detail, event_date, start_time, end_time, medium, status')
+      .gte('event_date', rangeStart)
+      .lte('event_date', rangeEnd)
+      .order('start_time', { ascending: true })
+
+    if (venueFilter !== 'all') query = query.eq('venue_id', venueFilter)
+
+    const { data, error: err } = await query
+    if (err) {
+      setCurricularActivities([])
+      return
+    }
+    setCurricularActivities(data || [])
+  }
+
+  // Same pencil/reserved/returned/cancelled vocabulary the events table
+  // uses — a Curricular Activity still in Dean/SDG Rep/Academic
+  // Director review holds the slot like a 'pencil' event; 'approved'
+  // holds it like 'reserved'; 'rejected'/'returned' free it, same as
+  // 'cancelled'/'returned' events (see ../lib/venueAvailability).
+  function curricularBookingStatus(status) {
+    if (status === 'approved') return 'reserved'
+    if (status === 'rejected') return 'cancelled'
+    if (status === 'returned') return 'returned'
+    return 'pencil'
+  }
+
+  // Normalizes a curricular_activities row into the same shape as an
+  // `events` row so it flows through the existing chip/day-grid/detail
+  // modal rendering unchanged. Tagged _kind: 'curricular' so admin-only
+  // mutation actions (move/reserve/cancel/delete — those only make
+  // sense against the `events` table) stay hidden for these; managing
+  // a Curricular Activity's status happens on the Curricular Activities
+  // admin page instead.
+  function normalizeCurricular(ca) {
+    return {
+      _kind: 'curricular',
+      id: ca.id,
+      title: ca.title,
+      org_id: null,
+      contact_person: ca.faculty_name,
+      contact_number: '',
+      description: ca.description,
+      venue_id: ca.venue_id,
+      venue_detail: ca.venue_detail,
+      venue_ids: ca.venue_id ? [ca.venue_id] : [],
+      venue_details: ca.venue_id ? { [ca.venue_id]: ca.venue_detail } : {},
+      event_date: ca.event_date,
+      start_time: ca.start_time,
+      end_time: ca.end_time,
+      booking_status: curricularBookingStatus(ca.status),
+      medium: ca.medium,
+      organizations: { name: ca.department || 'Curricular Activity', acronym: ca.faculty_name || 'Curricular' },
+      venues: venues.find((v) => v.id === ca.venue_id) || null,
+    }
+  }
+
   // Mirrors how the Submission Bin's application form builds venue_detail
   // for a picked Room or Laboratory, so the calendar can filter/compare
   // against the same free-text value stored on events.venue_detail.
@@ -446,23 +520,24 @@ export default function CalendarOfActivities() {
   // sub-filter, on top of the venue-level filter already applied by the
   // Supabase query in loadEvents().
   const visibleEvents = useMemo(() => {
+    const combined = [...events, ...curricularActivities.map(normalizeCurricular)]
     if (filteredVenueName === 'Room' && locationFilter.room_building) {
       let prefix = locationFilter.room_building
       if (locationFilter.room_floor) prefix = roomDetailFor(locationFilter.room_building, locationFilter.room_floor, '')
       if (locationFilter.room_number) {
         const full = roomDetailFor(locationFilter.room_building, locationFilter.room_floor, locationFilter.room_number)
-        return events.filter((e) => e.venue_detail === full)
+        return combined.filter((e) => e.venue_detail === full)
       }
-      return events.filter((e) => (e.venue_detail || '').startsWith(prefix))
+      return combined.filter((e) => (e.venue_detail || '').startsWith(prefix))
     }
     if (filteredVenueName === 'Laboratory' && locationFilter.lab_id) {
       const lab = venueLabs.find((l) => l.id === locationFilter.lab_id)
-      if (!lab) return events
-      return events.filter((e) => e.venue_detail === labDetailFor(lab))
+      if (!lab) return combined
+      return combined.filter((e) => e.venue_detail === labDetailFor(lab))
     }
-    return events
+    return combined
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, filteredVenueName, locationFilter, venueLabs])
+  }, [events, curricularActivities, filteredVenueName, locationFilter, venueLabs, venues])
 
   function eventsForDay(date) {
     const iso = toISODate(date)
@@ -976,6 +1051,7 @@ export default function CalendarOfActivities() {
         <div className="cal-legend">
           <span className="cal-legend__item"><i className="cal-dot cal-dot--pencil" /> Pencil booked (tentative)</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--reserved" /> Reserved / confirmed</span>
+          <span className="cal-legend__item"><GraduationCap size={11} /> Curricular Activity</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--returned" /> Returned (needs revision)</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--cancelled" /> Cancelled</span>
           <span className="cal-legend__item"><i className="cal-dot cal-dot--holiday" /> Holiday</span>
@@ -1088,11 +1164,12 @@ export default function CalendarOfActivities() {
                   ))}
                   {dayEvents.slice(0, 3).map((ev) => (
                     <button
-                      key={ev.id}
+                      key={`${ev._kind || 'event'}-${ev.id}`}
                       className={`cal-chip cal-chip--${ev.booking_status}`}
                       onClick={() => { setSelectedEvent(ev); setConfirmDelete(false); setMoving(false) }}
                       title={ev.title}
                     >
+                      {ev._kind === 'curricular' && <GraduationCap size={11} />}
                       {ev.title}
                       {ev.organizations?.acronym && (
                         <span className="cal-chip__org"> · {ev.organizations.acronym}</span>
@@ -1134,6 +1211,7 @@ export default function CalendarOfActivities() {
               // RSO only ever sees title (already shown above) + date +
               // time + venue — never contact info or the description.
               const isOwnOrgEvent = !!myOrgId && selectedEvent.org_id === myOrgId
+              const isCurricular = selectedEvent._kind === 'curricular'
               const canSeeFullDetails = admin || fmo || isOwnOrgEvent
               return canSeeFullDetails ? (
               <div className="cal-modal__details">
@@ -1164,7 +1242,15 @@ export default function CalendarOfActivities() {
                   <p className="cal-modal__desc">{selectedEvent.description}</p>
                 )}
 
-                {canManageVenues && !moving && (
+                {isCurricular && admin && (
+                  <div className="cal-modal__actions">
+                    <Link to="/curricular-activities" className="cal-btn cal-btn--outline">
+                      <Move size={14} /> Manage in Curricular Activities
+                    </Link>
+                  </div>
+                )}
+
+                {!isCurricular && canManageVenues && !moving && (
                   <div className="cal-modal__actions">
                     <button className="cal-btn cal-btn--outline" onClick={() => startMove(selectedEvent)}>
                       <Move size={14} /> Move Schedule
@@ -1178,7 +1264,7 @@ export default function CalendarOfActivities() {
                     so it's a link to the Reschedule Requests page rather
                     than an inline instant edit. Only the owning org, and
                     only once the booking is fully approved ('reserved'). */}
-                {!canManageVenues && profile?.role === 'rso_officer' && isOwnOrgEvent && selectedEvent.booking_status === 'reserved' && (
+                {!isCurricular && !canManageVenues && profile?.role === 'rso_officer' && isOwnOrgEvent && selectedEvent.booking_status === 'reserved' && (
                   <div className="cal-modal__actions">
                     <Link to={`/reschedule-requests?event=${selectedEvent.id}`} className="cal-btn cal-btn--outline">
                       <Move size={14} /> Request Reschedule
@@ -1186,7 +1272,7 @@ export default function CalendarOfActivities() {
                   </div>
                 )}
 
-                {moving && (
+                {!isCurricular && moving && (
                   <form className="cal-move-form" onSubmit={handleSaveMove}>
                     <label className="cal-move-form__field">
                       Date
@@ -1308,7 +1394,7 @@ export default function CalendarOfActivities() {
                   </form>
                 )}
 
-                {admin && (
+                {!isCurricular && admin && (
                   <>
                     <div className="cal-modal__actions">
                       {selectedEvent.booking_status !== 'reserved' && (

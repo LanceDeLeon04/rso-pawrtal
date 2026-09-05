@@ -46,7 +46,7 @@ begin
   select * into v_dean from curricular_approvals where activity_id = v_link.activity_id and role = 'dean';
   select * into v_sdg from curricular_approvals where activity_id = v_link.activity_id and role = 'sdg_rep';
 
-  v_pin := get_external_approver_pin(v_link.role::approval_link_role, null, v_link.person_name);
+  v_pin := get_external_approver_pin(v_link.role::text::approval_link_role, null, v_link.person_name);
 
   return jsonb_build_object(
     'link', jsonb_build_object(
@@ -120,7 +120,7 @@ begin
     raise exception 'A signature is required to approve';
   end if;
 
-  v_required_pin := get_external_approver_pin(v_link.role::approval_link_role, null, v_link.person_name);
+  v_required_pin := get_external_approver_pin(v_link.role::text::approval_link_role, null, v_link.person_name);
   if v_required_pin is not null and coalesce(p_pin, '') <> v_required_pin then
     raise exception 'Incorrect security PIN.';
   end if;

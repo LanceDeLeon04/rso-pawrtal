@@ -84,6 +84,26 @@
   background: var(--nu-blue-700);
 }
 
+.sb-hub-tab {
+  position: relative;
+}
+
+.sb-hub-tab__dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #e02424;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  margin-left: 2px;
+}
+
 .sb-hub-embed {
   margin-top: -2px;
 }

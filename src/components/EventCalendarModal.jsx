@@ -42,7 +42,7 @@ export default function EventCalendarModal({ onClose }) {
           .select('id, title, event_date, start_time, end_time, venue_id, venue_detail, medium, status, faculty_name')
           .gte('event_date', monthStart)
           .lte('event_date', monthEnd)
-          .not('status', 'in', '(rejected)'),
+          .not('status', 'in', '(rejected,returned)'),
       ])
       if (cancelled) return
       if (eErr) setError('Could not load the calendar. Please try again.')
@@ -94,7 +94,7 @@ export default function EventCalendarModal({ onClose }) {
       end_time: ca.end_time,
       venue_ids: ca.venue_id ? [ca.venue_id] : [],
       venueLabel: curricularVenueLabel(ca),
-      pencil: false,
+      pencil: ca.status !== 'approved',
       sub: ca.faculty_name ? `Curricular · ${ca.faculty_name}` : 'Curricular Activity',
     }))
     return [...evItems, ...caItems]

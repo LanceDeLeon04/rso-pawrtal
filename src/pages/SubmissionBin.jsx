@@ -669,6 +669,51 @@ export default function SubmissionBin() {
     admin && ['curricular', 'reschedule'].includes(initialSection) ? initialSection : 'events'
   )
 
+  // Small red "pending" counters shown on the Curricular Activities and
+  // Reschedule Requests hub tabs, mirroring what the Events tab already
+  // gets for free from binCounts.action — lets an admin see at a glance
+  // which sub-module has something waiting on them without opening it.
+  const [hubPendingCounts, setHubPendingCounts] = useState({ curricular: 0, reschedule: 0 })
+
+  useEffect(() => {
+    if (!admin) return
+    let cancelled = false
+
+    async function loadHubPendingCounts() {
+      const [curricularRes, rescheduleRes] = await Promise.all([
+        supabase
+          .from('curricular_activities')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'director_review'),
+        (() => {
+          const RESCHEDULE_STAGE_BY_ROLE = {
+            sdao_assistant: ['pending_assistant'],
+            sdao_supervisor: ['pending_supervisor'],
+            academic_director: ['pending_director'],
+          }
+          const stages = RESCHEDULE_STAGE_BY_ROLE[profile?.role]
+            || (profile?.role === 'system_admin' || isSHSReviewer(profile?.role)
+              ? ['pending_assistant', 'pending_supervisor', 'pending_director']
+              : [])
+          if (stages.length === 0) return Promise.resolve({ count: 0 })
+          return supabase
+            .from('reschedule_requests')
+            .select('id', { count: 'exact', head: true })
+            .in('stage', stages)
+        })(),
+      ])
+
+      if (cancelled) return
+      setHubPendingCounts({
+        curricular: curricularRes?.count || 0,
+        reschedule: rescheduleRes?.count || 0,
+      })
+    }
+
+    loadHubPendingCounts()
+    return () => { cancelled = true }
+  }, [admin, profile?.role, hubSection])
+
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState('')
@@ -3270,6 +3315,9 @@ export default function SubmissionBin() {
             onClick={() => setHubSection('events')}
           >
             <Inbox size={15} /> Events, Reports &amp; Merch
+            {binCounts.action > 0 && (
+              <span className="sb-hub-tab__dot">{binCounts.action > 99 ? '99+' : binCounts.action}</span>
+            )}
           </button>
           <button
             type="button"
@@ -3277,6 +3325,9 @@ export default function SubmissionBin() {
             onClick={() => setHubSection('curricular')}
           >
             <GraduationCap size={15} /> Curricular Activities
+            {hubPendingCounts.curricular > 0 && (
+              <span className="sb-hub-tab__dot">{hubPendingCounts.curricular > 99 ? '99+' : hubPendingCounts.curricular}</span>
+            )}
           </button>
           <button
             type="button"
@@ -3284,6 +3335,9 @@ export default function SubmissionBin() {
             onClick={() => setHubSection('reschedule')}
           >
             <CalendarClock size={15} /> Reschedule Requests
+            {hubPendingCounts.reschedule > 0 && (
+              <span className="sb-hub-tab__dot">{hubPendingCounts.reschedule > 99 ? '99+' : hubPendingCounts.reschedule}</span>
+            )}
           </button>
         </div>
       )}
